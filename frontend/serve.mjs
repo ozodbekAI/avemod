@@ -3,12 +3,43 @@ import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, normalize, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
-
-import app from "./dist/server/server.js";
+import { pathToFileURL } from "node:url";
 
 const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 3016);
-const root = resolve(process.cwd(), "dist/client");
+const buildTargets = [
+  {
+    server: resolve(process.cwd(), "dist/server/server.js"),
+    assets: resolve(process.cwd(), "dist/client"),
+  },
+  {
+    server: resolve(process.cwd(), ".output/server/index.mjs"),
+    assets: resolve(process.cwd(), ".output/public"),
+  },
+];
+
+function resolveBuildTarget() {
+  const target = buildTargets.find((candidate) => existsSync(candidate.server));
+  if (!target) {
+    throw new Error(
+      "Missing frontend server build. Expected dist/server/server.js or .output/server/index.mjs.",
+    );
+  }
+  return target;
+}
+
+async function loadApp(serverPath) {
+  const mod = await import(pathToFileURL(serverPath).href);
+  const app = mod.default ?? mod;
+  if (!app || typeof app.fetch !== "function") {
+    throw new Error(`Frontend server build does not export a fetch handler: ${serverPath}`);
+  }
+  return app;
+}
+
+const buildTarget = resolveBuildTarget();
+const app = await loadApp(buildTarget.server);
+const root = buildTarget.assets;
 
 const mimeTypes = {
   ".css": "text/css; charset=utf-8",
@@ -85,12 +116,20 @@ async function writeResponse(res, response) {
   Readable.fromWeb(response.body).pipe(res);
 }
 
+function runtimeContext() {
+  return {
+    waitUntil(promise) {
+      Promise.resolve(promise).catch((error) => console.error(error));
+    },
+  };
+}
+
 createServer(async (req, res) => {
   try {
     if (req.method === "GET" || req.method === "HEAD") {
       if (await serveAsset(req, res)) return;
     }
-    const response = await app.fetch(toRequest(req), {}, {});
+    const response = await app.fetch(toRequest(req), {}, runtimeContext());
     await writeResponse(res, response);
   } catch (error) {
     console.error(error);
