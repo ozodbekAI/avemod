@@ -14,8 +14,10 @@ test.beforeEach(async ({ page }) => {
 test("authenticated canonical navigation", async ({ page }) => {
   await page.goto("/dashboard");
 
-  await expect(page.getByText("Панель владельца")).toBeVisible();
-  await expect(page.getByText("Корреляция, а не гарантия")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Панель владельца" }),
+  ).toBeVisible();
+  await expect(page.getByText("Денежный тренд").first()).toBeVisible();
 
   await page.getByRole("button", { name: "AI оператор" }).click();
   await expect(page.getByText("Администратор портала")).toBeVisible();
@@ -25,31 +27,32 @@ test("product 360 deep link", async ({ page }) => {
   await page.goto("/products/1001001");
 
   await expect(
-    page.getByText(/Product 360 deep link|Product 360|товар/i),
+    page.getByRole("heading", {
+      name: /Product 360 deep link|Артикул 1001001/i,
+    }),
   ).toBeVisible();
 });
 
 test("empty beta page", async ({ page }) => {
   await page.goto("/photo-studio");
 
-  await expect(
-    page.getByText(/Проектов пока нет|Photo Studio|Фотостудия/i),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Фотостудия" })).toBeVisible();
+  await expect(page.getByText("Проектов пока нет")).toBeVisible();
 });
 
 test("API failures render a page error state", async ({ page }) => {
-  await page.route("**/api/v1/portal/dashboard/overview**", async (route) => {
+  await page.route("**/api/v1/portal/actions**", async (route) => {
     await route.fulfill({
       status: 500,
       contentType: "application/json",
-      body: JSON.stringify({ detail: "Не удалось загрузить результаты" }),
+      body: JSON.stringify({ detail: "Не удалось загрузить задачи" }),
     });
   });
 
-  await page.goto("/dashboard");
+  await page.goto("/action-center");
 
   await expect(
-    page.getByText(/Не удалось загрузить результаты|ошибка|Ошибка/i),
+    page.getByText(/Серверная ошибка|Не удалось загрузить страницу/i).first(),
   ).toBeVisible();
 });
 
@@ -58,6 +61,7 @@ test("mobile viewport", async ({ page }) => {
   await page.goto("/dashboard");
 
   await expect(page.getByRole("button", { name: "AI оператор" })).toBeVisible();
-  await expect(page.getByText("До действия")).toBeVisible();
-  await expect(page.getByText("После изменения")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Панель владельца" }),
+  ).toBeVisible();
 });

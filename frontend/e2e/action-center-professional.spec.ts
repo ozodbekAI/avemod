@@ -16,14 +16,24 @@ test("same dynamic problem is traceable through Action Center, Product360 and Re
 }) => {
   await page.goto("/action-center?problem_instance_id=42");
 
-  // Required professional QA anchors:
-  // problem_instance_id=42
-  // action-center-task-drawer
-  // results-problem-timeline
-  // product360-problem-preview
   await expect(
-    page.getByText(/Открыть задачу|Задачи|Action Center/i),
+    page.getByRole("heading", { name: "Центр действий" }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Данные и себестоимость/i }),
+  ).toBeVisible();
+
+  await page.goto("/products/1001001?problem_instance_id=42");
+  await expect(
+    page.getByRole("heading", { name: "Главные проблемы" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: /Проблема.*Открыть задачу/i }).first(),
+  ).toBeVisible();
+
+  await page.goto("/results?problem_instance_id=42");
+  await expect(page.getByRole("heading", { name: "Результаты" })).toBeVisible();
+  await expect(page.getByText("Журнал событий")).toBeVisible();
 });
 
 test("action-center-task-drawer exposes professional navigation actions", async ({
@@ -31,10 +41,13 @@ test("action-center-task-drawer exposes professional navigation actions", async 
 }) => {
   await page.goto("/action-center?problem_instance_id=42");
 
+  await page.getByRole("button", { name: /Данные и себестоимость/i }).click();
   await expect(
-    page.getByText(
-      /Открыть в результатах|Открыть задачу|Открыть исправление данных/i,
-    ),
+    page.getByRole("heading", { name: /Нет себестоимости/i }),
+  ).toBeVisible();
+  await expect(page.getByText("Заполнить себестоимость")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Перепроверить" }),
   ).toBeVisible();
 });
 
@@ -43,9 +56,8 @@ test("results-problem-timeline can be opened from Action Center", async ({
 }) => {
   await page.goto("/results?problem_instance_id=42");
 
-  await expect(
-    page.getByText(/result_history|Результаты|timeline/i),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Результаты" })).toBeVisible();
+  await expect(page.getByText("Журнал событий")).toBeVisible();
 });
 
 test("product360-problem-preview can be opened from Action Center", async ({
@@ -54,6 +66,9 @@ test("product360-problem-preview can be opened from Action Center", async ({
   await page.goto("/products/1001001?problem_instance_id=42");
 
   await expect(
-    page.getByText(/Product 360|product360-problem-preview|товар/i),
+    page.getByRole("heading", { name: "Главные проблемы" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: /Проблема.*Открыть задачу/i }).first(),
   ).toBeVisible();
 });
