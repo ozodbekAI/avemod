@@ -1,0 +1,21 @@
+[Unit]
+Description=WB Finance Frontend
+After=network.target finance-backend.service
+Wants=finance-backend.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/finance-frontend/current
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3016
+ExecStart=/usr/bin/node /opt/finance-frontend/current/serve.mjs
+Restart=always
+RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

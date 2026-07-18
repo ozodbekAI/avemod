@@ -1,0 +1,14 @@
+{
+  "chat_id": "chat-real",
+  "client_id": "client-1",
+  "client_name": "Chat Buyer",
+  "good_card": {
+    "nmID": 1003
+  },
+  "product_title": "Bag",
+  "last_message": {
+    "text": "Where is my order?"
+  },
+  "unread_count": 1,
+  "updated_at": "2026-06-10T12:00:00+00:00"
+}

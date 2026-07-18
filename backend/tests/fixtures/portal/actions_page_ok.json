@@ -1,0 +1,249 @@
+{
+  "total": 3,
+  "limit": 50,
+  "offset": 0,
+  "items": [
+    {
+      "id": "problem_engine:42",
+      "source": "dynamic_problem_instances",
+      "source_module": "problem_engine",
+      "source_id": "42",
+      "account_id": 1,
+      "action_type": "low_stock_risk",
+      "detector_code": "low_stock_risk",
+      "problem_code": "low_stock_risk",
+      "title": "Риск потери продаж по товару",
+      "priority": "P1",
+      "severity": "high",
+      "status": "new",
+      "reason": "Остатка хватит меньше чем на три дня при текущем спросе.",
+      "next_step": "Запланируйте поставку или пополнение, затем запустите повторную проверку.",
+      "expected_effect_amount": 12500.0,
+      "expected_impact_amount": 12500.0,
+      "confidence": "high",
+      "nm_id": 1001,
+      "can_update_status": true,
+      "can_update": true,
+      "impact_type": "lost_sales_risk",
+      "trust_state": "provisional",
+      "payload": {
+        "problem_instance_id": 42,
+        "problem_code": "low_stock_risk",
+        "impact_type": "lost_sales_risk",
+        "trust_state": "provisional",
+        "evidence_trust_state": "provisional",
+        "impact_trust_state": "provisional",
+        "saved_money_claimed": false,
+        "data_freshness": {
+          "required_sources": ["stocks", "sales"],
+          "source_status": "stale",
+          "last_synced_at": "2026-06-20T08:00:00Z",
+          "blocking_sources": ["stocks"],
+          "freshness_notes": ["Остатки не синхронизированы после 2026-06-20; риск предварительный."]
+        }
+      },
+      "data_freshness": {
+        "required_sources": ["stocks", "sales"],
+        "source_status": "stale",
+        "last_synced_at": "2026-06-20T08:00:00Z",
+        "blocking_sources": ["stocks"],
+        "freshness_notes": ["Остатки не синхронизированы после 2026-06-20; риск предварительный."]
+      },
+      "solve_map": {
+        "title": "Карта решения: риск низкого остатка",
+        "summary": "Проверьте запас, откройте план поставки, назначьте владельца и срок или снизьте промо/рекламу, затем перепроверьте дни остатка.",
+        "steps": [
+          {
+            "step_id": "evidence",
+            "order": 1,
+            "title": "Проверить доказательства",
+            "description": "Откройте «Как посчитано?» и проверьте формулу, факты, источники и свежесть данных.",
+            "status": "waiting_for_data",
+            "action_code": null,
+            "target_href": null,
+            "required_metrics": ["stock_qty", "days_of_stock", "orders_7d", "sales_velocity"],
+            "blocking_reason": "Нужна синхронизация",
+            "completion_signal": "Доказательства и источники понятны."
+          },
+          {
+            "step_id": "supply_plan",
+            "order": 2,
+            "title": "Открыть поставки",
+            "description": "Перейдите в план поставок и создайте пополнение, владельца или срок.",
+            "status": "available",
+            "action_code": "open_supply_planner",
+            "target_href": "/stock-control?tab=supply&problem_instance_id=42&nm_id=1001",
+            "required_metrics": ["stock_qty", "days_of_stock", "orders_7d"],
+            "blocking_reason": null,
+            "completion_signal": "План пополнения, владелец или срок зафиксированы."
+          },
+          {
+            "step_id": "demand_control",
+            "order": 3,
+            "title": "Снизить промо или рекламу",
+            "description": "Если поставка не успевает, уменьшите стимулы спроса до восстановления остатка.",
+            "status": "waiting_for_data",
+            "action_code": "open_promo_planner",
+            "target_href": "/products/1001?tab=promo&problem_instance_id=42",
+            "required_metrics": ["days_of_stock", "promo_calendar"],
+            "blocking_reason": "Нужна синхронизация",
+            "completion_signal": "Спрос временно ограничен или причина передана владельцу."
+          },
+          {
+            "step_id": "recheck_stock_days",
+            "order": 4,
+            "title": "Перепроверить дни остатка",
+            "description": "Повторите проверку после обновления остатков, заказов или плана поставки.",
+            "status": "available",
+            "action_code": "recheck",
+            "target_href": null,
+            "required_metrics": ["days_of_stock", "stock_qty"],
+            "blocking_reason": null,
+            "completion_signal": "Дни остатка пересчитаны."
+          }
+        ]
+      },
+      "evidence_ledger": {
+        "value": 12500.0,
+        "value_type": "money",
+        "confidence": "confirmed",
+        "impact_type": "lost_sales_risk",
+        "formula_human": "stock_days_left < 3 and orders_7d > 0",
+        "formula_code": "low_stock_risk.v1",
+        "formula_id": "rule:low_stock_risk:v1",
+        "input_facts": [
+          {
+            "label": "Остаток в днях",
+            "metric_code": "stock_days_left",
+            "value": 2,
+            "trust_state": "confirmed",
+            "source_table": "mart_stock_daily",
+            "source_endpoint": "GET /api/v1/marts/stock-daily",
+            "row_count": 7
+          },
+          {
+            "label": "Заказы за 7 дней",
+            "metric_code": "orders_7d",
+            "value": 18,
+            "trust_state": "confirmed",
+            "source_table": "mart_sku_daily",
+            "source_endpoint": "GET /api/v1/marts/sku-daily",
+            "row_count": 7
+          }
+        ],
+        "source_references": [
+          {
+            "source_table": "mart_stock_daily",
+            "source_endpoint": "GET /api/v1/marts/stock-daily",
+            "row_count": 7
+          }
+        ],
+        "trust_notes": ["Данные по заказам доступны, остатки требуют синхронизации."],
+        "missing_data": [],
+        "calculation_warnings": [],
+        "recheck_rule_human": "Повторите проверку после обновления остатков, заказов или плана поставки.",
+        "money_trust": {
+          "state": "provisional",
+          "impact_kind": "lost_sales_risk",
+          "display_label": "Риск потери продаж",
+          "amount_label": "Риск потери продаж",
+          "show_as_confirmed_money": false,
+          "seller_visible_by_default": true,
+          "reason": "Низкий остаток создаёт риск потери продаж, но это не подтверждённый убыток без измеренных after-data.",
+          "evidence_trust_state": "provisional",
+          "impact_trust_state": "provisional",
+          "saved_money_claimed": false
+        }
+      },
+      "evidence_state": "partial_evidence",
+      "money_trust": {
+        "state": "provisional",
+        "impact_kind": "lost_sales_risk",
+        "display_label": "Риск потери продаж",
+        "amount_label": "Риск потери продаж",
+        "show_as_confirmed_money": false,
+        "seller_visible_by_default": true,
+        "reason": "Низкий остаток создаёт риск потери продаж, но это не подтверждённый убыток без измеренных after-data.",
+        "evidence_trust_state": "provisional",
+        "impact_trust_state": "provisional",
+        "saved_money_claimed": false
+      },
+      "allowed_actions": ["plan_supply", "reduce_promo", "reduce_ads", "create_task", "recheck", "dismiss"]
+    },
+    {
+      "id": "finance:ads-review:1001",
+      "action_id": 101,
+      "source": "finance_actions",
+      "source_module": "finance",
+      "source_id": "ads:1001",
+      "account_id": 1,
+      "action_type": "review_profit",
+      "title": "Проверить рекламные расходы",
+      "priority": "P1",
+      "severity": "high",
+      "status": "new",
+      "reason": "Реклама съедает прибыль.",
+      "next_step": "Открыть Product 360 -> Деньги",
+      "expected_effect_amount": 12000.0,
+      "confidence": "medium",
+      "nm_id": 1001,
+      "can_update_status": true,
+      "can_update": true,
+      "data_freshness": {
+        "required_sources": ["finance", "ads"],
+        "source_status": "fresh",
+        "last_synced_at": "2026-07-07T08:00:00Z",
+        "blocking_sources": [],
+        "freshness_notes": []
+      },
+      "solve_map": null,
+      "guided_fix": {
+        "route_key": "product_360_money",
+        "target_id": "1001",
+        "nm_id": 1001,
+        "label": "Открыть деньги товара",
+        "steps": ["Проверить прибыль", "Сравнить рекламу", "Отметить действие"],
+        "confirm_required": false,
+        "marketplace_change": false
+      }
+    },
+    {
+      "id": "claims:defect_claim_candidate:1001",
+      "source": "claims_adapter",
+      "source_module": "claims",
+      "source_id": "defect_claim_candidate:1001",
+      "account_id": 1,
+      "action_type": "draft_claim",
+      "title": "Создать черновик претензии по дефекту",
+      "priority": "P1",
+      "severity": "high",
+      "status": "new",
+      "reason": "Есть кандидат на компенсацию, требуется проверка доказательств.",
+      "next_step": "Создать локальный кейс Claims Factory",
+      "expected_effect_amount": 6450.0,
+      "confidence": "medium",
+      "nm_id": 1001,
+      "can_update_status": true,
+      "can_update": true,
+      "data_freshness": {
+        "required_sources": ["claims", "cards"],
+        "source_status": "fresh",
+        "last_synced_at": "2026-07-07T08:00:00Z",
+        "blocking_sources": [],
+        "freshness_notes": []
+      },
+      "solve_map": null,
+      "guided_fix": {
+        "route_key": "claims_case_from_signal",
+        "source_id": "defect_claim_candidate:1001",
+        "nm_id": 1001,
+        "label": "Создать кейс",
+        "steps": ["Создать кейс", "Прикрепить доказательства", "Сгенерировать черновик", "Проверить перед отправкой"],
+        "confirm_required": false,
+        "marketplace_change": false,
+        "safety_note": "Создание кейса локальное; отправка во внешний сервис требует отдельного confirm=true."
+      }
+    }
+  ],
+  "unavailable_sources": []
+}

@@ -1,0 +1,171 @@
+{
+  "nm_id": 123456,
+  "product_identity": {
+    "title": "Product title",
+    "nm_id": 123456,
+    "vendor_code": "A-100",
+    "barcode": null,
+    "image": null,
+    "category": null,
+    "price": null,
+    "stock": null,
+    "sync_freshness": {"trust": "operational"}
+  },
+  "health_summary": {
+    "status": "empty",
+    "open_problem_count": 0,
+    "resolved_problem_count": 0,
+    "critical_problem_count": 0,
+    "data_blocker_count": 0,
+    "checker_score": null,
+    "checker_open_issue_count": 0,
+    "sync_freshness": {"trust": "operational"},
+    "next_best_action_id": null
+  },
+  "problem_instances": [],
+  "grouped_problems": {
+    "profitability": {"key": "profitability", "title": "Profitability", "items": [], "open_count": 0, "resolved_count": 0, "count": 0},
+    "stock": {"key": "stock", "title": "Stock", "items": [], "open_count": 0, "resolved_count": 0, "count": 0},
+    "price": {"key": "price", "title": "Price", "items": [], "open_count": 0, "resolved_count": 0, "count": 0},
+    "ads_promo": {"key": "ads_promo", "title": "Ads/Promo", "items": [], "open_count": 0, "resolved_count": 0, "count": 0},
+    "card_quality": {"key": "card_quality", "title": "Card Quality", "items": [], "open_count": 0, "resolved_count": 0, "count": 0},
+    "data_blockers": {"key": "data_blockers", "title": "Data Blockers", "items": [], "open_count": 0, "resolved_count": 0, "count": 0},
+    "system_checks": {"key": "system_checks", "title": "System Checks", "items": [], "open_count": 0, "resolved_count": 0, "count": 0}
+  },
+  "result_preview": {
+    "status": "empty",
+    "source": "result_ledger",
+    "items": [],
+    "recent_events": [],
+    "summary": {},
+    "disclaimer": "Сравнение показывает связь по данным после действия, но не доказывает причинность само по себе."
+  },
+  "checker_summary": {
+    "score": null,
+    "open_issue_count": 0,
+    "last_checked_at": null,
+    "top_issues": [],
+    "checker_href": "/checker/123456",
+    "status": "not_configured"
+  },
+  "data_blockers": {
+    "count": 0,
+    "top_blockers": [],
+    "data_fix_href": "/data-fix?nm_id=123456"
+  },
+  "overview_diagnosis": {
+    "status": "ok",
+    "data": {"headline": "Product needs attention"}
+  },
+  "identity": {
+    "status": "ok",
+    "data": {
+      "nm_id": 123456,
+      "vendor_code": "A-100",
+      "title": "Product title",
+      "trust_state": "operational"
+    }
+  },
+  "money": {
+    "status": "ok",
+    "data": {"revenue": 80000.0, "profit": 12000.0, "margin": 0.15}
+  },
+  "costs": {
+    "status": "empty",
+    "data": {"unresolved_costs": []}
+  },
+  "ads": {
+    "status": "unavailable",
+    "data": {},
+    "message": "ads data is unavailable"
+  },
+  "stock": {"status": "empty", "data": {}},
+  "pricing": {"status": "empty", "data": {}},
+  "data_quality": {"status": "ok", "data": {"issues": []}},
+  "quality": {"status": "not_configured", "data": {"issues": []}},
+  "card_quality": {"status": "not_configured", "data": {"recommendations": []}},
+  "reputation": {"status": "not_configured", "data": {"last_items": []}},
+  "claims": {"status": "disabled", "data": {"local_cases": [], "candidates": []}},
+  "photo_studio": {"status": "empty", "data": {"mode": "local", "projects_total": 0}},
+  "experiments": {
+    "status": "empty",
+    "data": {
+      "active_experiments": [],
+      "latest_results": [],
+      "recommended_experiment": {},
+      "warnings": [],
+      "last_evaluated_at": null
+    }
+  },
+  "grouping": {"status": "disabled", "data": {}},
+  "grouping_beta": {"status": "disabled", "data": {}},
+  "business_issues": {
+    "status": "empty",
+    "data": {
+      "open": [],
+      "resolved": [],
+      "groups": [
+        {"key": "profitability", "title": "Прибыльность", "items": [], "open_count": 0, "resolved_count": 0, "count": 0},
+        {"key": "stock", "title": "Остатки", "items": [], "open_count": 0, "resolved_count": 0, "count": 0},
+        {"key": "price", "title": "Цена", "items": [], "open_count": 0, "resolved_count": 0, "count": 0},
+        {"key": "ads_promo", "title": "Реклама и промо", "items": [], "open_count": 0, "resolved_count": 0, "count": 0},
+        {"key": "data_blockers", "title": "Блокеры данных", "items": [], "open_count": 0, "resolved_count": 0, "count": 0}
+      ],
+      "summary": {
+        "open_count": 0,
+        "resolved_count": 0,
+        "total_count": 0,
+        "by_severity": {},
+        "by_trust_state": {},
+        "by_impact_type": {},
+        "money_impact": {
+          "confirmed_loss_amount": 0,
+          "lost_sales_risk_amount": 0,
+          "blocked_cash_amount": 0,
+          "non_confirmed_money_amount": 0,
+          "confirmed_loss_rule": "В подтверждённый убыток попадает только impact_type=confirmed_loss с impact_trust_state=confirmed и saved_money_claimed=false до измеренного результата.",
+          "risk_rule": "Риск потери продаж, замороженные деньги и возможности роста считаются отдельными корзинами."
+        }
+      },
+      "empty_state": {
+        "kind": "no_issues_found",
+        "message": "По этому товару нет открытых динамических проблем."
+      }
+    },
+    "message": "No dynamic business issues found for this product."
+  },
+  "actions": [],
+  "history": {"status": "ok", "data": {"items": []}},
+  "result_history": {
+    "status": "ok",
+    "data": {
+      "items": [],
+      "disclaimer": "Сравнение показывает связь по данным после действия, но не доказывает причинность само по себе."
+    }
+  },
+  "next_best_action": null,
+  "module_health": null,
+  "stock_summary": {},
+  "ads_summary": {},
+  "data_issues": [],
+  "finance": {},
+  "unavailable_sources": ["ads"],
+  "raw": {},
+  "evidence_ledger": {
+    "product_360": {
+      "value": 123456,
+      "value_type": "count",
+      "confidence": "provisional",
+      "impact_type": "system_warning",
+      "formula_human": "Обзор товара объединяет доказательства модулей по этому nmID.",
+      "formula_code": null,
+      "formula_id": "portal.product_360",
+      "input_facts": [],
+      "source_references": [],
+      "trust_notes": [],
+      "missing_data": [],
+      "next_fix_action": null,
+      "recheck_rule": "Обновите /portal/products/{nm_id} после изменения данных источника."
+    }
+  }
+}

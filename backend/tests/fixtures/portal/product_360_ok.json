@@ -1,0 +1,63 @@
+{
+  "nm_id": 1001,
+  "overview_diagnosis": {"status": "ok", "data": {"business_status": "risk", "headline": "Товар требует внимания"}},
+  "identity": {"status": "ok", "data": {"nm_id": 1001, "title": "Товар A", "vendor_code": "A-1001"}},
+  "money": {"status": "ok", "data": {"revenue": 120000.0, "profit": 18000.0, "margin": 0.15, "trust_state": "operational"}},
+  "costs": {"status": "ok", "data": {"cost_state": "ok", "manual_cost": 350.0}},
+  "ads": {"status": "ok", "data": {"spend": 9000.0, "acos": 0.075}},
+  "stock": {"status": "ok", "data": {"quantity": 12.0, "days_left": 8}},
+  "pricing": {"status": "ok", "data": {"price": 1990.0, "discount": 25}},
+  "data_quality": {"status": "ok", "data": {"issues": []}},
+  "quality": {"status": "ok", "data": {"score": 88}},
+  "card_quality": {"status": "ok", "data": {"score": 88, "recommendations": ["Обновить первое фото"]}},
+  "reputation": {
+    "status": "ok",
+    "data": {
+      "unanswered_reviews_count": 1,
+      "unanswered_questions_count": 1,
+      "negative_unanswered_count": 1,
+      "unread_chats_count": 0,
+      "draft_ready_count": 1,
+      "last_items": [
+        {"id": "review:fb1", "item_type": "review", "rating": 1, "text": "Плохое качество", "needs_reply": true}
+      ],
+      "next_reputation_action": {"source_id": "review:fb1", "action_type": "draft_reply"},
+      "trust_state": "provisional"
+    }
+  },
+  "claims": {
+    "status": "ok",
+    "data": {
+      "local_cases_count": 1,
+      "candidate_count": 1,
+      "potential_compensation_amount": 6450.0,
+      "local_cases": [{"id": "10", "case_type": "defect", "status": "draft_ready", "amount_claimed": 6450.0}],
+      "candidates": [{"source_id": "defect_claim_candidate:1001", "case_type": "defect", "estimated_amount": 6450.0}],
+      "next_claim_action": {"source_id": "defect_claim_candidate:1001", "action_type": "draft_claim"}
+    }
+  },
+  "photo_studio": {"status": "empty", "data": {"mode": "local", "projects_total": 0}},
+  "grouping": {"status": "disabled", "data": {}},
+  "grouping_beta": {"status": "disabled", "data": {}},
+  "actions": [],
+  "history": {"status": "ok", "data": {"items": []}},
+  "result_history": {"status": "ok", "data": {"items": [], "disclaimer": "Сравнение показывает связь по данным после действия, но не доказывает причинность само по себе."}},
+  "next_best_action": {
+    "id": "finance:ads-review:1001",
+    "source": "finance_actions",
+    "source_module": "finance",
+    "source_id": "ads:1001",
+    "account_id": 1,
+    "action_type": "review_profit",
+    "title": "Проверить рекламные расходы",
+    "priority": "P1",
+    "severity": "high",
+    "status": "new",
+    "nm_id": 1001
+  },
+  "stock_summary": {"quantity": 12.0},
+  "ads_summary": {"spend": 9000.0},
+  "data_issues": [],
+  "finance": {"trust_state": "operational"},
+  "unavailable_sources": []
+}

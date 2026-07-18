@@ -1,0 +1,21 @@
+[Unit]
+Description=WB Finance Backend API
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/finance-backend/current
+EnvironmentFile=/etc/finance-backend/finance.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/finance-backend/venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8016
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

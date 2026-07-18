@@ -1,0 +1,3 @@
+[bandit]
+exclude = .venv,tests,_incoming_projects,audit-bundle-final,reports,exports,logs
+skips = B101,B105,B110,B112,B310,B404,B603,B607,B608

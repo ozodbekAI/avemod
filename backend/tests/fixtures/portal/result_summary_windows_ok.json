@@ -1,0 +1,55 @@
+{
+  "before_snapshot": {
+    "profit": 100.0
+  },
+  "after_snapshot": {
+    "profit": 125.0
+  },
+  "comparison": "improved",
+  "metrics": {
+    "profit": {
+      "before": 100.0,
+      "after": 125.0,
+      "delta": 25.0,
+      "direction": "improved"
+    }
+  },
+  "disclaimer": "Сравнение показывает связь по данным после действия, но не доказывает причинность само по себе.",
+  "windows": {
+    "7d": {
+      "window_days": 7,
+      "status": "improved",
+      "comparison": "improved",
+      "metrics": {
+        "revenue": {
+          "before": 7000.0,
+          "after": 9000.0,
+          "delta": 2000.0,
+          "direction": "improved"
+        },
+        "profit": {
+          "before": 1000.0,
+          "after": 1400.0,
+          "delta": 400.0,
+          "direction": "improved"
+        },
+        "orders": {
+          "before": 70.0,
+          "after": 90.0,
+          "delta": 20.0,
+          "direction": "improved"
+        }
+      },
+      "explanation": null,
+      "disclaimer": "Сравнение показывает связь по данным после действия, но не доказывает причинность само по себе."
+    },
+    "14d": {
+      "window_days": 14,
+      "status": "not_enough_data",
+      "comparison": "not_enough_data",
+      "metrics": {},
+      "explanation": "В финансовой витрине не хватает строк для окна до или после действия.",
+      "disclaimer": "Сравнение показывает связь по данным после действия, но не доказывает причинность само по себе."
+    }
+  }
+}

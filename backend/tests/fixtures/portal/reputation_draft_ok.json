@@ -1,0 +1,23 @@
+{
+  "status": "ok",
+  "module": "reputation",
+  "account_id": 1,
+  "draft": {
+    "id": "draft-review-fb1",
+    "draft_type": "review_reply",
+    "external_status": "draft_ready",
+    "account_id": 1,
+    "source_type": "review",
+    "source_id": "fb1",
+    "title": "Reply draft",
+    "text": "Здравствуйте! Спасибо за отзыв. Мы проверим качество товара и поможем решить вопрос.",
+    "language": "ru",
+    "status": "new",
+    "trust_state": "provisional",
+    "requires_confirmation": true
+  },
+  "message": "Draft generated. Publishing requires manual confirmation.",
+  "warnings": [],
+  "unavailable_sources": [],
+  "trust_state": "provisional"
+}

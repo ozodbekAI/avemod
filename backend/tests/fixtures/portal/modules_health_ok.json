@@ -1,0 +1,18 @@
+{
+  "computed_at": "2026-06-12T10:00:00Z",
+  "modules": {
+    "finance": {"module": "finance", "status": "ok", "enabled": true, "configured": true, "visible": true, "beta": false, "navigation_group": "core", "reason": "Finance core is available.", "required_env_keys": []},
+    "doctor": {"module": "doctor", "status": "disabled", "enabled": false, "configured": false, "visible": false, "beta": false, "navigation_group": "hidden", "reason": "Legacy profit diagnostics are hidden; Action Center is the primary problem surface.", "required_env_keys": []},
+    "actions": {"module": "actions", "status": "ok", "enabled": true, "configured": true, "visible": true, "beta": false, "navigation_group": "core", "reason": "Action Center uses finance database.", "required_env_keys": []},
+    "products": {"module": "products", "status": "ok", "enabled": true, "configured": true, "visible": true, "beta": false, "navigation_group": "core", "reason": "Products and Product 360 use finance data.", "required_env_keys": []},
+    "checker": {"module": "checker", "status": "not_configured", "enabled": true, "configured": false, "visible": true, "beta": false, "navigation_group": "operator", "reason": "Checker setup is available.", "required_env_keys": ["CHECKER_BASE_URL"]},
+    "stockops": {"module": "stockops", "status": "not_configured", "enabled": true, "configured": false, "visible": true, "beta": true, "navigation_group": "beta", "reason": "StockOps is optional.", "required_env_keys": ["STOCKOPS_BASE_URL"]},
+    "grouping": {"module": "grouping", "status": "disabled", "enabled": false, "configured": false, "visible": false, "beta": true, "navigation_group": "hidden", "reason": "Grouping beta is disabled.", "required_env_keys": ["GROUPING_ENABLED"]},
+    "reputation": {"module": "reputation", "status": "disabled", "enabled": false, "configured": false, "visible": false, "beta": false, "navigation_group": "hidden", "reason": "Reputation module is disabled.", "required_env_keys": ["REPUTATION_ENABLED"]},
+    "claims": {"module": "claims", "status": "disabled", "enabled": false, "configured": false, "visible": true, "beta": false, "navigation_group": "operator", "reason": "Claims Factory has local cases in finance for this account.", "required_env_keys": ["CLAIMS_ENABLED"], "warnings": ["claims_visible_due_to_local_cases"]},
+    "photo": {"module": "photo", "status": "disabled", "enabled": false, "configured": false, "visible": false, "beta": false, "navigation_group": "hidden", "reason": "Photo Studio is disabled.", "required_env_keys": ["PHOTO_ENABLED"]},
+    "experiments": {"module": "experiments", "status": "ok", "enabled": true, "configured": true, "visible": true, "beta": false, "navigation_group": "operator", "reason": "History is available.", "required_env_keys": []},
+    "results": {"module": "results", "status": "ok", "enabled": true, "configured": true, "visible": true, "beta": false, "navigation_group": "operator", "reason": "Result tracking is available.", "required_env_keys": []}
+  },
+  "unavailable_sources": []
+}

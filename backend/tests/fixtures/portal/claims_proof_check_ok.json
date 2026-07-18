@@ -1,0 +1,12 @@
+{
+  "status": "ok",
+  "module": "claims",
+  "account_id": 1,
+  "case_id": "10",
+  "passed": true,
+  "missing_evidence": [],
+  "recommendations": ["Проверьте текст перед ручной отправкой."],
+  "warnings": [],
+  "trust_state": "provisional",
+  "data": {"evidence_count": 1, "draft_count": 1}
+}

@@ -1,0 +1,74 @@
+{
+  "status": "ok",
+  "account_id": 1,
+  "date_from": "2026-06-01",
+  "date_to": "2026-06-12",
+  "trust_state": "operational",
+  "headline": "Сегодня есть 3 задачи для роста прибыли",
+  "business_status": "risk",
+  "summary": "Маржа стабильна, но реклама и отзывы требуют внимания.",
+  "critical_count": 1,
+  "money_at_risk_amount": 18450.0,
+  "money_at_risk_confidence": "low",
+  "money_at_risk_calculation_note": "",
+  "top_sections": {
+    "profit_leaks": {"count": 1, "amount": 12000.0},
+    "reputation_risks": {"count": 1},
+    "claims_opportunities": {"count": 1, "amount": 6450.0},
+    "data_blockers": {"count": 0},
+    "stock_risks": {"count": 0}
+  },
+  "today_plan_summary": "Сначала проверьте рекламу, затем ответьте на негативный отзыв и создайте черновик претензии.",
+  "total_signals": 4,
+  "total_diagnoses": 3,
+  "estimated_impact_amount": 18450.0,
+  "estimated_impact_confidence": "low",
+  "estimated_impact_calculation_note": "",
+  "top_profit_leaks": [
+    {
+      "id": "diagnosis:ads:1001",
+      "diagnosis_type": "ads_eating_profit",
+      "module": "finance",
+      "account_id": 1,
+      "nm_id": 1001,
+      "title": "Реклама снижает прибыль",
+      "summary": "Доля рекламных расходов выше безопасного уровня.",
+      "reason": "Ads spend grew while orders stayed flat.",
+      "priority": "P1",
+      "confidence": "medium",
+      "trust_state": "operational"
+    }
+  ],
+  "root_causes": [],
+  "today_plan": [
+    {
+      "id": "finance:ads-review:1001",
+      "action_type": "review_profit",
+      "status": "new",
+      "priority": "P1",
+      "module": "finance",
+      "source_module": "finance",
+      "source_id": "ads:1001",
+      "account_id": 1,
+      "nm_id": 1001,
+      "title": "Проверить рекламные расходы",
+      "summary": "Откройте Product 360 и сравните прибыль до и после рекламы.",
+      "next_step": "Открыть Product 360 -> Деньги",
+      "trust_state": "operational",
+      "expected_effect_amount": 12000.0,
+      "can_preview": true,
+      "can_confirm": false,
+      "marketplace_change": false
+    }
+  ],
+  "product_diagnoses": [],
+  "signals": [],
+  "diagnoses": [],
+  "actions": [],
+  "module_health": [],
+  "data": {
+    "money_at_risk_estimated": true
+  },
+  "warnings": [],
+  "unavailable_sources": []
+}

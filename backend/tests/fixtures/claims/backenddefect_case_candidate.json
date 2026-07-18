@@ -1,0 +1,79 @@
+{
+  "id": "11111111-1111-1111-1111-111111111111",
+  "case_code": "DEF-2026-0042",
+  "title": "Defective return may require compensation",
+  "status": "appeal_needed",
+  "employee_note": "Matched return reason indicates a defect. Candidate requires review.",
+  "operator_note": "Proof-check required before any support submission.",
+  "matched_confidence": 0.94,
+  "matching_details": {
+    "best_source": "srid",
+    "best_score": 94
+  },
+  "expected_compensation_amount": 2345.67,
+  "claim_amount_basis": {
+    "amount": 2345.67,
+    "currency": "RUB"
+  },
+  "matched_return_record": {
+    "id": "901",
+    "nm_id": 1001,
+    "order_id": "order-42",
+    "srid": "srid-42",
+    "barcode": "barcode-42",
+    "reason": "defect",
+    "pvz_address": "must-not-leak-address"
+  },
+  "matched_return_identifiers": {
+    "nm_id": 1001,
+    "order_id": "order-42",
+    "srid": "srid-42"
+  },
+  "match_candidates": [
+    {
+      "nm_id": 1001,
+      "order_id": "order-42",
+      "srid": "srid-42",
+      "confidence": 0.94,
+      "match_reason": "srid/order_id matched"
+    }
+  ],
+  "finance_trace": {
+    "candidate_row_count": 3,
+    "matched_row_count": 1,
+    "rows": [
+      {
+        "finance_row_id": 111,
+        "operation_bucket": "return",
+        "net_effect": -2345.67,
+        "raw_payload": {
+          "buyer_phone": "+79990000000",
+          "token": "secret"
+        }
+      }
+    ]
+  },
+  "proof_check_result": "needs_review",
+  "media_items": [
+    {
+      "id": 7,
+      "file_name": "defect.jpg",
+      "customer_email": "buyer@example.test"
+    }
+  ],
+  "appeal_drafts": [
+    {
+      "id": 8,
+      "subject": "Draft",
+      "body": "Draft body"
+    }
+  ],
+  "support_tickets": [
+    {
+      "id": 9,
+      "ticket_number": "SUP-42",
+      "customer_full_name": "Private Person"
+    }
+  ],
+  "api_key": "must-not-leak"
+}

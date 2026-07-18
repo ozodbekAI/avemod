@@ -1,0 +1,60 @@
+{
+  "id": "10",
+  "case_type": "defect",
+  "external_id": null,
+  "external_status": "not_created",
+  "account_id": 1,
+  "nm_id": 1001,
+  "sku_id": null,
+  "order_id": null,
+  "srid": null,
+  "title": "Компенсация за дефект",
+  "summary": "Кандидат требует проверки доказательств.",
+  "priority": "P1",
+  "status": "draft_ready",
+  "trust_state": "provisional",
+  "amount_claimed": 6450.0,
+  "amount_approved": null,
+  "opened_at": null,
+  "updated_at": null,
+  "deadline_at": null,
+  "evidence_count": 1,
+  "draft_count": 1,
+  "data": {},
+  "warnings": [],
+  "module": "claims",
+  "description": "Локальный кейс Claims Factory. Отправка наружу еще не выполнена.",
+  "finance_trace": {"source": "finance", "period": "2026-06-01..2026-06-12"},
+  "evidence": [
+    {
+      "id": "e1",
+      "case_id": "10",
+      "module": "claims",
+      "evidence_type": "finance_trace",
+      "title": "Finance trace",
+      "description": "Safe aggregated finance evidence.",
+      "source_type": "finance",
+      "source_id": "report-row:1001",
+      "captured_at": "2026-06-12T10:05:00Z",
+      "data": {"period": "2026-06-01..2026-06-12"}
+    }
+  ],
+  "drafts": [
+    {
+      "id": "20",
+      "draft_type": "support_appeal",
+      "external_status": "draft_ready",
+      "account_id": 1,
+      "case_id": "10",
+      "title": "Appeal draft",
+      "text": "Просим проверить компенсацию по дефектному возврату.",
+      "language": "ru",
+      "status": "new",
+      "trust_state": "provisional",
+      "requires_confirmation": true
+    }
+  ],
+  "actions": [],
+  "result_events": [],
+  "unavailable_sources": []
+}

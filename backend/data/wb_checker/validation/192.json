@@ -1,0 +1,359 @@
+{
+  "subjectID": 192,
+  "subjectName": "Футболки",
+  "version": "2026-07-18",
+  "rules": {
+    "6": {
+      "name": "Вырез горловины",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "11": {
+      "name": "Покрой",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "12": {
+      "name": "Рисунок",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "13": {
+      "name": "Фактура материала",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "48": {
+      "name": "Тип карманов",
+      "type": "string",
+      "required": false,
+      "maxCount": 3,
+      "constraints": {}
+    },
+    "50": {
+      "name": "Декоративные элементы",
+      "type": "string",
+      "required": false,
+      "maxCount": 3,
+      "constraints": {}
+    },
+    "51": {
+      "name": "Любимые герои",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "11892": {
+      "name": "Уход за вещами",
+      "type": "string",
+      "required": false,
+      "maxCount": 3,
+      "constraints": {}
+    },
+    "19717": {
+      "name": "Возрастные ограничения",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "23771": {
+      "name": "Особенности модели",
+      "type": "string",
+      "required": false,
+      "maxCount": 3,
+      "constraints": {}
+    },
+    "23796": {
+      "name": "Назначение",
+      "type": "string",
+      "required": false,
+      "maxCount": 3,
+      "constraints": {}
+    },
+    "54337": {
+      "name": "Размер",
+      "type": "system",
+      "required": false,
+      "maxCount": 0,
+      "constraints": {}
+    },
+    "88952": {
+      "name": "Вес товара с упаковкой (г)",
+      "type": "number",
+      "required": false,
+      "maxCount": 0,
+      "constraints": {}
+    },
+    "88996": {
+      "name": "Плотность материала",
+      "type": "number",
+      "required": false,
+      "maxCount": 0,
+      "constraints": {}
+    },
+    "90745": {
+      "name": "Ширина упаковки",
+      "type": "number",
+      "required": false,
+      "maxCount": 0,
+      "constraints": {}
+    },
+    "90846": {
+      "name": "Высота упаковки",
+      "type": "number",
+      "required": false,
+      "maxCount": 0,
+      "constraints": {}
+    },
+    "90849": {
+      "name": "Длина упаковки",
+      "type": "number",
+      "required": false,
+      "maxCount": 0,
+      "constraints": {}
+    },
+    "165482": {
+      "name": "Рост модели на фото",
+      "type": "number",
+      "required": false,
+      "maxCount": 0,
+      "constraints": {
+        "min": 100,
+        "max": 220,
+        "integerOnly": true,
+        "message": "Значение должно быть от 100 до 220"
+      }
+    },
+    "165505": {
+      "name": "Параметры модели на фото (ОГ-ОТ-ОБ)",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {
+        "regex": "^\\d{2,3}-\\d{2,3}-\\d{2,3}$",
+        "message": "Формат: ОГ-ОТ-ОБ (например 84-60-90)"
+      }
+    },
+    "204557": {
+      "name": "Пол",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "213929": {
+      "name": "Тип ростовки",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "246961": {
+      "name": "Размер на модели",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "378533": {
+      "name": "Комплектация",
+      "type": "string",
+      "required": false,
+      "maxCount": 12,
+      "constraints": {}
+    },
+    "7488315": {
+      "name": "Коллекция",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "14177446": {
+      "name": "Бренд",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "14177449": {
+      "name": "Цвет",
+      "type": "string",
+      "required": false,
+      "maxCount": 5,
+      "constraints": {}
+    },
+    "14177450": {
+      "name": "Состав",
+      "type": "string",
+      "required": false,
+      "maxCount": 20,
+      "constraints": {}
+    },
+    "14177451": {
+      "name": "Страна производства",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "14177452": {
+      "name": "Описание",
+      "type": "system",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "14177453": {
+      "name": "Баркод",
+      "type": "string",
+      "required": false,
+      "maxCount": 0,
+      "constraints": {}
+    },
+    "14177456": {
+      "name": "Рос. размер",
+      "type": "system",
+      "required": false,
+      "maxCount": 0,
+      "constraints": {}
+    },
+    "15000000": {
+      "name": "Наименование",
+      "type": "system",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "15000001": {
+      "name": "ТНВЭД",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {
+        "regex": "^[0-9]{10}$",
+        "message": "ТН ВЭД должен содержать ровно 10 цифр"
+      }
+    },
+    "15000785": {
+      "name": "Торговое наименование",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "15001135": {
+      "name": "Номер декларации соответствия",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {
+        "minLength": 5,
+        "message": "Укажите корректный номер декларации"
+      }
+    },
+    "15001136": {
+      "name": "Номер сертификата соответствия",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {
+        "regex": "^RU\\s*[A-Z]-[A-Z]{1,2}\\.[A-Z]{2}\\d{2}\\.[A-Z]\\.\\d{5}/\\d{2}$",
+        "message": "Формат: RU C-XX.АА00.А.00000/00"
+      }
+    },
+    "15001137": {
+      "name": "Дата регистрации сертификата/декларации",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {
+        "format": "DD.MM.YYYY",
+        "message": "Формат даты: DD.MM.YYYY"
+      }
+    },
+    "15001138": {
+      "name": "Дата окончания действия сертификата/декларации",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {
+        "format": "DD.MM.YYYY",
+        "message": "Формат даты: DD.MM.YYYY"
+      }
+    },
+    "15001405": {
+      "name": "Ставка НДС",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "15001650": {
+      "name": "ИКПУ",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "15001706": {
+      "name": "Код упаковки",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "15003293": {
+      "name": "Артикул OZON",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "15003988": {
+      "name": "NTIN",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "15003989": {
+      "name": "Код ТРУ 1",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "15003990": {
+      "name": "Код ТРУ 2",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    },
+    "15003991": {
+      "name": "Количество штук в товаре по ЭС",
+      "type": "number",
+      "required": false,
+      "maxCount": 0,
+      "constraints": {}
+    },
+    "62945173": {
+      "name": "Свидетельство о регистрации СГР",
+      "type": "string",
+      "required": false,
+      "maxCount": 1,
+      "constraints": {}
+    }
+  }
+}

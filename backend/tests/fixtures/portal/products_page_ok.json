@@ -1,0 +1,37 @@
+{
+  "total": 1,
+  "limit": 50,
+  "offset": 0,
+  "items": [
+    {
+      "nm_id": 1001,
+      "title": "Товар A",
+      "name": "Товар A",
+      "vendor_code": "A-1001",
+      "brand": "Demo",
+      "subject_name": "Accessories",
+      "revenue": 120000.0,
+      "for_pay": 95000.0,
+      "estimated_profit": 18000.0,
+      "profit": 18000.0,
+      "margin": 0.15,
+      "ads_spend": 9000.0,
+      "stock_qty": 12.0,
+      "cost_state": "ok",
+      "stock_state": "ok",
+      "card_quality_state": "ok",
+      "reputation_state": "risk",
+      "cases_state": "candidate",
+      "data_trust_state": "operational",
+      "open_actions_count": 2,
+      "status": "risk",
+      "trust_state": "operational",
+      "priority_score": 87.0
+    }
+  ],
+  "summary": {
+    "risk_count": 1,
+    "total_revenue": 120000.0
+  },
+  "unavailable_sources": []
+}

@@ -1,0 +1,160 @@
+name: Deploy Finance to VPS Server on Push
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[deploy]') }}
+    runs-on: ubuntu-latest
+
+    env:
+      USER: ${{ secrets.FINANCE_SERVER_USER || 'root' }}
+      SERVER_IP: ${{ secrets.FINANCE_SERVER_HOST || '195.133.66.192' }}
+      SERVER_PORT: ${{ secrets.FINANCE_SERVER_PORT || '22' }}
+      RELEASE_ID: ${{ github.sha }}
+      BACKEND_DIR: /opt/finance-backend
+      FRONTEND_DIR: /opt/finance-frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY || secrets.FINANCE_SERVER_SSH_KEY }}
+
+      - name: Add server to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "$SERVER_PORT" -H "$SERVER_IP" >> ~/.ssh/known_hosts
+
+      - name: Prepare remote release directories
+        run: |
+          ssh -p "$SERVER_PORT" "$USER@$SERVER_IP" \
+            "mkdir -p \"$BACKEND_DIR/releases/$RELEASE_ID\" \"$FRONTEND_DIR/releases/$RELEASE_ID\""
+
+      - name: Sync backend release to server
+        run: |
+          rsync -az --delete \
+            --exclude '.env' \
+            --exclude '.env.*' \
+            --exclude '.venv/' \
+            --exclude '__pycache__/' \
+            --exclude '*.pyc' \
+            --exclude '.pytest_cache/' \
+            --exclude '.mypy_cache/' \
+            --exclude '.ruff_cache/' \
+            --exclude 'logs/' \
+            --exclude 'reports/' \
+            --exclude '_incoming_projects/' \
+            --exclude '*_extracted/' \
+            --exclude 'source/' \
+            --exclude 'exports/' \
+            --exclude 'audit_*/' \
+            --exclude 'audit-*/' \
+            --exclude 'audit-bundle*/' \
+            --exclude 'audit_bundle*/' \
+            --exclude 'raw-audit*/' \
+            --exclude 'raw_audit*/' \
+            --exclude 'backend_truth_verification_*/' \
+            --exclude 'vpn_qr_downloads/' \
+            --exclude '*.zip' \
+            --exclude '*.sqlite' \
+            --exclude '*.sqlite3' \
+            --exclude '*.db' \
+            --exclude '*.db-shm' \
+            --exclude '*.db-wal' \
+            --exclude '*.xlsx' \
+            --exclude '*.xls' \
+            --exclude '*audit*.csv' \
+            --exclude '*export*.csv' \
+            --exclude '*.har' \
+            --exclude '*.trace' \
+            --exclude '*.log' \
+            --exclude 'htmlcov/' \
+            --exclude '*.egg-info/' \
+            -e "ssh -p $SERVER_PORT" \
+            backend/ "$USER@$SERVER_IP:$BACKEND_DIR/releases/$RELEASE_ID/"
+
+      - name: Backend - install deps, migrate and restart
+        run: |
+          ssh -p "$SERVER_PORT" "$USER@$SERVER_IP" \
+            "bash \"$BACKEND_DIR/releases/$RELEASE_ID/deploy/remote_deploy_finance_backend.sh\" \"$RELEASE_ID\""
+
+      - name: Sync frontend release to server
+        run: |
+          rsync -az --delete \
+            --exclude '.env' \
+            --exclude '.env.*' \
+            --exclude 'node_modules/' \
+            --exclude 'dist/' \
+            --exclude '.tanstack/tmp/' \
+            --exclude '.screenshots/' \
+            --exclude 'playwright-report/' \
+            --exclude 'test-results/' \
+            --exclude '*.zip' \
+            --exclude '*.log' \
+            -e "ssh -p $SERVER_PORT" \
+            frontend/ "$USER@$SERVER_IP:$FRONTEND_DIR/releases/$RELEASE_ID/"
+
+      - name: Frontend - build and restart
+        run: |
+          ssh -p "$SERVER_PORT" "$USER@$SERVER_IP" \
+            "FRONTEND_DIR=\"$FRONTEND_DIR\" RELEASE_ID=\"$RELEASE_ID\" bash -s" <<'SSHEOF'
+            set -euo pipefail
+
+            APP_ROOT="$FRONTEND_DIR"
+            RELEASE_DIR="$APP_ROOT/releases/$RELEASE_ID"
+            CURRENT_LINK="$APP_ROOT/current"
+            SERVICE_NAME="finance-frontend"
+
+            cd "$RELEASE_DIR"
+
+            echo ">>> [FRONTEND 1/4] node/npm version..."
+            node -v
+            npm -v
+
+            echo ">>> [FRONTEND 2/4] npm install..."
+            if [ -f "package-lock.json" ]; then
+              npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+            else
+              npm install --no-audit --no-fund
+            fi
+
+            echo ">>> [FRONTEND 3/4] npm run build..."
+            npm run build
+
+            if [ ! -f "serve.mjs" ]; then
+              echo "Missing serve.mjs in frontend release" >&2
+              exit 1
+            fi
+
+            echo ">>> [FRONTEND 4/4] Service restart..."
+            install -m 644 "$RELEASE_DIR/deploy/finance-frontend.service" /etc/systemd/system/finance-frontend.service
+            chown -R www-data:www-data "$APP_ROOT"
+            ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
+            chown -h www-data:www-data "$CURRENT_LINK"
+
+            systemctl daemon-reload
+            systemctl enable "$SERVICE_NAME"
+            systemctl restart "$SERVICE_NAME"
+            sleep 3
+            systemctl is-active "$SERVICE_NAME" || (journalctl -u "$SERVICE_NAME" -n 50 --no-pager && exit 1)
+
+            for _ in $(seq 1 30); do
+              if curl --max-time 5 -fsS http://127.0.0.1:3016 >/dev/null; then
+                echo "Frontend is ready"
+                exit 0
+              fi
+              sleep 1
+            done
+
+            echo "frontend health check did not become ready in time" >&2
+            journalctl -u "$SERVICE_NAME" -n 50 --no-pager
+            exit 1
+          SSHEOF

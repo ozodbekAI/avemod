@@ -1,0 +1,20 @@
+{
+  "module": "claims",
+  "event_type": "submit_blocked_confirmation_required",
+  "account_id": 1,
+  "case_id": "10",
+  "draft_id": "20",
+  "title": "Требуется ручное подтверждение",
+  "message": "Отправка претензии требует явного confirm=true.",
+  "success": false,
+  "occurred_at": "2026-06-12T10:10:00Z",
+  "data": {
+    "marketplace_change": false,
+    "external_submit_attempted": false,
+    "external_submit_enabled": false,
+    "external_ticket_created": false,
+    "local_status": "draft_ready",
+    "user_message": "Подтвердите действие вручную. Без confirm=true внешняя отправка невозможна."
+  },
+  "warnings": ["manual_confirm_required"]
+}

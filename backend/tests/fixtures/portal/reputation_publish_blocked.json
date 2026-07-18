@@ -1,0 +1,12 @@
+{
+  "module": "reputation",
+  "event_type": "publish_blocked_confirmation_required",
+  "account_id": 1,
+  "draft_id": "draft-review-fb1",
+  "title": "Требуется ручное подтверждение",
+  "message": "Публикация требует явного confirm=true.",
+  "success": false,
+  "occurred_at": "2026-06-12T10:00:00Z",
+  "data": {"marketplace_change": false},
+  "warnings": ["manual_confirm_required"]
+}

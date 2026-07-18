@@ -1,0 +1,28 @@
+{
+  "status": "ok",
+  "module": "claims",
+  "account_id": 1,
+  "total": 1,
+  "limit": 50,
+  "offset": 0,
+  "items": [
+    {
+      "id": "10",
+      "case_type": "defect",
+      "external_status": "not_created",
+      "account_id": 1,
+      "nm_id": 1001,
+      "title": "Компенсация за дефект",
+      "summary": "Кандидат требует проверки доказательств.",
+      "priority": "P1",
+      "status": "draft_ready",
+      "trust_state": "provisional",
+      "amount_claimed": 6450.0,
+      "evidence_count": 1,
+      "draft_count": 1
+    }
+  ],
+  "warnings": [],
+  "unavailable_sources": [],
+  "trust_state": "operational"
+}

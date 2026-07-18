@@ -1,0 +1,99 @@
+{
+  "account": {
+    "id": 1,
+    "name": "Main Seller",
+    "seller_name": "Demo Seller",
+    "external_account_id": "seller-1",
+    "timezone": "Europe/Moscow",
+    "is_active": true
+  },
+  "date_range": {"date_from": "2026-06-01", "date_to": "2026-06-12"},
+  "date_from": "2026-06-01",
+  "date_to": "2026-06-12",
+  "money_summary": {
+    "status": "ok",
+    "kpis": {
+      "revenue": 250000.0,
+      "profit": 42000.0,
+      "margin": 0.168
+    }
+  },
+  "data_trust": {"trust_state": "operational"},
+  "data_blockers": {"count": 0, "items": []},
+  "cost_status": {"status": "ok", "missing_cost_count": 0},
+  "doctor_summary": {
+    "headline": "Сегодня есть 3 задачи для роста прибыли",
+    "business_status": "risk",
+    "critical_count": 1
+  },
+  "top_problems": [
+    {"type": "ads_eating_profit", "title": "Реклама снижает прибыль", "priority": "P1"}
+  ],
+  "operator_actions": [],
+  "product_risks": [],
+  "reputation": {"status": "ok", "negative_unanswered_count": 1},
+  "claims": {"status": "ok", "candidate_count": 1, "local_cases_count": 1},
+  "top_actions": [
+    {
+      "id": "finance:ads-review:1001",
+      "action_id": 101,
+      "source": "finance_actions",
+      "source_module": "finance",
+      "source_id": "ads:1001",
+      "account_id": 1,
+      "action_type": "review_profit",
+      "title": "Проверить рекламные расходы",
+      "priority": "P1",
+      "severity": "high",
+      "status": "new",
+      "reason": "Доля рекламы выше безопасного уровня.",
+      "next_step": "Открыть Product 360 -> Деньги",
+      "expected_effect_amount": 12000.0,
+      "confidence": "medium",
+      "nm_id": 1001,
+      "can_update_status": true,
+      "can_update": true,
+      "guided_fix": {
+        "route_key": "product_360_money",
+        "nm_id": 1001,
+        "label": "Открыть деньги товара",
+        "confirm_required": false,
+        "marketplace_change": false
+      }
+    }
+  ],
+  "top_products": [
+    {
+      "nm_id": 1001,
+      "title": "Товар A",
+      "vendor_code": "A-1001",
+      "revenue": 120000.0,
+      "estimated_profit": 18000.0,
+      "margin": 0.15,
+      "stock_qty": 12.0,
+      "cost_state": "ok",
+      "stock_state": "ok",
+      "card_quality_state": "ok",
+      "reputation_state": "risk",
+      "cases_state": "candidate",
+      "open_actions_count": 2,
+      "status": "risk",
+      "trust_state": "operational"
+    }
+  ],
+  "module_health": {
+    "finance": {"module": "finance", "status": "ok", "enabled": true, "configured": true, "visible": true, "beta": false, "navigation_group": "core", "reason": "Finance core is available.", "required_env_keys": []},
+    "doctor": {"module": "doctor", "status": "disabled", "enabled": false, "configured": false, "visible": false, "beta": false, "navigation_group": "hidden", "reason": "Legacy profit diagnostics are hidden; Action Center is the primary problem surface.", "required_env_keys": []},
+    "actions": {"module": "actions", "status": "ok", "enabled": true, "configured": true, "visible": true, "beta": false, "navigation_group": "core", "reason": "Action Center uses finance database.", "required_env_keys": []},
+    "products": {"module": "products", "status": "ok", "enabled": true, "configured": true, "visible": true, "beta": false, "navigation_group": "core", "reason": "Products use finance data.", "required_env_keys": []},
+    "checker": {"module": "checker", "status": "not_configured", "enabled": true, "configured": false, "visible": true, "beta": false, "navigation_group": "operator", "reason": "Set CHECKER_BASE_URL to enable checker data.", "required_env_keys": ["CHECKER_BASE_URL"]},
+    "stockops": {"module": "stockops", "status": "not_configured", "enabled": true, "configured": false, "visible": true, "beta": true, "navigation_group": "beta", "reason": "StockOps is optional.", "required_env_keys": ["STOCKOPS_BASE_URL"]},
+    "grouping": {"module": "grouping", "status": "disabled", "enabled": false, "configured": false, "visible": false, "beta": true, "navigation_group": "hidden", "reason": "Grouping beta is disabled.", "required_env_keys": ["GROUPING_ENABLED"]},
+    "reputation": {"module": "reputation", "status": "ok", "enabled": true, "configured": true, "visible": true, "beta": false, "navigation_group": "operator", "reason": "Reputation Operator is available.", "required_env_keys": []},
+    "claims": {"module": "claims", "status": "disabled", "enabled": false, "configured": false, "visible": true, "beta": false, "navigation_group": "operator", "reason": "Claims Factory has local cases in finance for this account.", "required_env_keys": ["CLAIMS_ENABLED"]},
+    "photo": {"module": "photo", "status": "disabled", "enabled": false, "configured": false, "visible": false, "beta": false, "navigation_group": "hidden", "reason": "Photo Studio is disabled.", "required_env_keys": ["PHOTO_ENABLED"]},
+    "experiments": {"module": "experiments", "status": "ok", "enabled": true, "configured": true, "visible": true, "beta": false, "navigation_group": "operator", "reason": "History is available.", "required_env_keys": []},
+    "results": {"module": "results", "status": "ok", "enabled": true, "configured": true, "visible": true, "beta": false, "navigation_group": "operator", "reason": "Result tracking is available.", "required_env_keys": []}
+  },
+  "unavailable_sources": []
+}

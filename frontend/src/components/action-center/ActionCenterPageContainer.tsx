@@ -1,0 +1,5709 @@
+// @ts-nocheck
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Activity,
+  AlertCircle,
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  BarChart3,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  ClipboardCheck,
+  Clock3,
+  Database,
+  ExternalLink,
+  Eye,
+  FileText,
+  Gauge,
+  ListChecks,
+  Loader2,
+  Lock,
+  PackageSearch,
+  Play,
+  Plus,
+  RefreshCw,
+  RotateCw,
+  Search,
+  ShieldCheck,
+  SkipForward,
+  SlidersHorizontal,
+  Sparkles,
+  TrendingDown,
+  TrendingUp,
+  UserRound,
+  X,
+} from "lucide-react";
+import { toast } from "sonner";
+
+import { EndpointError } from "@/components/EndpointError";
+import { NoAccountSelected } from "@/components/portal/NoAccountSelected";
+import { PageHeader, PageShell } from "@/components/PageShell";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Progress } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
+import { useAccounts } from "@/lib/account-context";
+import { useAuth } from "@/lib/auth-context";
+import { useDateRange } from "@/lib/date-range-context";
+import { api } from "@/lib/api";
+import { API_ENDPOINTS } from "@/lib/endpoints";
+import { formatMoney, formatNumber } from "@/lib/format";
+import {
+  adaptActionCenterItem,
+  dataFreshnessBlockingLabel,
+  type ActionCenterItem,
+  type ActionCenterSolveMapStep,
+} from "@/lib/action-center-contract";
+import {
+  ACTION_CENTER_DEFAULT_FILTERS,
+  ACTION_CENTER_SAVED_VIEWS,
+  ACTION_CENTER_SORT_OPTIONS,
+  actionCenterMatchesFilters,
+  actionCenterSearchFromState,
+  actionCenterShouldHideBetaSignal,
+  sortActionCenterItems,
+  type ActionCenterFilterState,
+} from "@/lib/action-center-filters";
+import {
+  IMPACT_TYPE_FILTERS,
+  PRIORITIES,
+  SEVERITY_FILTERS,
+  SOURCE_MODULES,
+  STATUSES,
+  TRUST_STATE_FILTERS,
+  priorityLabel,
+  sourceModuleLabel,
+} from "@/lib/action-center-labels";
+import {
+  assigneeLabel,
+  dynamicProblemInstanceId,
+  formatDeadline,
+  isBetaAction,
+  isClosedAction,
+  isDataBlockerAction,
+  isDynamicProblemAction,
+  isOverdueAction,
+  isSystemHandledAction,
+  isTestOnlyProblem,
+  isUrgentAction,
+  roleRank,
+  userAccountRole,
+  waitsForRecheckAction,
+} from "@/lib/action-center-status";
+import {
+  guidedFixHref,
+  guidedFixLabel,
+  primaryActionForItem,
+  primaryDisabledActionForItem,
+  resultsHrefForAction,
+} from "@/lib/action-center-actions";
+import { extractActions, normalizeText } from "@/lib/action-center-utils";
+import {
+  problemCodeLabel,
+  problemImpactLabel,
+  problemResultStatusLabel,
+  problemStatusLabel,
+  problemTrustLabel,
+} from "@/lib/problem-ux-copy";
+import {
+  createManualPortalAction,
+  fixCardQualityIssue,
+  fetchPortalProducts,
+  previewCardQualityIssueApply,
+  recheckProblemInstance,
+  type PortalAssignableUser,
+  type PortalProductRow,
+} from "@/lib/portal";
+import {
+  fetchCostsMissing,
+  saveInlineCosts,
+  type CostsMissingItem,
+} from "@/lib/money-endpoints";
+import { useActionCenterData } from "@/hooks/action-center/useActionCenterData";
+import {
+  useActionCenterFilters,
+  type ActionCenterSearch,
+} from "@/hooks/action-center/useActionCenterFilters";
+import { useActionCenterMutations } from "@/hooks/action-center/useActionCenterMutations";
+
+const MAX_QUEUE_ITEMS = 80;
+
+const CLOSED_STATUSES = new Set([
+  "done",
+  "resolved",
+  "closed",
+  "ignored",
+  "dismissed",
+  "rejected",
+]);
+
+const STATUS_TONE: Record<string, string> = {
+  new: "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  in_progress:
+    "border-amber-500/35 bg-amber-500/10 text-amber-800 dark:text-amber-300",
+  done: "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  resolved:
+    "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  ignored: "border-muted bg-muted text-muted-foreground",
+  blocked: "border-red-500/35 bg-red-500/10 text-red-700 dark:text-red-300",
+  postponed:
+    "border-violet-500/35 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+};
+
+const PRIORITY_TONE: Record<string, string> = {
+  P0: "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300",
+  P1: "border-orange-500/40 bg-orange-500/10 text-orange-700 dark:text-orange-300",
+  P2: "border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  P3: "border-border bg-muted text-muted-foreground",
+  P4: "border-border bg-muted text-muted-foreground",
+};
+
+const ACTION_LABELS: Record<string, string> = {
+  open_price_review: "Открыть проверку цены",
+  review_price: "Проверить цену",
+  pricing_review: "Проверить цену",
+  open_data_fix: "Открыть исправление данных",
+  data_fix: "Исправить данные",
+  review_cost: "Заполнить себестоимость",
+  upload_cost: "Загрузить себестоимость",
+  map_sku: "Сопоставить SKU",
+  classify_expense: "Разнести расход",
+  open_ads_dashboard: "Открыть рекламу",
+  review_ads: "Проверить рекламу",
+  pause_ads: "Остановить рекламу",
+  lower_ads: "Снизить рекламу",
+  review_bids: "Проверить ставки",
+  open_promo_planner: "Открыть промо",
+  promo_planner: "Проверить промо",
+  review_promo: "Проверить промо",
+  reduce_promo: "Снизить промо",
+  open_supply_planner: "Открыть поставки",
+  plan_supply: "Запланировать поставку",
+  run_checker: "Проверить карточку",
+  check_card_quality: "Проверить карточку",
+  review_content: "Проверить карточку",
+  recheck: "Запустить перепроверку",
+  open_product: "Открыть товар",
+  open_results: "Открыть результаты",
+  manual_review: "Выполнить задачу",
+  manual_title_update: "Изменить название",
+  manual_content_update: "Улучшить карточку",
+  manual_photo_update: "Проверить фото",
+  manual_price_check: "Проверить цену",
+  manual_other: "Выполнить вручную",
+};
+
+// Reputation remains a beta action source:
+// { value: "reputation", label: "Репутация" }
+// reputation: () => "/reputation"
+// external_reputation_recommendation: подготовьте черновик, проверьте canUpdateReasonLabel и публикуйте только после ручного подтверждения.
+// Checker evidence contract: EvidenceDrawer, EvidenceButton, Перепроверить,
+// checker-product-quality, ActionCenterHistoryTimeline, source_sync_state,
+// can_update_reason, updateActionBySource.
+
+const MANUAL_TASK_PRESETS = [
+  {
+    key: "title_update",
+    label: "Название",
+    hint: "SEO title, смысл, поиск WB",
+    title: "Изменить название товара",
+    description:
+      "Проверьте текущее название, подготовьте нормальное SEO-название и обновите карточку.",
+    icon: <FileText className="h-4 w-4" />,
+    tone: "border-sky-500/30 bg-sky-500/5 text-sky-900 dark:text-sky-100",
+  },
+  {
+    key: "content_update",
+    label: "Карточка",
+    hint: "Описание и характеристики",
+    title: "Улучшить карточку товара",
+    description:
+      "Проверить описание, характеристики и визуальную подачу товара.",
+    icon: <Sparkles className="h-4 w-4" />,
+    tone: "border-emerald-500/30 bg-emerald-500/5 text-emerald-900 dark:text-emerald-100",
+  },
+  {
+    key: "photo_update",
+    label: "Фото",
+    hint: "Главное и доп. фото",
+    title: "Проверить фото товара",
+    description:
+      "Проверить главное фото и дополнительные изображения, подготовить замену при необходимости.",
+    icon: <Eye className="h-4 w-4" />,
+    tone: "border-violet-500/30 bg-violet-500/5 text-violet-900 dark:text-violet-100",
+  },
+  {
+    key: "price_check",
+    label: "Цена",
+    hint: "Цена, скидка, маржа",
+    title: "Проверить цену товара",
+    description: "Проверить цену, скидку и безопасную маржу перед изменениями.",
+    icon: <Gauge className="h-4 w-4" />,
+    tone: "border-amber-500/30 bg-amber-500/5 text-amber-900 dark:text-amber-100",
+  },
+  {
+    key: "other",
+    label: "Другое",
+    hint: "Своя инструкция",
+    title: "Ручная задача по товару",
+    description: "",
+    icon: <ListChecks className="h-4 w-4" />,
+    tone: "border-border bg-muted/25 text-foreground",
+  },
+];
+
+function norm(value: unknown): string {
+  return normalizeText(value).replaceAll(" ", "_");
+}
+
+function hasCyrillicText(value: unknown): boolean {
+  return /[А-Яа-яЁё]/.test(String(value ?? ""));
+}
+
+function isClosedStatus(value: unknown): boolean {
+  return CLOSED_STATUSES.has(norm(value));
+}
+
+function compactDate(value?: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString("ru-RU", {
+    day: "2-digit",
+    month: "short",
+  });
+}
+
+function compactDateTime(value?: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatValue(value: unknown, unit?: string | null): string {
+  if (value == null || value === "") return "—";
+  if (typeof value === "number") {
+    if (unit === "RUB" || unit === "₽") return formatMoney(value);
+    if (unit === "%" || unit === "percent") return `${formatNumber(value)}%`;
+    return formatNumber(value);
+  }
+  if (
+    typeof value === "string" &&
+    value.trim() &&
+    !Number.isNaN(Number(value))
+  ) {
+    const numeric = Number(value);
+    if (unit === "RUB" || unit === "₽") return formatMoney(numeric);
+    if (unit === "%" || unit === "percent") return `${formatNumber(numeric)}%`;
+    return formatNumber(numeric);
+  }
+  if (typeof value === "boolean") return value ? "да" : "нет";
+  return String(value);
+}
+
+function humanMetricLabel(value: unknown): string {
+  const key = norm(value);
+  const labels: Record<string, string> = {
+    unit_profit: "Прибыль на единицу",
+    margin_pct: "Маржа",
+    cost_price: "Себестоимость",
+    price: "Цена",
+    price_current: "Текущая цена",
+    price_after_discount: "Цена после скидки",
+    sales_30d: "Продажи за 30 дней",
+    stock_qty: "Остаток",
+    days_of_stock: "Запас в днях",
+    avg_daily_sales_7d: "Средние продажи 7 дней",
+    avg_daily_sales_14d: "Средние продажи 14 дней",
+    ad_spend_7d: "Реклама за 7 дней",
+    promo_spend_30d: "Промо за 30 дней",
+    commission: "Комиссия",
+    logistics_cost: "Логистика",
+  };
+  return labels[key] ?? String(value ?? "Факт").replaceAll("_", " ");
+}
+
+function formatFactValue(fact: any): string {
+  const metric = norm(fact?.metric_code ?? fact?.label);
+  const unit = fact?.unit;
+  if (metric.includes("margin") || metric.endsWith("_pct") || unit === "%") {
+    return formatValue(fact?.value, "%");
+  }
+  if (
+    metric.includes("price") ||
+    metric.includes("profit") ||
+    metric.includes("cost") ||
+    metric.includes("spend") ||
+    metric.includes("revenue")
+  ) {
+    return formatValue(fact?.value, "₽");
+  }
+  return formatValue(fact?.value, unit);
+}
+
+function humanStatusLabel(value: unknown): string {
+  const key = norm(value);
+  const labels: Record<string, string> = {
+    open: "Открыта",
+    new: "Новая",
+    acknowledged: "Принята",
+    in_progress: "В работе",
+    done: "Выполнена",
+    resolved: "Решена",
+    closed: "Закрыта",
+    ignored: "Пропущена",
+    dismissed: "Отклонена",
+    rejected: "Отклонена",
+    blocked: "Заблокирована",
+    postponed: "Отложена",
+    snoozed: "Отложена",
+  };
+  return labels[key] ?? problemStatusLabel(key);
+}
+
+function humanResultLabel(value: unknown): string {
+  const key = norm(value);
+  const labels: Record<string, string> = {
+    pending_data: "Ждём данные",
+    improved: "Улучшение есть",
+    worse: "Стало хуже",
+    neutral: "Без изменений",
+    not_enough_data: "Не хватает данных",
+  };
+  return labels[key] ?? problemResultStatusLabel(key);
+}
+
+function humanActionLabel(value: unknown): string {
+  const key = norm(value);
+  const fallback = String(value ?? "")
+    .replaceAll("_", " ")
+    .trim();
+  return ACTION_LABELS[key] ?? (fallback || "Открыть действие");
+}
+
+function savedViewLabel(value: unknown): string {
+  const key = String(value ?? "all");
+  return (
+    ACTION_CENTER_SAVED_VIEWS.find((view) => view.value === key)?.label ??
+    "Все задачи"
+  );
+}
+
+function problemTitle(item: ActionCenterItem): string {
+  if (norm(item.source_module) === "manual") return item.title;
+  const codeLabel = problemCodeLabel(actionCode(item));
+  return codeLabel && codeLabel !== "Проверка данных" ? codeLabel : item.title;
+}
+
+function objectLabel(item: ActionCenterItem): string {
+  return (
+    [item.nm_id ? `nm ${item.nm_id}` : null, item.vendor_code]
+      .filter(Boolean)
+      .join(" / ") || "Объект не указан"
+  );
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function firstArrayImage(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+  for (const item of value) {
+    if (typeof item === "string" && item.trim()) return item.trim();
+    if (item && typeof item === "object") {
+      const obj = item as Record<string, unknown>;
+      const url = firstString(
+        obj.c516x688,
+        obj.big,
+        obj.c246x328,
+        obj.square,
+        obj.url,
+        obj.photo,
+        obj.src,
+        obj.tm,
+        obj.thumbnail,
+        obj.preview,
+      );
+      if (url) return url;
+    }
+  }
+  return null;
+}
+
+function wbBasketHost(vol: number): string {
+  const ranges: Array<[number, number]> = [
+    [143, 1],
+    [287, 2],
+    [431, 3],
+    [719, 4],
+    [1007, 5],
+    [1061, 6],
+    [1115, 7],
+    [1169, 8],
+    [1313, 9],
+    [1601, 10],
+    [1655, 11],
+    [1919, 12],
+    [2045, 13],
+    [2189, 14],
+    [2405, 15],
+    [2621, 16],
+    [2837, 17],
+    [3053, 18],
+    [3269, 19],
+    [3485, 20],
+    [3701, 21],
+    [3917, 22],
+    [4133, 23],
+    [4349, 24],
+    [4565, 25],
+    [4877, 26],
+    [5193, 27],
+    [5509, 28],
+    [5825, 29],
+    [6141, 30],
+  ];
+  const basket = ranges.find(([maxVol]) => vol <= maxVol)?.[1] ?? 30;
+  return `basket-${String(basket).padStart(2, "0")}.wbbasket.ru`;
+}
+
+function wbImageCandidates(nmId: string | number | null | undefined): string[] {
+  const n = Number(nmId);
+  if (!Number.isFinite(n) || n <= 0) return [];
+  const vol = Math.floor(n / 100000);
+  const part = Math.floor(n / 1000);
+  const host = wbBasketHost(vol);
+  return [
+    `https://${host}/vol${vol}/part${part}/${n}/images/c246x328/1.webp`,
+  ];
+}
+
+function proxyWbImageUrl(src: string | null): string | null {
+  if (!src) return null;
+  return src;
+}
+
+function itemImageCandidates(item: ActionCenterItem | null): string[] {
+  if (!item) return [];
+  const payload = itemPayload(item);
+  const raw =
+    typeof item.raw === "object" && item.raw
+      ? (item.raw as Record<string, unknown>)
+      : {};
+  const sources = [
+    item.image_url,
+    item.photo_url,
+    item.photo,
+    item.thumbnail,
+    payload.image_url,
+    payload.photo_url,
+    payload.photo,
+    payload.thumbnail,
+    payload.main_photo_url,
+    firstArrayImage(payload.photos),
+    firstArrayImage(payload.images),
+    raw.image_url,
+    raw.photo_url,
+    raw.photo,
+    raw.thumbnail,
+    firstArrayImage(raw.photos),
+    firstArrayImage(raw.images),
+  ];
+  const primary = firstString(...sources) ?? wbImageCandidates(item.nm_id)[0] ?? null;
+  const displayUrl = proxyWbImageUrl(primary);
+  return displayUrl ? [displayUrl] : [];
+}
+
+function rowImageCandidates(row: CostsMissingItem | null): string[] {
+  if (!row) return [];
+  const obj = row as Record<string, unknown>;
+  const sources = [
+    obj.image_url,
+    obj.photo_url,
+    obj.photo,
+    obj.thumbnail,
+    obj.main_photo_url,
+    firstArrayImage(obj.photos),
+    firstArrayImage(obj.images),
+  ];
+  const primary = firstString(...sources) ?? wbImageCandidates(row.nm_id)[0] ?? null;
+  const displayUrl = proxyWbImageUrl(primary);
+  return displayUrl ? [displayUrl] : [];
+}
+
+function productRowImageCandidates(row: PortalProductRow | null): string[] {
+  if (!row) return [];
+  const obj = row as Record<string, unknown>;
+  const sources = [
+    obj.image_url,
+    obj.photo_url,
+    obj.photo,
+    obj.thumbnail,
+    obj.thumbnail_url,
+    obj.main_photo_url,
+    firstArrayImage(obj.photos),
+    firstArrayImage(obj.images),
+  ];
+  const primary = firstString(...sources) ?? wbImageCandidates(row.nm_id)[0] ?? null;
+  const displayUrl = proxyWbImageUrl(primary);
+  return displayUrl ? [displayUrl] : [];
+}
+
+function ProductThumb({
+  candidates,
+  label,
+  className = "h-16 w-16",
+}: {
+  candidates: string[];
+  label: string;
+  className?: string;
+}) {
+  const uniqueCandidates = useMemo(
+    () => [...new Set(candidates.filter(Boolean))],
+    [candidates],
+  );
+  const [idx, setIdx] = useState(0);
+
+  useEffect(() => {
+    setIdx(0);
+  }, [uniqueCandidates.join("|")]);
+
+  const baseClass = `relative shrink-0 overflow-hidden rounded-md border bg-muted shadow-sm ${className}`;
+  if (!uniqueCandidates.length || idx >= uniqueCandidates.length) {
+    return (
+      <div
+        className={`${baseClass} flex items-center justify-center text-muted-foreground`}
+      >
+        <PackageSearch className="h-5 w-5" />
+      </div>
+    );
+  }
+
+  return (
+    <div className={baseClass}>
+      <img
+        key={uniqueCandidates[idx]}
+        src={uniqueCandidates[idx]}
+        alt={label}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        className="h-full w-full object-cover"
+        onError={() => setIdx((value) => value + 1)}
+      />
+    </div>
+  );
+}
+
+function itemPayload(item: ActionCenterItem): Record<string, any> {
+  return {
+    ...(typeof item.raw === "object" && item.raw ? item.raw : {}),
+    ...(typeof item.payload === "object" && item.payload ? item.payload : {}),
+  };
+}
+
+function numberFromUnknown(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/\s/g, "").replace(",", "."));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function isManualTask(item: ActionCenterItem | null): boolean {
+  return (
+    norm(item?.source_module) === "manual" ||
+    Boolean(item && itemPayload(item).manual_task)
+  );
+}
+
+function manualTaskProducts(item: ActionCenterItem): PortalProductRow[] {
+  const payload = itemPayload(item);
+  const rows = Array.isArray(payload.selected_products)
+    ? payload.selected_products
+    : [];
+  return rows
+    .map((row: any) => ({
+      nm_id: Number(row?.nm_id),
+      sku_id: numberFromUnknown(row?.sku_id),
+      title: firstString(row?.title, row?.name),
+      vendor_code: firstString(row?.vendor_code, row?.article),
+      photo_url: firstString(row?.photo_url, row?.image_url, row?.thumbnail),
+      thumbnail: firstString(row?.thumbnail, row?.photo_url, row?.image_url),
+    }))
+    .filter(
+      (row) => Number.isFinite(row.nm_id) && row.nm_id > 0,
+    ) as PortalProductRow[];
+}
+
+function productRowTitle(row: PortalProductRow | null): string {
+  if (!row) return "Товар";
+  return (
+    firstString(row.title, row.name, row.vendor_code, row.article) ||
+    `nm ${row.nm_id}`
+  );
+}
+
+function productRowSubtitle(row: PortalProductRow | null): string {
+  if (!row) return "";
+  return [
+    row.nm_id ? `nm ${row.nm_id}` : null,
+    row.vendor_code || row.article,
+    row.subject_name,
+  ]
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function toDateTimeLocalValue(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function defaultManualDeadline(): string {
+  const date = new Date();
+  date.setDate(date.getDate() + 2);
+  date.setHours(18, 0, 0, 0);
+  return toDateTimeLocalValue(date);
+}
+
+function dateTimeLocalToIso(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+
+function parseMoneyDraft(value: string, optional = false): number | null {
+  const trimmed = String(value ?? "")
+    .replace(/\s/g, "")
+    .replace(",", ".")
+    .trim();
+  if (!trimmed) return optional ? 0 : null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.round(parsed * 100) / 100;
+}
+
+const INLINE_COST_CODES = new Set([
+  "missing_cost_blocks_profit",
+  "missing_manual_cost",
+  "seller_other_expense_missing",
+]);
+
+const INLINE_CARD_TEXT_CODES = new Set([
+  "title_missing",
+  "no_title",
+  "title_too_short",
+  "title_too_long",
+  "title_policy_violation",
+  "title_repeated_words",
+  "title_excessive_punctuation_caps",
+  "title_equals_vendor_code",
+  "description_missing",
+  "no_description",
+  "description_too_short",
+  "description_too_long",
+  "description_policy_violation",
+  "description_duplicates_title",
+  "description_no_useful_details",
+]);
+
+const INLINE_SKU_MAPPING_CODES = new Set([
+  "unmatched_sku",
+  "manual_cost_unresolved_sku",
+  "manual_cost_ambiguous_match",
+  "sku_mapping",
+  "map_sku",
+]);
+
+function isInlineCostAction(item: ActionCenterItem): boolean {
+  const payload = itemPayload(item);
+  const text = [
+    actionCode(item),
+    payload.code,
+    payload.issue_code,
+    payload.problem_code,
+    item.title,
+  ]
+    .map(norm)
+    .join(" ");
+  return (
+    [...INLINE_COST_CODES].some((code) => text.includes(code)) ||
+    text.includes("себесто")
+  );
+}
+
+function dataQualityIssueId(item: ActionCenterItem): number | null {
+  const payload = itemPayload(item);
+  const ledger =
+    payload.evidence_ledger ?? item.evidence_ledger ?? payload.evidence ?? {};
+  const sourceRefs = [
+    ...(Array.isArray(payload.source_references)
+      ? payload.source_references
+      : []),
+    ...(Array.isArray(ledger.source_references)
+      ? ledger.source_references
+      : []),
+  ];
+  const dataQualityRef = sourceRefs.find(
+    (ref: any) =>
+      String(ref?.source_table ?? ref?.table ?? "").includes(
+        "data_quality_issues",
+      ) && numberFromUnknown(ref?.primary_key ?? ref?.id),
+  );
+  return numberFromUnknown(
+    payload.data_quality_issue_id ??
+      payload.dq_issue_id ??
+      payload.issue_id ??
+      payload.issueId ??
+      ledger?.data_fix?.issue_id ??
+      ledger?.data_fix?.data_quality_issue_id ??
+      dataQualityRef?.primary_key ??
+      dataQualityRef?.id ??
+      payload.id ??
+      (String(item.source ?? "").includes("data_quality")
+        ? item.source_id
+        : null),
+  );
+}
+
+function isInlineSkuMappingAction(item: ActionCenterItem): boolean {
+  const payload = itemPayload(item);
+  const text = [
+    actionCode(item),
+    payload.code,
+    payload.issue_code,
+    payload.problem_code,
+    payload.fix_component_type,
+    item.title,
+    item.description,
+    item.reason,
+  ]
+    .map(norm)
+    .join(" ");
+  return (
+    Boolean(dataQualityIssueId(item)) &&
+    ([...INLINE_SKU_MAPPING_CODES].some((code) => text.includes(code)) ||
+      (text.includes("sku") &&
+        (text.includes("сопостав") ||
+          text.includes("mapping") ||
+          text.includes("unmatched"))))
+  );
+}
+
+function skuCandidates(item: ActionCenterItem): number[] {
+  const payload = itemPayload(item);
+  const raw =
+    payload.candidate_sku_ids ??
+    payload.sku_candidates ??
+    payload.candidates ??
+    payload.suggested_sku_ids ??
+    [];
+  const values = Array.isArray(raw)
+    ? raw
+    : Array.isArray(raw?.items)
+      ? raw.items
+      : [];
+  return [
+    ...new Set(
+      values
+        .map((value) => numberFromUnknown(value?.sku_id ?? value?.id ?? value))
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function cardQualityIssueId(item: ActionCenterItem): number | null {
+  const payload = itemPayload(item);
+  return numberFromUnknown(
+    payload.issue_id ??
+      payload.id ??
+      (String(item.source ?? "").includes("card_quality")
+        ? item.source_id
+        : null),
+  );
+}
+
+function cardTextField(item: ActionCenterItem): "title" | "description" | null {
+  const payload = itemPayload(item);
+  const field = norm(
+    payload.field_path ??
+      payload.field_name ??
+      payload.category ??
+      payload.type,
+  );
+  const code = norm(actionCode(item) || payload.issue_code || payload.code);
+  if (field.includes("title") || code.includes("title") || code === "no_title")
+    return "title";
+  if (
+    field.includes("description") ||
+    code.includes("description") ||
+    code === "no_description"
+  )
+    return "description";
+  return null;
+}
+
+function isInlineCardTextAction(item: ActionCenterItem): boolean {
+  const payload = itemPayload(item);
+  const code = norm(actionCode(item) || payload.issue_code || payload.code);
+  return Boolean(
+    cardQualityIssueId(item) &&
+    cardTextField(item) &&
+    INLINE_CARD_TEXT_CODES.has(code),
+  );
+}
+
+function costRowKey(row: CostsMissingItem, index: number): string {
+  return String(row.sku_id ?? row.nm_id ?? index);
+}
+
+function costRowLabel(row: CostsMissingItem | null): string {
+  if (!row) return "Товар";
+  return (
+    [
+      row.nm_id ? `nm ${row.nm_id}` : null,
+      row.vendor_code,
+      row.product_title,
+      row.tech_size ? `размер ${row.tech_size}` : null,
+    ]
+      .filter(Boolean)
+      .join(" / ") || `SKU ${row.sku_id ?? "—"}`
+  );
+}
+
+function invalidateInlineResolverQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+) {
+  queryClient.invalidateQueries({ queryKey: ["portal-actions"] });
+  queryClient.invalidateQueries({ queryKey: ["dq-resolution-context"] });
+  queryClient.invalidateQueries({ queryKey: ["dq-issues-for-data-fix"] });
+  queryClient.invalidateQueries({ queryKey: ["costs-missing"] });
+  queryClient.invalidateQueries({ queryKey: ["costs-rows"] });
+  queryClient.invalidateQueries({ queryKey: ["costs-unresolved"] });
+  queryClient.invalidateQueries({ queryKey: ["dashboard-data-health"] });
+  queryClient.invalidateQueries({ queryKey: ["money-data-blockers"] });
+  queryClient.invalidateQueries({ queryKey: ["dash-data-blockers"] });
+  queryClient.invalidateQueries({ queryKey: ["dq-issues-summary"] });
+  queryClient.invalidateQueries({ queryKey: ["portal-problem-results"] });
+  queryClient.invalidateQueries({ queryKey: ["portal-card-quality-issues"] });
+  queryClient.invalidateQueries({ queryKey: ["portal-card-quality-grouped"] });
+}
+
+function priorityRank(item: ActionCenterItem): number {
+  const priority = norm(item.priority).toUpperCase();
+  const severity = norm(item.severity);
+  if (priority === "P0" || severity === "critical") return 0;
+  if (priority === "P1" || severity === "high") return 1;
+  if (priority === "P2" || severity === "medium") return 2;
+  if (priority === "P3" || severity === "low") return 3;
+  return 4;
+}
+
+function actionCode(item: ActionCenterItem): string {
+  return String(
+    item.problem_code ??
+      item.detector_code ??
+      item.issue_code ??
+      item.action_type ??
+      "",
+  );
+}
+
+function isActionable(item: ActionCenterItem): boolean {
+  if (isClosedAction(item)) return false;
+  const primary = primaryActionForItem(item);
+  if (primary?.enabled) return true;
+  return item.can_update || item.can_recheck;
+}
+
+function problemPlaybook(item: ActionCenterItem): Array<{
+  step_id: string;
+  title: string;
+  description: string;
+  completion_signal: string;
+  preferred_href?: "result" | "work";
+}> {
+  const code = norm(actionCode(item));
+  const subject = objectLabel(item);
+  if (
+    [
+      "negative_unit_profit",
+      "price_below_safe_margin",
+      "promo_not_profitable",
+    ].includes(code)
+  ) {
+    return [
+      {
+        step_id: "check_price_inputs",
+        title: "Проверить цену и экономику",
+        description: `Откройте ${subject}. Сверьте текущую WB-цену, скидку, себестоимость, комиссию, логистику, рекламу и промо. Если цена выглядит неверной, сначала обновите синхронизацию цен.`,
+        completion_signal: "Цена и все расходы совпадают с WB/учётом",
+        preferred_href: "result",
+      },
+      {
+        step_id: "set_safe_price",
+        title: "Выставить безопасную цену или убрать убыточную скидку",
+        description:
+          "Откройте экран проверки цены. Поднимите цену до безопасной маржи или уменьшите скидку/промо. Не меняйте цену, если себестоимость или комиссии ещё не подтверждены.",
+        completion_signal: "Новая цена не уводит товар в минус",
+        preferred_href: "work",
+      },
+      {
+        step_id: "recheck_profit",
+        title: "Перепроверить прибыль",
+        description:
+          "Запустите перепроверку. Закрывайте задачу только когда маржа стала положительной и данные свежие.",
+        completion_signal: "Проблема исчезла или стала понятна причина",
+        preferred_href: "result",
+      },
+    ];
+  }
+  if (
+    [
+      "missing_cost_blocks_profit",
+      "missing_manual_cost",
+      "supplier_cost_coverage_below_threshold",
+      "manual_cost_unresolved_sku",
+      "manual_cost_ambiguous_match",
+    ].includes(code)
+  ) {
+    return [
+      {
+        step_id: "find_cost_gap",
+        title: "Найти, чего не хватает в себестоимости",
+        description: `Проверьте ${subject}: есть ли SKU, поставщик, цена закупки, упаковка и дополнительные расходы. Без этого прибыль будет считаться неправильно.`,
+        completion_signal: "Понятно, какая себестоимость или связь отсутствует",
+        preferred_href: "result",
+      },
+      {
+        step_id: "fill_cost",
+        title: "Заполнить или сопоставить себестоимость",
+        description:
+          "Откройте экран себестоимости. Загрузите цену закупки или привяжите товар к правильному SKU/поставщику.",
+        completion_signal: "Себестоимость сохранена и привязана к товару",
+        preferred_href: "work",
+      },
+      {
+        step_id: "recheck_cost",
+        title: "Пересчитать прибыль",
+        description:
+          "Запустите перепроверку, чтобы Центр действий пересчитал прибыль, маржу и связанные проблемы.",
+        completion_signal: "Прибыль пересчитана на свежих данных",
+        preferred_href: "result",
+      },
+    ];
+  }
+  if (
+    [
+      "unmatched_sku",
+      "unmatched_sku_detected",
+      "ad_spend_without_sku",
+    ].includes(code)
+  ) {
+    return [
+      {
+        step_id: "identify_sku",
+        title: "Найти правильный SKU",
+        description: `Сверьте ${subject} с артикулом, размером, chrt_id и карточкой WB. Нужно понять, к какому внутреннему SKU относится товар.`,
+        completion_signal: "Правильный SKU найден",
+        preferred_href: "result",
+      },
+      {
+        step_id: "map_sku",
+        title: "Привязать SKU",
+        description:
+          "Откройте исправление данных и сохраните связь товара с SKU. Если есть конфликт, выберите единственный правильный вариант.",
+        completion_signal: "SKU привязан без конфликта",
+        preferred_href: "work",
+      },
+      {
+        step_id: "recheck_mapping",
+        title: "Обновить расчёты",
+        description:
+          "Запустите перепроверку, чтобы расходы, продажи и прибыль собрались на правильный SKU.",
+        completion_signal: "Проблема сопоставления исчезла",
+        preferred_href: "result",
+      },
+    ];
+  }
+  if (
+    ["ads_spend_without_profit", "expense_ad_double_count_risk"].includes(code)
+  ) {
+    return [
+      {
+        step_id: "check_ads_loss",
+        title: "Понять, какая реклама съедает прибыль",
+        description:
+          "Сверьте расход, продажи, маржу и кампанию. Отдельно проверьте, не считается ли реклама дважды.",
+        completion_signal: "Понятна кампания или расход, который создаёт риск",
+        preferred_href: "result",
+      },
+      {
+        step_id: "adjust_ads",
+        title: "Снизить риск по рекламе",
+        description:
+          "Откройте рекламу. Снизьте ставки, остановите убыточную кампанию или исправьте привязку расхода к SKU.",
+        completion_signal: "Реклама больше не перекрывает прибыль",
+        preferred_href: "work",
+      },
+      {
+        step_id: "recheck_ads",
+        title: "Перепроверить после обновления расходов",
+        description:
+          "После обновления рекламных данных запустите перепроверку и закройте задачу, если экономика стала нормальной.",
+        completion_signal: "Расходы и прибыль пересчитаны",
+        preferred_href: "result",
+      },
+    ];
+  }
+  if (["overstock_slow_moving", "dead_stock"].includes(code)) {
+    return [
+      {
+        step_id: "check_stock_reason",
+        title: "Понять причину зависшего остатка",
+        description:
+          "Проверьте остаток, продажи за 30 дней, цену, карточку, рекламу и отзывы. Не запускайте скидку без проверки маржи.",
+        completion_signal: "Понятно, почему товар не продаётся",
+        preferred_href: "result",
+      },
+      {
+        step_id: "choose_stock_action",
+        title: "Выбрать безопасное действие",
+        description:
+          "Исправьте карточку, включите аккуратную рекламу, соберите комплект или запустите промо только если маржа остаётся безопасной.",
+        completion_signal: "Выбран сценарий, который не создаёт убыток",
+        preferred_href: "work",
+      },
+      {
+        step_id: "recheck_stock",
+        title: "Проверить динамику",
+        description:
+          "Перепроверьте после обновления продаж и остатков. Закрывайте задачу, когда скорость продаж стала нормальной.",
+        completion_signal: "Остаток начал двигаться или выбран ручной план",
+        preferred_href: "result",
+      },
+    ];
+  }
+  if (["low_stock_risk", "fast_stock_depletion"].includes(code)) {
+    return [
+      {
+        step_id: "check_depletion",
+        title: "Проверить, на сколько дней хватит остатка",
+        description:
+          "Сверьте текущий остаток, средние продажи и ближайшие поставки. Убедитесь, что остатки свежие.",
+        completion_signal: "Понятна дата риска дефицита",
+        preferred_href: "result",
+      },
+      {
+        step_id: "plan_supply",
+        title: "Запланировать пополнение или снизить спрос",
+        description:
+          "Откройте поставки. Создайте план пополнения. Если поставка невозможна, временно снизьте промо или рекламу.",
+        completion_signal:
+          "Есть план поставки или временное ограничение спроса",
+        preferred_href: "work",
+      },
+      {
+        step_id: "recheck_supply",
+        title: "Проверить остатки после обновления",
+        description:
+          "Запустите перепроверку после обновления остатков или создания поставки.",
+        completion_signal: "Риск дефицита исчез или взят в работу",
+        preferred_href: "result",
+      },
+    ];
+  }
+  if (
+    [
+      "expense_unclassified",
+      "unclassified_finance_expense",
+      "seller_other_expense_missing",
+    ].includes(code)
+  ) {
+    return [
+      {
+        step_id: "find_expense",
+        title: "Найти расход без категории",
+        description:
+          "Откройте финансовую строку и проверьте сумму, дату, назначение и связь с товаром или заказом.",
+        completion_signal: "Понятно, к какой категории относится расход",
+        preferred_href: "result",
+      },
+      {
+        step_id: "classify_expense",
+        title: "Разнести расход",
+        description:
+          "Выберите категорию расхода и сохраните. Если расход относится к товару, проверьте связь с SKU.",
+        completion_signal: "Расход классифицирован",
+        preferred_href: "work",
+      },
+      {
+        step_id: "recheck_money",
+        title: "Пересчитать финансы",
+        description:
+          "Запустите перепроверку, чтобы расход попал в прибыль и отчёты.",
+        completion_signal: "Финансы пересчитаны",
+        preferred_href: "result",
+      },
+    ];
+  }
+  if (["stock_snapshot_missing", "stocks_task_failed"].includes(code)) {
+    return [
+      {
+        step_id: "check_sync",
+        title: "Проверить синхронизацию остатков",
+        description:
+          "Посмотрите, когда последний раз обновлялись остатки и какая ошибка пришла от источника.",
+        completion_signal: "Понятна причина отсутствия остатков",
+        preferred_href: "result",
+      },
+      {
+        step_id: "run_sync",
+        title: "Обновить остатки",
+        description:
+          "Запустите синхронизацию остатков или исправьте подключение источника.",
+        completion_signal: "Остатки обновились",
+        preferred_href: "work",
+      },
+      {
+        step_id: "recheck_stock_sync",
+        title: "Перепроверить связанные проблемы",
+        description:
+          "После обновления остатков запустите перепроверку Центра действий.",
+        completion_signal: "Проблемы по остаткам пересчитаны",
+        preferred_href: "result",
+      },
+    ];
+  }
+  return [
+    {
+      step_id: "understand",
+      title: "Проверить причину",
+      description:
+        item.short_explanation ||
+        item.reason ||
+        `Откройте ${objectLabel(item)} и проверьте факты, по которым платформа создала задачу.`,
+      completion_signal: "Причина понятна",
+      preferred_href: "result",
+    },
+    {
+      step_id: "fix",
+      title:
+        humanActionLabel(primaryActionForItem(item)?.code) ||
+        guidedFixLabel(item),
+      description:
+        item.next_step || "Откройте рабочий экран и внесите исправление.",
+      completion_signal: "Исправление сохранено",
+      preferred_href: "work",
+    },
+    {
+      step_id: "close",
+      title: "Перепроверить и закрыть",
+      description:
+        "Запустите перепроверку. Закрывайте задачу только если проблема исчезла или есть понятное ручное решение.",
+      completion_signal: "Статус обновлён",
+      preferred_href: "result",
+    },
+  ];
+}
+
+function fallbackSolveSteps(
+  item: ActionCenterItem,
+): ActionCenterSolveMapStep[] {
+  const primary = primaryActionForItem(item);
+  const disabled = primaryDisabledActionForItem(item);
+  const href = primary?.href ?? guidedFixHref(item) ?? disabled?.href ?? null;
+  const resultHref = resultsHrefForAction(item);
+  const blockedReason =
+    disabled?.disabled_reason ??
+    (item.data_freshness?.blocking_sources?.length
+      ? dataFreshnessBlockingLabel(item.data_freshness)
+      : null);
+  return problemPlaybook(item).map((step, index) => {
+    const isFixStep = step.preferred_href === "work";
+    const isFirst = index === 0;
+    const isLast = index === 2;
+    return {
+      step_id: step.step_id,
+      order: index + 1,
+      title: step.title,
+      description: step.description,
+      status:
+        isLast && isClosedAction(item)
+          ? "done"
+          : isFixStep && blockedReason
+            ? "blocked"
+            : isFirst && item.evidence_state === "missing_evidence"
+              ? "waiting_for_data"
+              : "available",
+      action_code:
+        isLast && item.can_recheck ? "recheck" : (primary?.code ?? null),
+      action_label: isLast
+        ? "Перепроверить"
+        : isFixStep
+          ? humanActionLabel(primary?.code) || guidedFixLabel(item)
+          : "Открыть детали",
+      target_href: step.preferred_href === "work" ? href : resultHref,
+      required_metrics: [],
+      blocking_reason:
+        isFixStep && blockedReason
+          ? blockedReason
+          : isFirst && item.evidence_state === "missing_evidence"
+            ? "Не хватает доказательств для расчёта"
+            : null,
+      completion_signal: step.completion_signal,
+    };
+  });
+}
+
+function solveSteps(item: ActionCenterItem): ActionCenterSolveMapStep[] {
+  const playbook = problemPlaybook(item);
+  const steps = item.solve_map?.steps?.length
+    ? item.solve_map.steps
+    : fallbackSolveSteps(item);
+  return [...steps]
+    .sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0))
+    .map((step, index) => {
+      const local = playbook[index];
+      const localizedTitle = hasCyrillicText(step.title)
+        ? step.title
+        : (local?.title ?? humanActionLabel(step.action_code));
+      const localizedDescription = hasCyrillicText(step.description)
+        ? step.description
+        : (local?.description ??
+          "Откройте рабочий экран и выполните действие по задаче.");
+      const localizedCompletion = hasCyrillicText(step.completion_signal)
+        ? step.completion_signal
+        : (local?.completion_signal ?? "Изменение сохранено и проверено");
+      return {
+        ...step,
+        title: localizedTitle,
+        description: localizedDescription,
+        completion_signal: localizedCompletion,
+        action_label: step.action_label || humanActionLabel(step.action_code),
+      };
+    });
+}
+
+function stepDone(step: ActionCenterSolveMapStep): boolean {
+  return step.status === "done";
+}
+
+function stepBlocked(step: ActionCenterSolveMapStep): boolean {
+  return step.status === "blocked" || step.status === "waiting_for_data";
+}
+
+function moduleAccent(module?: string | null): string {
+  const value = norm(module);
+  if (value === "data_quality" || value === "costs") return "bg-amber-500";
+  if (value === "problem_engine") return "bg-sky-500";
+  if (value === "checker") return "bg-violet-500";
+  if (value === "finance") return "bg-emerald-500";
+  if (value === "stockops") return "bg-cyan-500";
+  return "bg-slate-400";
+}
+
+function modulePanelTone(module?: string | null): string {
+  const value = norm(module);
+  if (value === "data_quality" || value === "costs") {
+    return "border-amber-500/35 bg-amber-500/5";
+  }
+  if (value === "problem_engine") {
+    return "border-sky-500/35 bg-sky-500/5";
+  }
+  if (value === "checker") {
+    return "border-violet-500/35 bg-violet-500/5";
+  }
+  if (value === "finance") {
+    return "border-emerald-500/35 bg-emerald-500/5";
+  }
+  if (value === "stockops") {
+    return "border-cyan-500/35 bg-cyan-500/5";
+  }
+  return "border-border bg-muted/30";
+}
+
+function moduleTextTone(module?: string | null): string {
+  const value = norm(module);
+  if (value === "data_quality" || value === "costs")
+    return "text-amber-700 dark:text-amber-300";
+  if (value === "problem_engine") return "text-sky-700 dark:text-sky-300";
+  if (value === "checker") return "text-violet-700 dark:text-violet-300";
+  if (value === "finance") return "text-emerald-700 dark:text-emerald-300";
+  if (value === "stockops") return "text-cyan-700 dark:text-cyan-300";
+  return "text-muted-foreground";
+}
+
+function priorityRailTone(item: ActionCenterItem): string {
+  const priority = String(item.priority ?? item.severity ?? "P3").toUpperCase();
+  if (priority === "P0") return "bg-red-500";
+  if (priority === "P1") return "bg-orange-500";
+  if (priority === "P2") return "bg-sky-500";
+  return moduleAccent(item.source_module);
+}
+
+function actionStateLabel(item: ActionCenterItem): string {
+  if (isClosedAction(item)) return "Закрыто";
+  if (isOverdueAction(item, new Date())) return "Просрочено";
+  if (isUrgentAction(item)) return "Срочно";
+  if (isDataBlockerAction(item)) return "Блокер данных";
+  if (isActionable(item)) return "Можно делать";
+  return "Ждёт сигнала";
+}
+
+function actionStateTone(item: ActionCenterItem): string {
+  if (isClosedAction(item))
+    return "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  if (isOverdueAction(item, new Date()) || isUrgentAction(item)) {
+    return "border-red-500/35 bg-red-500/10 text-red-700 dark:text-red-300";
+  }
+  if (isDataBlockerAction(item))
+    return "border-amber-500/35 bg-amber-500/10 text-amber-800 dark:text-amber-300";
+  if (isActionable(item))
+    return "border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300";
+  return "border-border bg-muted text-muted-foreground";
+}
+
+function evidenceLabel(value?: string | null): string {
+  if (value === "full_evidence") return "полное";
+  if (value === "partial_evidence") return "частичное";
+  if (value === "read_only_signal") return "только просмотр";
+  return "нет";
+}
+
+function stepStatusLabel(step: ActionCenterSolveMapStep): string {
+  if (step.status === "waiting_for_data") return "ждёт данных";
+  if (step.status === "blocked") return "заблокировано";
+  if (step.status === "done") return "готово";
+  return "можно делать";
+}
+
+function solveProgress(item: ActionCenterItem): {
+  total: number;
+  done: number;
+  percent: number;
+} {
+  const steps = solveSteps(item);
+  const total = steps.length || 1;
+  const done = steps.filter(stepDone).length;
+  return {
+    total,
+    done,
+    percent: Math.round((done / total) * 100),
+  };
+}
+
+type ProblemGroupKey =
+  | "manual_tasks"
+  | "data_blockers"
+  | "profitability"
+  | "price"
+  | "stock"
+  | "ads_promo"
+  | "card_quality"
+  | "system_checks"
+  | "other";
+
+type ProblemGroupSummary = {
+  key: ProblemGroupKey;
+  title: string;
+  subtitle: string;
+  actionLabel: string;
+  icon: React.ReactNode;
+  tone: string;
+  items: ActionCenterItem[];
+  open: number;
+  closed: number;
+  urgent: number;
+  blockers: number;
+  actionable: number;
+  money: number;
+  progress: number;
+  topCodes: Array<{ code: string; label: string; count: number }>;
+};
+
+const PROBLEM_GROUP_ORDER: ProblemGroupKey[] = [
+  "manual_tasks",
+  "data_blockers",
+  "profitability",
+  "price",
+  "stock",
+  "ads_promo",
+  "card_quality",
+  "system_checks",
+  "other",
+];
+
+const PROBLEM_GROUP_CONFIG: Record<
+  ProblemGroupKey,
+  {
+    title: string;
+    subtitle: string;
+    actionLabel: string;
+    tone: string;
+    icon: React.ReactNode;
+  }
+> = {
+  manual_tasks: {
+    title: "Ручные задачи",
+    subtitle:
+      "Созданные оператором задачи по выбранным товарам, срокам и ответственным.",
+    actionLabel: "Открыть задачи",
+    tone: "border-teal-500/35 bg-teal-500/5",
+    icon: <ListChecks className="h-4 w-4" />,
+  },
+  data_blockers: {
+    title: "Данные и себестоимость",
+    subtitle:
+      "Сначала закрываем блокеры: себестоимость, SKU, расходы, синхронизации.",
+    actionLabel: "Исправлять данные",
+    tone: "border-amber-500/35 bg-amber-500/5",
+    icon: <Database className="h-4 w-4" />,
+  },
+  profitability: {
+    title: "Прибыль и маржа",
+    subtitle: "Товары в минус, низкая маржа и риск потери денег.",
+    actionLabel: "Разобрать прибыль",
+    tone: "border-red-500/35 bg-red-500/5",
+    icon: <TrendingDown className="h-4 w-4" />,
+  },
+  price: {
+    title: "Цена и скидки",
+    subtitle: "Безопасная цена, скидки и price review перед изменениями.",
+    actionLabel: "Проверить цены",
+    tone: "border-sky-500/35 bg-sky-500/5",
+    icon: <Gauge className="h-4 w-4" />,
+  },
+  stock: {
+    title: "Остатки и поставки",
+    subtitle: "Пересток, дефицит, быстрый расход и план пополнения.",
+    actionLabel: "Разобрать остатки",
+    tone: "border-cyan-500/35 bg-cyan-500/5",
+    icon: <PackageSearch className="h-4 w-4" />,
+  },
+  ads_promo: {
+    title: "Реклама и промо",
+    subtitle: "Кампании, ставки, промо и скидки, которые влияют на прибыль.",
+    actionLabel: "Настроить рекламу",
+    tone: "border-violet-500/35 bg-violet-500/5",
+    icon: <BarChart3 className="h-4 w-4" />,
+  },
+  card_quality: {
+    title: "Карточки товаров",
+    subtitle: "Контент, фото, характеристики и качество карточки.",
+    actionLabel: "Улучшить карточки",
+    tone: "border-emerald-500/35 bg-emerald-500/5",
+    icon: <FileText className="h-4 w-4" />,
+  },
+  system_checks: {
+    title: "Системные проверки",
+    subtitle:
+      "Технические расхождения и контрольные сверки без ручной продажи.",
+    actionLabel: "Проверить систему",
+    tone: "border-slate-500/35 bg-slate-500/5",
+    icon: <ShieldCheck className="h-4 w-4" />,
+  },
+  other: {
+    title: "Другие задачи",
+    subtitle: "Редкие сигналы, которые не попали в основные бизнес-группы.",
+    actionLabel: "Разобрать",
+    tone: "border-border bg-muted/20",
+    icon: <ListChecks className="h-4 w-4" />,
+  },
+};
+
+function problemGroupKey(item: ActionCenterItem): ProblemGroupKey {
+  const source = norm(item.source_module);
+  const code = norm(actionCode(item));
+  const impact = norm(item.impact_type);
+  const trust = norm(item.trust_state ?? item.money_trust?.state);
+  const title = norm(item.title);
+  const text = `${source} ${code} ${impact} ${trust} ${title}`;
+  if (source === "manual" || text.includes("manual_task")) {
+    return "manual_tasks";
+  }
+  if (
+    text.includes("checker") ||
+    text.includes("card_quality") ||
+    text.includes("card_content") ||
+    text.includes("content_quality") ||
+    text.includes("content_review")
+  ) {
+    return "card_quality";
+  }
+  if (
+    text.includes("reconciliation") ||
+    text.includes("sale_without_finance") ||
+    text.includes("finance_without_sale") ||
+    impact === "system_warning"
+  ) {
+    return "system_checks";
+  }
+  if (
+    impact === "data_blocker" ||
+    impact === "data_blocked" ||
+    trust === "blocked" ||
+    source.includes("data_quality") ||
+    source.includes("cost") ||
+    text.includes("missing_cost") ||
+    text.includes("cost_missing") ||
+    text.includes("unmatched_sku") ||
+    text.includes("sku_mapping") ||
+    text.includes("unclassified") ||
+    text.includes("expense") ||
+    text.includes("blocker") ||
+    text.includes("sync_failed") ||
+    text.includes("import_failed")
+  ) {
+    return "data_blockers";
+  }
+  if (
+    text.includes("stock") ||
+    text.includes("overstock") ||
+    text.includes("depletion") ||
+    text.includes("supply") ||
+    text.includes("reorder")
+  ) {
+    return "stock";
+  }
+  if (
+    text.includes("ads") ||
+    text.includes("ad_") ||
+    text.includes("promo") ||
+    text.includes("ad_spend") ||
+    text.includes("campaign") ||
+    text.includes("bid")
+  ) {
+    return "ads_promo";
+  }
+  if (
+    text.includes("profit") ||
+    text.includes("margin") ||
+    text.includes("loss") ||
+    text.includes("убыт") ||
+    text.includes("минус") ||
+    text.includes("приб")
+  ) {
+    return "profitability";
+  }
+  if (text.includes("price") || text.includes("discount")) {
+    return "price";
+  }
+  return "other";
+}
+
+function buildProblemGroups(items: ActionCenterItem[]): ProblemGroupSummary[] {
+  return PROBLEM_GROUP_ORDER.map((key) => {
+    const groupItems = items.filter((item) => problemGroupKey(item) === key);
+    const open = groupItems.filter((item) => !isClosedAction(item)).length;
+    const closed = groupItems.length - open;
+    const urgent = groupItems.filter(
+      (item) => !isClosedAction(item) && isUrgentAction(item),
+    ).length;
+    const blockers = groupItems.filter(
+      (item) => !isClosedAction(item) && isDataBlockerAction(item),
+    ).length;
+    const actionable = groupItems.filter(isActionable).length;
+    const money = groupItems.reduce(
+      (sum, item) => sum + Math.abs(Number(item.money_impact_amount ?? 0)),
+      0,
+    );
+    const counts = new Map<string, number>();
+    for (const item of groupItems) {
+      const code = actionCode(item) || "unknown";
+      counts.set(code, (counts.get(code) ?? 0) + 1);
+    }
+    const topCodes = [...counts.entries()]
+      .map(([code, count]) => ({ code, label: problemCodeLabel(code), count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3);
+    const cfg = PROBLEM_GROUP_CONFIG[key];
+    return {
+      key,
+      ...cfg,
+      items: sortActionCenterItems(groupItems, "priority"),
+      open,
+      closed,
+      urgent,
+      blockers,
+      actionable,
+      money,
+      progress: groupItems.length
+        ? Math.round((closed / groupItems.length) * 100)
+        : 100,
+      topCodes,
+    };
+  })
+    .filter((group) => group.items.length > 0)
+    .sort((a, b) => {
+      const blockerDelta =
+        Number(b.key === "data_blockers") - Number(a.key === "data_blockers");
+      if (blockerDelta) return blockerDelta;
+      if (b.urgent !== a.urgent) return b.urgent - a.urgent;
+      if (b.open !== a.open) return b.open - a.open;
+      if (b.money !== a.money) return b.money - a.money;
+      return (
+        PROBLEM_GROUP_ORDER.indexOf(a.key) - PROBLEM_GROUP_ORDER.indexOf(b.key)
+      );
+    });
+}
+
+function EmptyLoader() {
+  return (
+    <PageShell>
+      <div className="space-y-4">
+        <Skeleton className="h-20 w-full" />
+        <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
+          <Skeleton className="h-[560px] w-full" />
+          <Skeleton className="h-[560px] w-full" />
+        </div>
+      </div>
+    </PageShell>
+  );
+}
+
+function MetricTile({
+  label,
+  value,
+  hint,
+  icon,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string | number;
+  hint?: string;
+  icon: React.ReactNode;
+  tone?: "neutral" | "danger" | "warning" | "success" | "info";
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "border-red-500/30 bg-red-500/5 text-red-950 dark:text-red-100"
+      : tone === "warning"
+        ? "border-amber-500/30 bg-amber-500/5 text-amber-950 dark:text-amber-100"
+        : tone === "success"
+          ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-950 dark:text-emerald-100"
+          : tone === "info"
+            ? "border-sky-500/30 bg-sky-500/5 text-sky-950 dark:text-sky-100"
+            : "border-border bg-card";
+  const iconClass =
+    tone === "danger"
+      ? "bg-red-500/10 text-red-700 dark:text-red-300"
+      : tone === "warning"
+        ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+        : tone === "success"
+          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+          : tone === "info"
+            ? "bg-sky-500/10 text-sky-700 dark:text-sky-300"
+            : "bg-muted text-muted-foreground";
+  return (
+    <div
+      className={`relative overflow-hidden rounded-md border p-4 shadow-sm ${toneClass}`}
+    >
+      <div
+        className={`absolute inset-x-0 top-0 h-0.5 ${
+          tone === "danger"
+            ? "bg-red-500"
+            : tone === "warning"
+              ? "bg-amber-500"
+              : tone === "success"
+                ? "bg-emerald-500"
+                : tone === "info"
+                  ? "bg-sky-500"
+                  : "bg-border"
+        }`}
+      />
+      <div className="flex items-start justify-between gap-2">
+        <div className="space-y-1">
+          <div className="text-xs text-muted-foreground">{label}</div>
+          <div className="min-w-0 break-words text-xl font-semibold leading-tight tracking-tight">
+            {value}
+          </div>
+        </div>
+        <div
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${iconClass}`}
+        >
+          {icon}
+        </div>
+      </div>
+      {hint ? (
+        <div className="mt-2 text-xs text-muted-foreground">{hint}</div>
+      ) : null}
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const key = norm(status);
+  return (
+    <Badge
+      variant="outline"
+      className={`text-[10px] ${STATUS_TONE[key] ?? "border-border bg-muted text-muted-foreground"}`}
+    >
+      {humanStatusLabel(key)}
+    </Badge>
+  );
+}
+
+function PriorityBadge({ item }: { item: ActionCenterItem }) {
+  const priority = String(item.priority ?? item.severity ?? "P3").toUpperCase();
+  return (
+    <Badge
+      variant="outline"
+      className={`text-[10px] ${PRIORITY_TONE[priority] ?? PRIORITY_TONE.P3}`}
+    >
+      {priorityLabel(priority)}
+    </Badge>
+  );
+}
+
+function QueueItem({
+  item,
+  index,
+  selected,
+  currentUserId,
+  onSelect,
+}: {
+  item: ActionCenterItem;
+  index: number;
+  selected: boolean;
+  currentUserId: number | null;
+  onSelect: () => void;
+}) {
+  const primary = primaryActionForItem(item);
+  const closed = isClosedAction(item);
+  const images = itemImageCandidates(item);
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-current={selected ? "true" : undefined}
+      className={`group relative w-full overflow-hidden rounded-md border p-3 pl-4 text-left transition-all ${
+        selected
+          ? "border-primary bg-background ring-2 ring-primary/15"
+          : "border-border bg-card hover:border-primary/35 hover:bg-background"
+      } ${closed ? "opacity-70" : ""}`}
+    >
+      <div
+        className={`absolute inset-y-0 left-0 w-1 ${priorityRailTone(item)}`}
+      />
+      <div className="flex items-start gap-3">
+        <div className="relative shrink-0">
+          <ProductThumb
+            candidates={images}
+            label={problemTitle(item)}
+            className="h-11 w-9"
+          />
+          <span className="absolute -left-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-md border bg-background px-1 text-[10px] font-semibold text-muted-foreground shadow-sm">
+            {String(index + 1).padStart(2, "0")}
+          </span>
+        </div>
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="line-clamp-2 text-sm font-semibold leading-snug">
+                {problemTitle(item)}
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                <PriorityBadge item={item} />
+                <StatusBadge status={item.status} />
+                {item.nm_id ? (
+                  <Badge variant="outline" className="text-[10px]">
+                    nm {item.nm_id}
+                  </Badge>
+                ) : null}
+              </div>
+            </div>
+            {selected ? (
+              <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-primary" />
+            ) : null}
+          </div>
+          <div className="line-clamp-2 text-xs text-muted-foreground">
+            {item.short_explanation ||
+              item.reason ||
+              item.next_step ||
+              problemCodeLabel(actionCode(item))}
+          </div>
+          <div className="flex items-center justify-between gap-2 text-[11px]">
+            <span className="truncate">
+              {primary?.code ? humanActionLabel(primary.code) : "Открыть"}
+            </span>
+            {typeof item.money_impact_amount === "number" ? (
+              <span className="shrink-0 text-muted-foreground">
+                {formatMoney(Math.abs(item.money_impact_amount))}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function StepIcon({ step }: { step: ActionCenterSolveMapStep }) {
+  if (stepDone(step)) {
+    return (
+      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+        <Check className="h-4 w-4" />
+      </span>
+    );
+  }
+  if (step.status === "waiting_for_data") {
+    return (
+      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300">
+        <Database className="h-4 w-4" />
+      </span>
+    );
+  }
+  if (step.status === "blocked") {
+    return (
+      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-red-500/15 text-red-700 dark:text-red-300">
+        <Lock className="h-4 w-4" />
+      </span>
+    );
+  }
+  return (
+    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-sky-500/15 text-sky-700 dark:text-sky-300">
+      <Play className="h-4 w-4" />
+    </span>
+  );
+}
+
+function WorkButton({
+  href,
+  label,
+  variant = "default",
+}: {
+  href: string | null | undefined;
+  label: string;
+  variant?: "default" | "outline" | "secondary";
+}) {
+  if (!href) {
+    return (
+      <Button size="sm" variant={variant} disabled>
+        <Lock className="h-3.5 w-3.5" />
+        {label}
+      </Button>
+    );
+  }
+  if (href.startsWith("/")) {
+    return (
+      <Button asChild size="sm" variant={variant}>
+        <Link to={href}>
+          {label}
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+      </Button>
+    );
+  }
+  return (
+    <Button asChild size="sm" variant={variant}>
+      <a href={href} target="_blank" rel="noreferrer">
+        {label}
+        <ExternalLink className="h-3.5 w-3.5" />
+      </a>
+    </Button>
+  );
+}
+
+function SolveMap({ item }: { item: ActionCenterItem }) {
+  const steps = solveSteps(item);
+  const completed = steps.filter(stepDone).length;
+  const percent = steps.length
+    ? Math.round((completed / steps.length) * 100)
+    : 100;
+  const summary = hasCyrillicText(item.solve_map?.summary)
+    ? item.solve_map?.summary
+    : "Выполните шаги сверху вниз: сначала проверка, затем исправление, потом перепроверка.";
+  return (
+    <div className="overflow-hidden rounded-md border bg-card shadow-sm">
+      <div className="border-b bg-muted/10 px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <ListChecks className="h-4 w-4 text-primary" />
+              Порядок решения
+            </div>
+            <div className="text-xs text-muted-foreground">{summary}</div>
+          </div>
+          <div className="min-w-[128px] text-right">
+            <div className="text-sm font-semibold">
+              {completed}/{steps.length}
+            </div>
+            <Progress value={percent} className="mt-1 h-1.5" />
+          </div>
+        </div>
+      </div>
+      <div className="divide-y">
+        {steps.map((step, index) => (
+          <div
+            key={step.step_id ?? index}
+            className="relative grid gap-3 px-4 py-3 sm:grid-cols-[32px_1fr_auto]"
+          >
+            {index < steps.length - 1 ? (
+              <div className="absolute bottom-0 left-[31px] top-11 w-px bg-border" />
+            ) : null}
+            <div className="relative z-10">
+              <span
+                className={`flex h-7 w-7 items-center justify-center rounded-full border text-[11px] font-semibold ${
+                  stepDone(step)
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                    : stepBlocked(step)
+                      ? "border-amber-500/35 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                      : "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                }`}
+              >
+                {index + 1}
+              </span>
+            </div>
+            <div className="min-w-0 space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm font-medium leading-tight">
+                  {step.title}
+                </div>
+                <Badge
+                  variant="outline"
+                  className={`text-[10px] ${
+                    stepDone(step)
+                      ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      : stepBlocked(step)
+                        ? "border-amber-500/35 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                        : "border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                  }`}
+                >
+                  {stepStatusLabel(step)}
+                </Badge>
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {step.description}
+              </div>
+              {step.blocking_reason ? (
+                <div className="mt-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-200">
+                  {step.blocking_reason}
+                </div>
+              ) : null}
+              {step.completion_signal ? (
+                <div className="text-[11px] text-muted-foreground">
+                  Готово, когда:{" "}
+                  <span className="font-medium text-foreground">
+                    {step.completion_signal}
+                  </span>
+                </div>
+              ) : null}
+              {step.required_metrics?.length ? (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {step.required_metrics.slice(0, 4).map((metric) => (
+                    <Badge
+                      key={metric}
+                      variant="secondary"
+                      className="text-[10px]"
+                    >
+                      {humanMetricLabel(metric)}
+                    </Badge>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            {step.target_href ? (
+              <WorkButton
+                href={step.target_href}
+                label={
+                  step.action_code === "recheck"
+                    ? "Перепроверить"
+                    : step.action_label || "Открыть"
+                }
+                variant="outline"
+              />
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DataFreshness({ item }: { item: ActionCenterItem }) {
+  const freshness = item.data_freshness;
+  const status = freshness?.source_status ?? "missing";
+  const tone =
+    status === "fresh"
+      ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+      : status === "stale"
+        ? "border-amber-500/35 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+        : "border-red-500/35 bg-red-500/10 text-red-700 dark:text-red-300";
+  return (
+    <div className="rounded-md border bg-card p-4 shadow-sm">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <Database className="h-4 w-4" />
+          Данные расчёта
+        </div>
+        <Badge variant="outline" className={`text-[10px] ${tone}`}>
+          {status === "fresh"
+            ? "свежие"
+            : status === "stale"
+              ? "устарели"
+              : status === "not_configured"
+                ? "не настроено"
+                : "не хватает"}
+        </Badge>
+      </div>
+      <div className="space-y-3 text-xs">
+        <div className="rounded-md border bg-muted/25 px-3 py-2">
+          <div className="text-[11px] text-muted-foreground">
+            Последняя синхронизация
+          </div>
+          <div className="mt-0.5 font-medium">
+            {compactDateTime(freshness?.last_synced_at)}
+          </div>
+        </div>
+        <div className="rounded-md border bg-muted/25 px-3 py-2">
+          <div className="text-[11px] text-muted-foreground">Источники</div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {(freshness?.required_sources ?? []).slice(0, 8).map((source) => (
+              <Badge
+                key={source}
+                variant="secondary"
+                className="max-w-full truncate text-[10px]"
+              >
+                {source}
+              </Badge>
+            ))}
+            {!(freshness?.required_sources ?? []).length ? (
+              <span className="text-muted-foreground">Источник не указан</span>
+            ) : null}
+          </div>
+        </div>
+        {freshness?.blocking_sources?.length ? (
+          <Alert className="border-amber-500/40 bg-amber-500/5 py-2">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle className="text-xs">Нужно обновить данные</AlertTitle>
+            <AlertDescription className="text-xs">
+              {dataFreshnessBlockingLabel(freshness)}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function EvidencePanel({ item }: { item: ActionCenterItem }) {
+  const ledger = item.evidence_ledger;
+  const facts = ledger?.input_facts ?? [];
+  const refs = ledger?.source_references ?? [];
+  const formulaText = readableFormulaText(
+    ledger?.formula_human ||
+      ledger?.formula_id ||
+      item.reason ||
+      item.short_explanation ||
+      "",
+  );
+  return (
+    <div className="rounded-md border bg-card p-4 shadow-sm">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <FileText className="h-4 w-4" />
+          Почему найдено
+        </div>
+        <Badge variant="outline" className="text-[10px]">
+          доказательства: {evidenceLabel(item.evidence_state)}
+        </Badge>
+      </div>
+      <div className="space-y-3">
+        <div
+          className={`rounded-md border px-3 py-2 ${modulePanelTone(item.source_module)}`}
+        >
+          <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium uppercase text-muted-foreground">
+            <Eye className="h-3 w-3" />
+            Расчёт
+          </div>
+          <div className="text-sm leading-relaxed">
+            {formulaText ||
+              "Формула пока не передана; показаны причина, факты и доступные источники расчёта."}
+          </div>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Fact
+            label="Тип проблемы"
+            value={problemCodeLabel(actionCode(item))}
+            sub={actionCode(item) || null}
+          />
+          <Fact
+            label="Основное действие"
+            value={humanActionLabel(primaryActionForItem(item)?.code)}
+          />
+          <Fact label="Модуль" value={sourceModuleLabel(item.source_module)} />
+          <Fact
+            label="Доверие"
+            value={problemTrustLabel(
+              String(
+                item.trust_state ?? item.money_trust?.state ?? "provisional",
+              ),
+            )}
+          />
+        </div>
+        {facts.length ? (
+          <div className="space-y-2">
+            <div className="text-xs font-medium text-muted-foreground">
+              Факты расчёта
+            </div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {facts.slice(0, 6).map((fact, idx) => (
+                <Fact
+                  key={`${fact.label ?? fact.metric_code ?? idx}`}
+                  label={humanMetricLabel(
+                    fact.label || fact.metric_code || `Факт ${idx + 1}`,
+                  )}
+                  value={formatFactValue(fact)}
+                  sub={
+                    fact.source_table ||
+                    fact.source_endpoint ||
+                    fact.source ||
+                    null
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {refs.length ? (
+          <div className="space-y-2">
+            <div className="text-xs font-medium text-muted-foreground">
+              Источники расчёта
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {refs.slice(0, 8).map((ref, idx) => (
+                <Badge key={idx} variant="outline" className="text-[10px]">
+                  {ref.source_table ||
+                    ref.table ||
+                    ref.source_endpoint ||
+                    `source ${idx + 1}`}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function readableFormulaText(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const dataFixMatch = raw.match(
+    /^Open Data Fix issue `([^`]+)` maps to dynamic problem `([^`]+)`\.$/i,
+  );
+  if (dataFixMatch) {
+    return `Открытая проверка данных «${problemCodeLabel(dataFixMatch[1])}» создала задачу «${problemCodeLabel(dataFixMatch[2])}».`;
+  }
+  return raw;
+}
+
+function Fact({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: string;
+  sub?: string | null;
+}) {
+  return (
+    <div className="min-w-0 rounded-md border bg-muted/20 px-3 py-2">
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="mt-0.5 break-words text-sm font-semibold leading-snug">
+        {value}
+      </div>
+      {sub ? (
+        <div className="mt-1 truncate text-[10px] text-muted-foreground">
+          {sub}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SignalCell({
+  label,
+  value,
+  icon,
+  tone = "neutral",
+  sub,
+}: {
+  label: string;
+  value: string;
+  icon: React.ReactNode;
+  tone?: "neutral" | "danger" | "warning" | "success" | "info";
+  sub?: string | null;
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "bg-red-500/10 text-red-700 dark:text-red-300"
+      : tone === "warning"
+        ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+        : tone === "success"
+          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+          : tone === "info"
+            ? "bg-sky-500/10 text-sky-700 dark:text-sky-300"
+            : "bg-muted text-muted-foreground";
+  return (
+    <div className="min-w-0 rounded-md border bg-background px-3 py-2">
+      <div className="flex items-start gap-2">
+        <span
+          className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${toneClass}`}
+        >
+          {icon}
+        </span>
+        <div className="min-w-0">
+          <div className="text-[11px] text-muted-foreground">{label}</div>
+          <div className="break-words text-sm font-semibold leading-snug">
+            {value}
+          </div>
+        </div>
+      </div>
+      {sub ? (
+        <div className="mt-1 break-words pl-8 text-[11px] text-muted-foreground">
+          {sub}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function InlineResolutionPanel({
+  item,
+  accountId,
+  dateFrom,
+  dateTo,
+  onChanged,
+  onRecheck,
+  onNext,
+}: {
+  item: ActionCenterItem;
+  accountId: number | null | undefined;
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  onChanged: () => Promise<void> | void;
+  onRecheck: (item: ActionCenterItem) => void;
+  onNext: () => void;
+}) {
+  if (isInlineCostAction(item)) {
+    return (
+      <CostInlineResolution
+        item={item}
+        accountId={accountId}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        onChanged={onChanged}
+        onRecheck={onRecheck}
+        onNext={onNext}
+      />
+    );
+  }
+  if (isInlineCardTextAction(item)) {
+    return (
+      <CardTextInlineResolution
+        item={item}
+        accountId={accountId}
+        onChanged={onChanged}
+        onRecheck={onRecheck}
+        onNext={onNext}
+      />
+    );
+  }
+  if (isInlineSkuMappingAction(item)) {
+    return (
+      <SkuMappingInlineResolution
+        item={item}
+        onChanged={onChanged}
+        onRecheck={onRecheck}
+        onNext={onNext}
+      />
+    );
+  }
+  return null;
+}
+
+function hasInlineResolution(item: ActionCenterItem): boolean {
+  return (
+    isInlineCostAction(item) ||
+    isInlineCardTextAction(item) ||
+    isInlineSkuMappingAction(item)
+  );
+}
+
+function SkuMappingInlineResolution({
+  item,
+  onChanged,
+  onRecheck,
+  onNext,
+}: {
+  item: ActionCenterItem;
+  onChanged: () => Promise<void> | void;
+  onRecheck: (item: ActionCenterItem) => void;
+  onNext: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const payload = itemPayload(item);
+  const issueId = dataQualityIssueId(item);
+  const candidates = skuCandidates(item);
+  const sourceDomains = Array.isArray(payload.sourceDomains)
+    ? payload.sourceDomains.map((value) => String(value))
+    : [];
+  const issueCode = norm(
+    actionCode(item) || payload.code || payload.issue_code,
+  );
+  const hasNoSkuCandidate =
+    issueCode === "unmatched_sku" && candidates.length === 0;
+  const isSupplyOnlyArchived =
+    hasNoSkuCandidate &&
+    norm(payload.sourceKind) === "source_level" &&
+    sourceDomains.map((value) => norm(value)).join(",") === "supplies" &&
+    ["missing_nm_id", "source_level_missing_nm_id"].includes(
+      norm(payload.classificationReason),
+    );
+  const [skuId, setSkuId] = useState("");
+  const [reason, setReason] = useState("");
+
+  useEffect(() => {
+    const initial = numberFromUnknown(
+      payload.mapped_sku_id ?? payload.sku_id ?? candidates[0],
+    );
+    setSkuId(initial ? String(initial) : "");
+    setReason("");
+  }, [item.id]);
+
+  const numericSkuId = numberFromUnknown(skuId);
+  const canSave = Boolean(issueId && numericSkuId && numericSkuId > 0);
+
+  const saveMapping = useMutation({
+    mutationFn: async () => {
+      if (!issueId || !numericSkuId) {
+        throw new Error("Укажите SKU, к которому нужно привязать строку.");
+      }
+      return api(API_ENDPOINTS.dq.guidedAction(issueId), {
+        method: "POST",
+        body: {
+          action_type: "map_sku",
+          inputs: {
+            mapped_sku_id: numericSkuId,
+            reason: reason.trim() || "Связано из Action Center",
+          },
+          comment: reason.trim() || "SKU связан из Action Center",
+        },
+      });
+    },
+    onSuccess: async (result: any) => {
+      toast.success(
+        result?.message ||
+          "SKU связан. Запустите перепроверку, чтобы обновить очередь.",
+      );
+      invalidateInlineResolverQueries(queryClient);
+      await onChanged?.();
+      onNext();
+    },
+    onError: (error: any) =>
+      toast.error(error?.message ?? "Не удалось связать SKU"),
+  });
+
+  const triggerRecheck = useMutation({
+    mutationFn: async () => {
+      if (!issueId) throw new Error("Нет issue id для перепроверки.");
+      return api(API_ENDPOINTS.dq.guidedAction(issueId), {
+        method: "POST",
+        body: {
+          action_type: "trigger_recheck",
+          inputs: { source: "action_center_sku_mapping" },
+          comment:
+            "Перепроверка запрошена из Action Center после связывания SKU.",
+        },
+      });
+    },
+    onSuccess: async (result: any) => {
+      toast.success(result?.message || "Перепроверка запрошена");
+      invalidateInlineResolverQueries(queryClient);
+      await onChanged?.();
+    },
+    onError: (error: any) =>
+      toast.error(error?.message ?? "Не удалось запустить перепроверку"),
+  });
+
+  return (
+    <div className="overflow-hidden rounded-md border bg-card shadow-sm">
+      <div className="border-b bg-sky-500/5 px-4 py-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <PackageSearch className="h-4 w-4 text-sky-700 dark:text-sky-300" />
+              {hasNoSkuCandidate
+                ? "Проверить каталог SKU"
+                : "Исправить здесь: связать SKU"}
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {hasNoSkuCandidate
+                ? "Для этой строки нет подходящего SKU в каталоге платформы. Ручной ввод внутреннего ID здесь не поможет."
+                : "Привяжите строку продаж, остатков или себестоимости к правильному SKU. Суммы WB не меняются."}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {issueId ? (
+              <Badge variant="outline">проверка {issueId}</Badge>
+            ) : null}
+            {item.nm_id ? (
+              <Badge variant="secondary">nm {item.nm_id}</Badge>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="p-4">
+        <div className="space-y-4">
+          <div className="rounded-md border bg-muted/20 p-3">
+            <div className="text-xs text-muted-foreground">
+              Проблемная строка
+            </div>
+            <div className="mt-1 text-sm font-semibold">
+              {objectLabel(item)}
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {item.reason ||
+                item.short_explanation ||
+                "Система не смогла надежно понять, к какому SKU относится строка."}
+            </div>
+          </div>
+
+          {candidates.length ? (
+            <div className="space-y-2">
+              <Label>Возможные SKU</Label>
+              <div className="flex flex-wrap gap-2">
+                {candidates.slice(0, 8).map((candidate) => (
+                  <Button
+                    key={candidate}
+                    type="button"
+                    size="sm"
+                    variant={
+                      String(candidate) === skuId ? "default" : "outline"
+                    }
+                    onClick={() => setSkuId(String(candidate))}
+                  >
+                    SKU {candidate}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ) : hasNoSkuCandidate ? (
+            <Alert className="border-amber-500/35 bg-amber-500/5">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>
+                {isSupplyOnlyArchived
+                  ? "Это старая строка поставки"
+                  : "В каталоге нет SKU для выбора"}
+              </AlertTitle>
+              <AlertDescription>
+                {isSupplyOnlyArchived
+                  ? "В WB поставках есть nm, но такой карточки и внутреннего SKU уже нет в каталоге. Эту задачу не нужно исправлять вручную: после обновления Action Center она уйдёт из очереди."
+                  : "Сначала нужно обновить каталог товаров или дождаться синхронизации карточек. После этого нажмите «Перепроверить»."}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {!hasNoSkuCandidate ? (
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,240px)_1fr]">
+              <div className="space-y-1.5">
+                <Label htmlFor={`ac-sku-${item.id}`}>Правильный SKU</Label>
+                <Input
+                  id={`ac-sku-${item.id}`}
+                  inputMode="numeric"
+                  value={skuId}
+                  onChange={(event) => setSkuId(event.target.value)}
+                  placeholder="Например 123456789"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor={`ac-sku-reason-${item.id}`}>
+                  Почему это правильная связь
+                </Label>
+                <Textarea
+                  id={`ac-sku-reason-${item.id}`}
+                  value={reason}
+                  onChange={(event) => setReason(event.target.value)}
+                  rows={2}
+                  placeholder="Например: совпадает nm_id, размер, артикул продавца или баркод"
+                />
+              </div>
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-center gap-2">
+            {!hasNoSkuCandidate ? (
+              <Button
+                size="sm"
+                onClick={() => saveMapping.mutate()}
+                disabled={!canSave || saveMapping.isPending}
+              >
+                {saveMapping.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                )}
+                Готово, далее
+              </Button>
+            ) : null}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => triggerRecheck.mutate()}
+              disabled={!issueId || triggerRecheck.isPending}
+            >
+              {triggerRecheck.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RotateCw className="h-3.5 w-3.5" />
+              )}
+              Перепроверить
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onNext}>
+              Далее
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          {!issueId ? (
+            <div className="text-xs text-muted-foreground">
+              У задачи нет ID проверки качества данных. Откройте исправление
+              данных, чтобы получить контекст строки.
+            </div>
+          ) : !hasNoSkuCandidate && !canSave ? (
+            <div className="text-xs text-muted-foreground">
+              Для сохранения нужен числовой SKU. Если не уверены, сначала
+              откройте товар или строку в данных.
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CostInlineResolution({
+  item,
+  accountId,
+  dateFrom,
+  dateTo,
+  onChanged,
+  onRecheck,
+  onNext,
+}: {
+  item: ActionCenterItem;
+  accountId: number | null | undefined;
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  onChanged: () => Promise<void> | void;
+  onRecheck: (item: ActionCenterItem) => void;
+  onNext: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [index, setIndex] = useState(0);
+  const [drafts, setDrafts] = useState<
+    Record<string, { cost: string; other: string }>
+  >({});
+  const [supplierConfirmed, setSupplierConfirmed] = useState(false);
+  const itemNmId = numberFromUnknown(item.nm_id);
+
+  useEffect(() => {
+    setIndex(0);
+    setDrafts({});
+    setSupplierConfirmed(false);
+  }, [item.id]);
+
+  const missingCostsQ = useQuery({
+    queryKey: [
+      "action-center-inline-missing-costs",
+      accountId,
+      item.id,
+      itemNmId,
+      dateFrom,
+      dateTo,
+    ],
+    enabled: !!accountId,
+    queryFn: () =>
+      fetchCostsMissing(accountId!, {
+        limit: 200,
+        offset: 0,
+        dateFrom: dateFrom ?? undefined,
+        dateTo: dateTo ?? undefined,
+        onlyRevenue: false,
+      }),
+    staleTime: 20_000,
+  });
+
+  const rows = useMemo(() => {
+    const allRows = missingCostsQ.data?.items ?? [];
+    if (!itemNmId) return allRows;
+    const filtered = allRows.filter(
+      (row) => numberFromUnknown(row.nm_id) === itemNmId,
+    );
+    return filtered.length ? filtered : allRows;
+  }, [itemNmId, missingCostsQ.data]);
+
+  useEffect(() => {
+    if (index >= rows.length) setIndex(Math.max(0, rows.length - 1));
+  }, [index, rows.length]);
+
+  const current = rows[Math.min(index, Math.max(rows.length - 1, 0))] ?? null;
+  const currentImages = useMemo(() => {
+    const rowImages = rowImageCandidates(current);
+    return rowImages.length ? rowImages : itemImageCandidates(item);
+  }, [current, item]);
+  const currentKey = current ? costRowKey(current, index) : "";
+  const currentStep = rows.length ? `${index + 1}/${rows.length}` : "0/0";
+  const draft = drafts[currentKey] ?? { cost: "", other: "" };
+  const filledCount = rows.filter(
+    (row, rowIndex) =>
+      parseMoneyDraft(drafts[costRowKey(row, rowIndex)]?.cost ?? "") != null,
+  ).length;
+  const costValue = parseMoneyDraft(draft.cost);
+  const otherValue = parseMoneyDraft(draft.other, true);
+  const canSave = Boolean(
+    accountId && current?.sku_id && costValue != null && otherValue != null,
+  );
+
+  const updateDraft = (patch: Partial<{ cost: string; other: string }>) => {
+    if (!currentKey) return;
+    setDrafts((prev) => ({
+      ...prev,
+      [currentKey]: {
+        cost: prev[currentKey]?.cost ?? "",
+        other: prev[currentKey]?.other ?? "",
+        ...patch,
+      },
+    }));
+  };
+
+  const saveCost = useMutation({
+    mutationFn: async () => {
+      if (
+        !accountId ||
+        !current?.sku_id ||
+        costValue == null ||
+        otherValue == null
+      ) {
+        throw new Error("Заполните себестоимость и прочие расходы.");
+      }
+      return saveInlineCosts({
+        account_id: accountId,
+        rows: [
+          {
+            sku_id: current.sku_id,
+            cost_price: costValue,
+            seller_other_expense: otherValue,
+            supplier: "OPERATOR_TRUSTED_COST",
+            valid_from: dateFrom ?? undefined,
+            is_supplier_confirmed: supplierConfirmed,
+            comment:
+              "Заполнено из Action Center: встроенное исправление себестоимости",
+          },
+        ],
+      });
+    },
+    onSuccess: async () => {
+      toast.success("Себестоимость сохранена. Пересчёт запущен.");
+      invalidateInlineResolverQueries(queryClient);
+      await onChanged?.();
+      if (index < rows.length - 1) {
+        setIndex((value) => value + 1);
+      } else {
+        onNext();
+      }
+    },
+    onError: (error: any) =>
+      toast.error(error?.message ?? "Не удалось сохранить себестоимость"),
+  });
+
+  return (
+    <div className="overflow-hidden rounded-md border bg-card shadow-sm">
+      <div className="border-b bg-amber-500/5 px-4 py-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Database className="h-4 w-4 text-amber-700 dark:text-amber-300" />
+              Заполнить себестоимость
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              Внесите цену закупки и прочие расходы. После сохранения система
+              перейдёт к следующему товару.
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline">
+              {missingCostsQ.isLoading
+                ? "Загружаем строки"
+                : `${rows.length || 0} строк`}
+            </Badge>
+            <Badge variant="outline">{filledCount} заполнено</Badge>
+          </div>
+        </div>
+      </div>
+
+      {missingCostsQ.isLoading ? (
+        <div className="space-y-4 p-4">
+          <div className="flex items-center gap-2 rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Загружаем список товаров без себестоимости...
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        </div>
+      ) : !current ? (
+        <div className="p-4">
+          <Alert className="border-emerald-500/35 bg-emerald-500/5">
+            <CheckCircle2 className="h-4 w-4" />
+            <AlertTitle>Строки без себестоимости не найдены</AlertTitle>
+            <AlertDescription>
+              Возможно, данные уже исправлены. Запустите перепроверку, чтобы
+              обновить очередь.
+            </AlertDescription>
+          </Alert>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => onRecheck(item)}>
+              <RotateCw className="h-3.5 w-3.5" />
+              Перепроверить
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onNext}>
+              Далее
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="p-4">
+          <div className="space-y-4">
+            <div className="rounded-md border bg-gradient-to-b from-background to-muted/20 p-3 shadow-sm">
+              <div className="flex gap-3">
+                <ProductThumb
+                  candidates={currentImages}
+                  label={costRowLabel(current)}
+                  className="h-20 w-16 sm:h-24 sm:w-20"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant="default"
+                      className="bg-primary/10 text-primary hover:bg-primary/10"
+                    >
+                      {currentStep}
+                    </Badge>
+                    <Badge variant="outline">SKU {current.sku_id}</Badge>
+                    {current.nm_id ? (
+                      <Badge variant="secondary">nm {current.nm_id}</Badge>
+                    ) : null}
+                    {current.tech_size ? (
+                      <Badge variant="outline">
+                        Размер {current.tech_size}
+                      </Badge>
+                    ) : null}
+                  </div>
+                  <div className="mt-2 line-clamp-2 text-base font-semibold leading-snug">
+                    {costRowLabel(current)}
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Блокирует расчёт прибыли на сумму{" "}
+                    <span className="font-semibold text-foreground">
+                      {formatMoney(current.affected_revenue ?? 0)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor={`ac-cost-${item.id}`}>
+                  Себестоимость за единицу
+                </Label>
+                <Input
+                  id={`ac-cost-${item.id}`}
+                  inputMode="decimal"
+                  value={draft.cost}
+                  onChange={(event) =>
+                    updateDraft({ cost: event.target.value })
+                  }
+                  placeholder="Например 450"
+                  className="h-11 text-base"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor={`ac-other-${item.id}`}>
+                  Прочие расходы за единицу
+                </Label>
+                <Input
+                  id={`ac-other-${item.id}`}
+                  inputMode="decimal"
+                  value={draft.other}
+                  onChange={(event) =>
+                    updateDraft({ other: event.target.value })
+                  }
+                  placeholder="Если нет расходов, 0"
+                  className="h-11 text-base"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 rounded-md border bg-background px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <label className="flex min-w-0 items-center gap-2 text-sm">
+                <Checkbox
+                  checked={supplierConfirmed}
+                  onCheckedChange={(checked) =>
+                    setSupplierConfirmed(checked === true)
+                  }
+                />
+                <span className="text-muted-foreground">
+                  Поставщик подтвердил цифры
+                </span>
+              </label>
+
+              <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                <Button
+                  onClick={() => saveCost.mutate()}
+                  disabled={!canSave || saveCost.isPending}
+                  className="h-10 min-w-[150px] shadow-sm"
+                >
+                  {saveCost.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4" />
+                  )}
+                  Готово, далее
+                </Button>
+                <Button className="h-10" variant="outline" onClick={onNext}>
+                  Пропустить
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            {!canSave ? (
+              <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                Для сохранения нужна себестоимость числом 0 или больше. Если
+                прочих расходов нет, поставьте 0.
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CardTextInlineResolution({
+  item,
+  accountId,
+  onChanged,
+  onRecheck,
+  onNext,
+}: {
+  item: ActionCenterItem;
+  accountId: number | null | undefined;
+  onChanged: () => Promise<void> | void;
+  onRecheck: (item: ActionCenterItem) => void;
+  onNext: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const payload = itemPayload(item);
+  const issueId = cardQualityIssueId(item);
+  const field = cardTextField(item) ?? "title";
+  const [draft, setDraft] = useState("");
+  const [preview, setPreview] = useState<any | null>(null);
+
+  useEffect(() => {
+    setDraft(
+      String(
+        payload.fixed_value ??
+          payload.suggested_value ??
+          payload.ai_suggested_value ??
+          "",
+      ),
+    );
+    setPreview(null);
+  }, [item.id]);
+
+  const localSave = useMutation({
+    mutationFn: () => {
+      if (!issueId || !accountId || !draft.trim())
+        throw new Error("Заполните текст исправления.");
+      return fixCardQualityIssue(issueId, accountId, {
+        fixed_value: draft.trim(),
+        apply_to_wb: false,
+        reason: "fixed_locally_from_action_center",
+      });
+    },
+    onSuccess: async () => {
+      toast.success("Правка сохранена локально в платформе");
+      invalidateInlineResolverQueries(queryClient);
+      await onChanged?.();
+      onNext();
+    },
+    onError: (error: any) =>
+      toast.error(error?.message ?? "Не удалось сохранить правку"),
+  });
+
+  const previewMutation = useMutation({
+    mutationFn: () => {
+      if (!issueId || !accountId || !draft.trim())
+        throw new Error("Заполните текст исправления.");
+      return previewCardQualityIssueApply(issueId, accountId, {
+        fixed_value: draft.trim(),
+      });
+    },
+    onSuccess: (result) => {
+      setPreview(result);
+      toast.success("Предпросмотр WB готов. Карточка WB ещё не изменена.");
+    },
+    onError: (error: any) =>
+      toast.error(error?.message ?? "Не удалось подготовить предпросмотр"),
+  });
+
+  const applyWb = useMutation({
+    mutationFn: () => {
+      if (!issueId || !accountId || !draft.trim())
+        throw new Error("Заполните текст исправления.");
+      if (preview && preview.can_apply_to_wb === false) {
+        throw new Error(
+          preview.blocked_reason ||
+            "Это изменение нельзя отправить в WB автоматически.",
+        );
+      }
+      return fixCardQualityIssue(issueId, accountId, {
+        fixed_value: draft.trim(),
+        apply_to_wb: true,
+        confirm: true,
+        reason: "wb_submit_from_action_center_after_preview",
+      });
+    },
+    onSuccess: async () => {
+      toast.success(
+        "Правка отправлена в WB. Ожидаем валидацию и перепроверку.",
+      );
+      invalidateInlineResolverQueries(queryClient);
+      await onChanged?.();
+      onNext();
+    },
+    onError: (error: any) =>
+      toast.error(error?.message ?? "Не удалось отправить в WB"),
+  });
+
+  const currentValue = String(
+    payload.current_value ?? payload.current_value_json ?? "",
+  );
+  const previewBefore =
+    preview?.diff?.before ?? preview?.current_value ?? currentValue;
+  const previewAfter = preview?.diff?.after ?? preview?.fixed_value ?? draft;
+  const busy =
+    localSave.isPending || previewMutation.isPending || applyWb.isPending;
+  const canSend = Boolean(draft.trim()) && !!issueId && !!accountId;
+  const previewBlocked = Boolean(
+    preview?.blocked_reason || preview?.can_apply_to_wb === false,
+  );
+
+  return (
+    <div className="overflow-hidden rounded-md border bg-card shadow-sm">
+      <div className="border-b bg-emerald-500/5 px-4 py-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <FileText className="h-4 w-4 text-emerald-700 dark:text-emerald-300" />
+              Исправить здесь:{" "}
+              {field === "title" ? "название карточки" : "описание карточки"}
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              Сначала сохраните локально или посмотрите diff. WB меняется только
+              после отдельного подтверждения.
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">проверка {issueId ?? "—"}</Badge>
+            {item.nm_id ? (
+              <Badge variant="secondary">nm {item.nm_id}</Badge>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-4 p-4">
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="rounded-md border bg-muted/20 p-3">
+            <div className="text-xs font-medium text-muted-foreground">
+              Сейчас
+            </div>
+            <div className="mt-2 min-h-12 whitespace-pre-wrap break-words text-sm">
+              {currentValue || "Пусто"}
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={`ac-card-text-${item.id}`}>
+              {field === "title" ? "Новое название" : "Новое описание"}
+            </Label>
+            {field === "title" ? (
+              <Input
+                id={`ac-card-text-${item.id}`}
+                value={draft}
+                onChange={(event) => {
+                  setDraft(event.target.value);
+                  setPreview(null);
+                }}
+                placeholder="Например: Джемпер женский хлопковый базовый"
+              />
+            ) : (
+              <Textarea
+                id={`ac-card-text-${item.id}`}
+                rows={5}
+                value={draft}
+                onChange={(event) => {
+                  setDraft(event.target.value);
+                  setPreview(null);
+                }}
+                placeholder="Опишите товар фактами: материал, назначение, комплектация, уход."
+              />
+            )}
+            <div className="text-xs text-muted-foreground">
+              {field === "title"
+                ? "Название должно быть понятным покупателю и не состоять только из артикула."
+                : "Описание должно опираться на факты карточки, без неподтверждённых обещаний."}
+            </div>
+          </div>
+        </div>
+
+        {preview ? (
+          <div
+            className={`rounded-md border p-3 text-sm ${previewBlocked ? "border-amber-500/40 bg-amber-500/10" : "bg-muted/20"}`}
+          >
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="font-medium">Предпросмотр изменений WB</div>
+              <Badge variant={previewBlocked ? "outline" : "secondary"}>
+                {previewBlocked
+                  ? "WB отправка заблокирована"
+                  : "Можно отправлять"}
+              </Badge>
+            </div>
+            <div className="grid gap-2 lg:grid-cols-2">
+              <Fact label="Было" value={String(previewBefore || "Пусто")} />
+              <Fact label="Станет" value={String(previewAfter || "Пусто")} />
+            </div>
+            {preview.blocked_reason ? (
+              <div className="mt-2 text-xs text-amber-800 dark:text-amber-200">
+                {preview.blocked_reason}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => localSave.mutate()}
+            disabled={!canSend || busy}
+          >
+            {localSave.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <CheckCircle2 className="h-3.5 w-3.5" />
+            )}
+            Готово, далее
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => previewMutation.mutate()}
+            disabled={!canSend || busy}
+          >
+            {previewMutation.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Search className="h-3.5 w-3.5" />
+            )}
+            Предпросмотр WB
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => applyWb.mutate()}
+            disabled={!canSend || busy || !preview || previewBlocked}
+          >
+            {applyWb.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <ShieldCheck className="h-3.5 w-3.5" />
+            )}
+            Отправить в WB
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onNext}>
+            Далее
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+
+        {!canSend ? (
+          <div className="text-xs text-muted-foreground">
+            Введите исправленный текст. Без текста платформа не будет закрывать
+            задачу и не отправит изменение в WB.
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ManualTaskResolutionPanel({
+  item,
+  busy,
+  onStatus,
+  onDoneNext,
+  onNext,
+}: {
+  item: ActionCenterItem;
+  busy: boolean;
+  onStatus: (item: ActionCenterItem, status: string, next?: boolean) => void;
+  onDoneNext: (item: ActionCenterItem) => void;
+  onNext: () => void;
+}) {
+  const payload = itemPayload(item);
+  const products = manualTaskProducts(item);
+  const closed = isClosedAction(item);
+  const instructions = firstString(
+    payload.instructions,
+    item.reason,
+    item.short_explanation,
+  );
+  const inProgress = norm(item.status) === "in_progress";
+  const deadline = formatDeadline(item, new Date());
+  const displayProducts = products.length
+    ? products
+    : [
+        {
+          nm_id: item.nm_id ?? 0,
+          title: item.title,
+          vendor_code: item.vendor_code,
+          photo_url: firstString(
+            payload.photo_url,
+            payload.image_url,
+            payload.thumbnail,
+          ),
+        } as PortalProductRow,
+      ];
+  return (
+    <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+      <div className="border-b bg-muted/20 px-4 py-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+              <ListChecks className="h-5 w-5" />
+            </span>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  className="rounded-full border-teal-500/35 bg-teal-500/10 text-teal-800 dark:text-teal-200"
+                >
+                  ручная задача
+                </Badge>
+                <StatusBadge status={item.status} />
+                <PriorityBadge item={item} />
+              </div>
+              <div className="mt-2 text-lg font-semibold leading-tight">
+                {item.title}
+              </div>
+              <div className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                {instructions ||
+                  "Ответственный должен выполнить задачу по выбранным товарам и закрыть её в Центре действий."}
+              </div>
+            </div>
+          </div>
+          <div className="grid shrink-0 grid-cols-2 gap-2 text-xs sm:min-w-[320px]">
+            <div className="rounded-lg border bg-background px-3 py-2">
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <UserRound className="h-3.5 w-3.5" />
+                Ответственный
+              </div>
+              <div className="mt-1 truncate font-semibold">
+                {item.assigned_to_user_name || "Не назначен"}
+              </div>
+            </div>
+            <div className="rounded-lg border bg-background px-3 py-2">
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <Clock3 className="h-3.5 w-3.5" />
+                Срок
+              </div>
+              <div className="mt-1 truncate font-semibold">
+                {deadline.detail
+                  ? `${deadline.label}, ${deadline.detail}`
+                  : deadline.label}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="space-y-4">
+          <div className="rounded-xl border bg-background p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold">Что нужно сделать</div>
+                <div className="text-xs text-muted-foreground">
+                  Короткий brief для исполнителя.
+                </div>
+              </div>
+              <Badge variant="secondary" className="rounded-full">
+                {displayProducts.length} товар
+              </Badge>
+            </div>
+            <div className="rounded-lg border bg-muted/20 p-3">
+              <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                {instructions || item.title}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border bg-background p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold">Товары</div>
+                <div className="text-xs text-muted-foreground">
+                  Объекты, по которым создана задача.
+                </div>
+              </div>
+              <Badge variant="outline" className="rounded-full">
+                {displayProducts.length}
+              </Badge>
+            </div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {displayProducts.slice(0, 6).map((product) => (
+                <div
+                  key={`${product.nm_id}-${product.vendor_code ?? ""}`}
+                  className="group flex min-w-0 items-center gap-3 rounded-lg border bg-card p-2 transition-colors hover:border-primary/35"
+                >
+                  <ProductThumb
+                    candidates={productRowImageCandidates(product)}
+                    label={productRowTitle(product)}
+                    className="h-16 w-12 rounded-lg"
+                  />
+                  <div className="min-w-0">
+                    <div className="line-clamp-2 text-sm font-semibold leading-snug">
+                      {productRowTitle(product)}
+                    </div>
+                    <div className="mt-1 truncate text-xs text-muted-foreground">
+                      {productRowSubtitle(product)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {displayProducts.length > 6 ? (
+              <div className="mt-2 text-xs text-muted-foreground">
+                Ещё {displayProducts.length - 6} товаров в этой задаче.
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-xl border bg-background p-4">
+            <div className="text-sm font-semibold">Ход выполнения</div>
+            <div className="mt-3 space-y-3">
+              {[
+                {
+                  title: "Принять задачу",
+                  text: "Ответственный понимает, что нужно сделать.",
+                  done: inProgress || closed,
+                },
+                {
+                  title: "Выполнить работу",
+                  text: "Изменить title, фото, цену или выполнить свою инструкцию.",
+                  done: closed,
+                },
+                {
+                  title: "Закрыть",
+                  text: "Отметить результат, чтобы задача ушла из очереди.",
+                  done: closed,
+                },
+              ].map((step, index) => (
+                <div
+                  key={step.title}
+                  className="grid grid-cols-[28px_1fr] gap-3"
+                >
+                  <span
+                    className={`flex h-7 w-7 items-center justify-center rounded-full border text-xs font-semibold ${
+                      step.done
+                        ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                        : index === 0
+                          ? "border-primary/35 bg-primary/10 text-primary"
+                          : "border-border bg-muted/30 text-muted-foreground"
+                    }`}
+                  >
+                    {step.done ? <Check className="h-3.5 w-3.5" /> : index + 1}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold">{step.title}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {step.text}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border bg-card p-3">
+            <div className="grid gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-10 justify-start rounded-xl"
+                disabled={closed || busy || !item.can_update || inProgress}
+                onClick={() => onStatus(item, "in_progress")}
+              >
+                <Play className="h-3.5 w-3.5" />В работу
+              </Button>
+              <Button
+                size="sm"
+                className="h-10 justify-start rounded-xl shadow-sm"
+                disabled={closed || busy || !item.can_update}
+                onClick={() => onDoneNext(item)}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Готово, дальше
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-10 justify-start rounded-xl"
+                disabled={closed || busy || !item.can_update}
+                onClick={() => onStatus(item, "ignored", true)}
+              >
+                <SkipForward className="h-3.5 w-3.5" />
+                Пропустить
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-10 justify-start rounded-xl"
+                onClick={onNext}
+              >
+                <ArrowRight className="h-3.5 w-3.5" />
+                Следующая
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FocusPanel({
+  item,
+  accountId,
+  dateFrom,
+  dateTo,
+  busy,
+  currentUserId,
+  onStatus,
+  onDoneNext,
+  onRecheck,
+  onChanged,
+  onNext,
+  hasNext,
+}: {
+  item: ActionCenterItem | null;
+  accountId: number | null | undefined;
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  busy: string | null;
+  currentUserId: number | null;
+  onStatus: (item: ActionCenterItem, status: string, next?: boolean) => void;
+  onDoneNext: (item: ActionCenterItem) => void;
+  onRecheck: (item: ActionCenterItem) => void;
+  onChanged: () => Promise<void> | void;
+  onNext: () => void;
+  hasNext: boolean;
+}) {
+  if (!item) {
+    return (
+      <div className="flex min-h-[420px] items-center justify-center rounded-md border bg-card p-8 text-center shadow-sm">
+        <div className="max-w-sm space-y-3">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+            <ShieldCheck className="h-6 w-6" />
+          </div>
+          <div className="text-lg font-semibold">
+            По текущему фильтру проблем нет
+          </div>
+          <div className="text-sm text-muted-foreground">
+            Снимите фильтр или дождитесь следующей синхронизации.
+          </div>
+        </div>
+      </div>
+    );
+  }
+  const primary = primaryActionForItem(item);
+  const href = primary?.href ?? guidedFixHref(item) ?? null;
+  const workLabel = primary?.code
+    ? humanActionLabel(primary.code)
+    : guidedFixLabel(item);
+  const closed = isClosedAction(item);
+  const mutationBusy = busy?.startsWith(item.id);
+  const inline = hasInlineResolution(item);
+  const manualTask = isManualTask(item);
+  const images = itemImageCandidates(item);
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border bg-card px-4 py-3 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <ProductThumb
+              candidates={images}
+              label={problemTitle(item)}
+              className="h-16 w-12"
+            />
+            <div className="min-w-0 space-y-2">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <PriorityBadge item={item} />
+                <StatusBadge status={item.status} />
+                {item.nm_id ? (
+                  <Badge variant="outline" className="text-[10px]">
+                    nm {item.nm_id}
+                  </Badge>
+                ) : null}
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold leading-tight">
+                  {problemTitle(item)}
+                </h2>
+                <div className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                  {item.short_explanation ||
+                    item.reason ||
+                    item.next_step ||
+                    problemCodeLabel(actionCode(item))}
+                </div>
+              </div>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!hasNext}
+            onClick={onNext}
+            className="self-start"
+          >
+            Далее
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+
+      <InlineResolutionPanel
+        item={item}
+        accountId={accountId}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        onChanged={onChanged}
+        onRecheck={onRecheck}
+        onNext={onNext}
+      />
+
+      {manualTask ? (
+        <ManualTaskResolutionPanel
+          item={item}
+          busy={Boolean(mutationBusy)}
+          onStatus={onStatus}
+          onDoneNext={onDoneNext}
+          onNext={onNext}
+        />
+      ) : !inline ? (
+        <div className="rounded-md border bg-card p-5 shadow-sm">
+          <div className="max-w-xl">
+            <div className="text-base font-semibold">
+              Действие пока открывается в отдельном разделе
+            </div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              Для этой задачи ещё нет короткой формы внутри Центра действий.
+              Откройте нужный раздел, затем вернитесь и отметьте задачу готовой.
+            </div>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <WorkButton href={href} label={workLabel || "Открыть"} />
+            <Button
+              size="sm"
+              disabled={closed || mutationBusy || !item.can_update}
+              onClick={() => onDoneNext(item)}
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Готово, далее
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={closed || mutationBusy || !item.can_update}
+              onClick={() => onStatus(item, "ignored", true)}
+            >
+              <SkipForward className="h-3.5 w-3.5" />
+              Пропустить
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SummaryBar({
+  total,
+  open,
+  closed,
+  urgent,
+  overdue,
+  actionable,
+  blocked,
+  moneyAtStake,
+  filtered,
+}: {
+  total: number;
+  open: number;
+  closed: number;
+  urgent: number;
+  overdue: number;
+  actionable: number;
+  blocked: number;
+  moneyAtStake: number;
+  filtered: number;
+}) {
+  const percent = total > 0 ? Math.round((closed / total) * 100) : 100;
+  const items = [
+    { label: "Открыто", value: open, tone: "text-foreground" },
+    {
+      label: "Срочно",
+      value: urgent,
+      tone: urgent ? "text-red-700 dark:text-red-300" : "text-muted-foreground",
+    },
+    {
+      label: "Просрочено",
+      value: overdue,
+      tone: overdue
+        ? "text-red-700 dark:text-red-300"
+        : "text-muted-foreground",
+    },
+    {
+      label: "Можно делать",
+      value: actionable,
+      tone: "text-sky-700 dark:text-sky-300",
+    },
+    {
+      label: "Блокеры",
+      value: blocked,
+      tone: blocked
+        ? "text-amber-700 dark:text-amber-300"
+        : "text-muted-foreground",
+    },
+    {
+      label: "Риск",
+      value: moneyAtStake ? formatMoney(moneyAtStake) : "—",
+      tone: moneyAtStake
+        ? "text-red-700 dark:text-red-300"
+        : "text-muted-foreground",
+    },
+    { label: "В выборке", value: filtered, tone: "text-muted-foreground" },
+  ];
+  return (
+    <div className="rounded-md border bg-card px-4 py-3 shadow-sm">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+        <div className="min-w-[220px] xl:w-[260px]">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Gauge className="h-4 w-4 text-primary" />
+              Очередь
+            </div>
+            <span className="text-sm font-semibold">{percent}%</span>
+          </div>
+          <Progress value={percent} className="mt-2 h-1.5" />
+        </div>
+        <div className="grid min-w-0 flex-1 grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4 xl:grid-cols-7">
+          {items.map((item) => (
+            <div key={item.label} className="min-w-0">
+              <div className="truncate text-[11px] text-muted-foreground">
+                {item.label}
+              </div>
+              <div className={`truncate text-sm font-semibold ${item.tone}`}>
+                {item.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GroupRowMetric({
+  label,
+  value,
+  tone = "text-foreground",
+}: {
+  label: string;
+  value: React.ReactNode;
+  tone?: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10px] leading-tight text-muted-foreground lg:hidden">
+        {label}
+      </div>
+      <div className={`mt-0.5 truncate text-sm font-semibold lg:mt-0 ${tone}`}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function ProblemGroupRow({
+  group,
+  selected,
+  onOpen,
+}: {
+  group: ProblemGroupSummary;
+  selected?: boolean;
+  onOpen: () => void;
+}) {
+  const firstOpen =
+    group.items.find((item) => !isClosedAction(item)) ?? group.items[0];
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className={`group grid w-full gap-2 border-b bg-card px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-muted/35 lg:min-h-[66px] lg:grid-cols-[minmax(340px,1fr)_56px_56px_64px_104px_118px_160px] lg:items-center ${
+        selected ? "bg-primary/5 ring-1 ring-inset ring-primary/25" : ""
+      }`}
+    >
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${group.tone}`}
+        >
+          {group.icon}
+        </span>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <div className="min-w-0 truncate text-sm font-semibold leading-tight">
+              {group.title}
+            </div>
+            {group.blockers ? (
+              <Badge
+                variant="outline"
+                className="h-5 shrink-0 rounded-full border-amber-500/35 bg-amber-500/10 px-2 text-[10px] text-amber-800 dark:text-amber-300"
+              >
+                {group.blockers} блокер
+              </Badge>
+            ) : null}
+            <div className="hidden min-w-0 flex-1 items-center gap-1.5 xl:flex">
+              {group.topCodes.length
+                ? group.topCodes.slice(0, 2).map((item) => (
+                    <Badge
+                      key={item.code}
+                      variant="secondary"
+                      className="h-5 max-w-[150px] truncate rounded-full bg-muted/70 px-2 text-[9px]"
+                    >
+                      {item.label} · {item.count}
+                    </Badge>
+                  ))
+                : null}
+            </div>
+          </div>
+          <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] leading-tight text-muted-foreground">
+            <span className="min-w-0 truncate">{group.subtitle}</span>
+            <span className="hidden shrink-0 text-muted-foreground/70 lg:inline">
+              ·
+            </span>
+            <span className="hidden min-w-0 truncate lg:inline">
+              Шаг:{" "}
+              {firstOpen
+                ? humanActionLabel(primaryActionForItem(firstOpen)?.code)
+                : group.actionLabel}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:contents">
+        <GroupRowMetric label="Открыто" value={group.open} />
+        <GroupRowMetric
+          label="Срочно"
+          value={group.urgent}
+          tone={
+            group.urgent
+              ? "text-red-700 dark:text-red-300"
+              : "text-muted-foreground"
+          }
+        />
+        <GroupRowMetric
+          label="Можно"
+          value={group.actionable}
+          tone="text-sky-700 dark:text-sky-300"
+        />
+        <GroupRowMetric
+          label="Риск"
+          value={group.money ? formatMoney(group.money) : "—"}
+          tone={
+            group.money
+              ? "text-red-700 dark:text-red-300"
+              : "text-muted-foreground"
+          }
+        />
+      </div>
+
+      <div className="min-w-0 pr-2">
+        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+          <span className="font-medium text-foreground">{group.progress}%</span>
+          <span className="truncate">закрыто {group.closed}</span>
+        </div>
+        <Progress value={group.progress} className="mt-1 h-1" />
+      </div>
+
+      <div className="flex items-center justify-between gap-2 lg:justify-end">
+        <span className="whitespace-nowrap rounded-full bg-primary/5 px-2.5 py-1 text-xs font-semibold text-primary transition-colors group-hover:bg-primary/10">
+          {group.actionLabel}
+        </span>
+        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />
+      </div>
+    </button>
+  );
+}
+
+function ProblemGroupsOverview({
+  groups,
+  onOpen,
+}: {
+  groups: ProblemGroupSummary[];
+  onOpen: (key: ProblemGroupKey) => void;
+}) {
+  if (!groups.length) {
+    return (
+      <div className="flex min-h-[420px] items-center justify-center rounded-md border bg-card p-8 text-center shadow-sm">
+        <div className="max-w-sm space-y-3">
+          <ShieldCheck className="mx-auto h-10 w-10 text-emerald-600" />
+          <div className="text-lg font-semibold">Групп проблем нет</div>
+          <div className="text-sm text-muted-foreground">
+            По текущим фильтрам задач нет. Сбросьте фильтр или дождитесь
+            следующей синхронизации.
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <div className="text-base font-semibold">Группы проблем</div>
+          <div className="text-xs text-muted-foreground">
+            Выберите группу, затем закрывайте задачи внутри неё по очереди.
+          </div>
+        </div>
+        <Badge variant="outline">{groups.length} групп</Badge>
+      </div>
+      <div className="overflow-hidden rounded-md border bg-card shadow-sm">
+        <div className="hidden border-b bg-muted/35 px-3 py-1.5 text-[10px] font-medium uppercase text-muted-foreground lg:grid lg:grid-cols-[minmax(340px,1fr)_56px_56px_64px_104px_118px_160px]">
+          <span>Группа и первый шаг</span>
+          <span>Открыто</span>
+          <span>Срочно</span>
+          <span>Можно</span>
+          <span>Риск</span>
+          <span>Прогресс</span>
+          <span className="text-right">Действие</span>
+        </div>
+        {groups.map((group) => (
+          <ProblemGroupRow
+            key={group.key}
+            group={group}
+            onOpen={() => onOpen(group.key)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QueueProgress({
+  total,
+  open,
+  closed,
+  urgent,
+  actionable,
+  blocked,
+}: {
+  total: number;
+  open: number;
+  closed: number;
+  urgent: number;
+  actionable: number;
+  blocked: number;
+}) {
+  const percent = total > 0 ? Math.round((closed / total) * 100) : 100;
+  return (
+    <div className="relative overflow-hidden rounded-md border bg-card p-4 shadow-sm">
+      <div className="absolute inset-x-0 top-0 h-0.5 bg-primary" />
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Gauge className="h-4 w-4 text-primary" />
+            Прогресс очереди
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Осталось {open} из {total}
+          </div>
+        </div>
+        <div className="text-3xl font-semibold tracking-tight">{percent}%</div>
+      </div>
+      <Progress value={percent} className="mt-3 h-2" />
+      <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
+        <div className="rounded-md bg-muted/40 px-2 py-1.5">
+          <div className="text-muted-foreground">сейчас</div>
+          <div className="font-semibold">{actionable}</div>
+        </div>
+        <div className="rounded-md bg-red-500/10 px-2 py-1.5 text-red-700 dark:text-red-300">
+          <div className="opacity-80">срочно</div>
+          <div className="font-semibold">{urgent}</div>
+        </div>
+        <div className="rounded-md bg-amber-500/10 px-2 py-1.5 text-amber-800 dark:text-amber-300">
+          <div className="opacity-80">блок</div>
+          <div className="font-semibold">{blocked}</div>
+        </div>
+      </div>
+      <div className="mt-2 flex justify-between text-[11px] text-muted-foreground">
+        <span>закрыто {closed}</span>
+        <span>в работе {Math.max(total - open - closed, 0)}</span>
+      </div>
+    </div>
+  );
+}
+
+function filterOptionLabel(
+  value: string,
+  items: Array<{ value: string; label: string }>,
+  fallback: string,
+): string {
+  return items.find((item) => item.value === value)?.label ?? fallback;
+}
+
+function activeFilterCount(filters: ActionCenterFilterState): number {
+  const defaults = ACTION_CENTER_DEFAULT_FILTERS;
+  let count = 0;
+  if (filters.q.trim()) count += 1;
+  if (filters.view !== defaults.view) count += 1;
+  if (filters.status !== defaults.status) count += 1;
+  if (filters.source_module !== defaults.source_module) count += 1;
+  if (filters.severity !== defaults.severity) count += 1;
+  if (filters.priority !== defaults.priority) count += 1;
+  if (filters.trust_state !== defaults.trust_state) count += 1;
+  if (filters.impact_type !== defaults.impact_type) count += 1;
+  if (filters.include_beta !== defaults.include_beta) count += 1;
+  if (filters.sort !== defaults.sort) count += 1;
+  return count;
+}
+
+function CommandFilter({
+  label,
+  value,
+  onValueChange,
+  items,
+  placeholder,
+  includeAll = true,
+}: {
+  label: string;
+  value: string;
+  onValueChange: (value: string) => void;
+  items: Array<{ value: string; label: string }>;
+  placeholder: string;
+  includeAll?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const options = includeAll
+    ? [{ value: "all", label: placeholder }, ...items]
+    : items;
+  const selected = filterOptionLabel(value, options, placeholder);
+  const isActive = includeAll ? value !== "all" : false;
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className={`h-9 min-w-[136px] max-w-[220px] justify-between rounded-full border-border/70 bg-background px-3 shadow-sm ${
+            isActive ? "border-primary/45 bg-primary/5 text-primary" : ""
+          }`}
+        >
+          <span className="min-w-0 truncate text-left text-xs">
+            <span className="font-medium text-muted-foreground">{label}</span>
+            <span className="mx-1 text-muted-foreground/60">·</span>
+            <span
+              className={`font-semibold ${isActive ? "text-primary" : "text-foreground"}`}
+            >
+              {selected}
+            </span>
+          </span>
+          <ChevronDown className="ml-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[270px] p-0">
+        <Command>
+          <CommandInput placeholder={`Найти: ${label.toLowerCase()}`} />
+          <CommandList>
+            <CommandEmpty>Ничего не найдено</CommandEmpty>
+            <CommandGroup>
+              {options.map((item) => {
+                const active = item.value === value;
+                return (
+                  <CommandItem
+                    key={item.value}
+                    value={`${item.label} ${item.value}`}
+                    onSelect={() => {
+                      onValueChange(item.value);
+                      setOpen(false);
+                    }}
+                  >
+                    <Check
+                      className={`h-4 w-4 ${active ? "opacity-100" : "opacity-0"}`}
+                    />
+                    <span className="truncate">{item.label}</span>
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function preciseFilterCount(filters: ActionCenterFilterState): number {
+  const defaults = ACTION_CENTER_DEFAULT_FILTERS;
+  let count = 0;
+  if (filters.severity !== defaults.severity) count += 1;
+  if (filters.impact_type !== defaults.impact_type) count += 1;
+  if (filters.trust_state !== defaults.trust_state) count += 1;
+  return count;
+}
+
+function MoreFiltersMenu({
+  filters,
+  updateFilters,
+}: {
+  filters: ActionCenterFilterState;
+  updateFilters: (patch: Partial<ActionCenterFilterState>) => void;
+}) {
+  const count = preciseFilterCount(filters);
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          className={`h-9 rounded-full border-border/70 px-3 shadow-sm ${
+            count
+              ? "border-primary/45 bg-primary/5 text-primary"
+              : "bg-background"
+          }`}
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+          Фильтры
+          {count ? (
+            <Badge
+              variant="secondary"
+              className="ml-1 h-5 rounded-full px-1.5 text-[10px]"
+            >
+              {count}
+            </Badge>
+          ) : null}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[320px] space-y-3 p-3">
+        <div>
+          <div className="text-sm font-semibold">Точные фильтры</div>
+          <div className="text-xs text-muted-foreground">
+            Используйте, когда нужно сузить очередь.
+          </div>
+        </div>
+        <div className="flex flex-col gap-2">
+          <CommandFilter
+            label="Важность"
+            value={filters.severity}
+            onValueChange={(value) => updateFilters({ severity: value })}
+            items={SEVERITY_FILTERS}
+            placeholder="Вся важность"
+          />
+          <CommandFilter
+            label="Эффект"
+            value={filters.impact_type}
+            onValueChange={(value) => updateFilters({ impact_type: value })}
+            items={IMPACT_TYPE_FILTERS}
+            placeholder="Любой эффект"
+          />
+          <CommandFilter
+            label="Доверие"
+            value={filters.trust_state}
+            onValueChange={(value) => updateFilters({ trust_state: value })}
+            items={TRUST_STATE_FILTERS}
+            placeholder="Любое доверие"
+          />
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function ActionCenterFilterDock({
+  filters,
+  updateFilters,
+  resetFilters,
+  canUseBeta,
+}: {
+  filters: ActionCenterFilterState;
+  updateFilters: (patch: Partial<ActionCenterFilterState>) => void;
+  resetFilters: () => void;
+  canUseBeta: boolean;
+}) {
+  const count = activeFilterCount(filters);
+  return (
+    <div className="rounded-md border bg-card p-2 shadow-sm">
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1.5 xl:flex-row xl:items-center">
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+            <Input
+              value={filters.q}
+              onChange={(event) => updateFilters({ q: event.target.value })}
+              placeholder="Поиск по nm, артикулу, причине или коду"
+              className="h-10 rounded-full border-border/70 bg-muted/20 pl-9 pr-9 text-sm shadow-sm"
+            />
+            {filters.q ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="absolute right-1 top-1 h-8 w-8"
+                onClick={() => updateFilters({ q: "" })}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            ) : null}
+          </div>
+
+          <div className="flex shrink-0 flex-wrap gap-1.5 xl:justify-end">
+            <CommandFilter
+              label="Модуль"
+              value={filters.source_module}
+              onValueChange={(value) => updateFilters({ source_module: value })}
+              items={SOURCE_MODULES}
+              placeholder="Все модули"
+            />
+            <CommandFilter
+              label="Статус"
+              value={filters.status}
+              onValueChange={(value) => updateFilters({ status: value })}
+              items={STATUSES}
+              placeholder="Все статусы"
+            />
+            <CommandFilter
+              label="Приоритет"
+              value={filters.priority}
+              onValueChange={(value) => updateFilters({ priority: value })}
+              items={PRIORITIES.map((item) => ({
+                value: item,
+                label: priorityLabel(item),
+              }))}
+              placeholder="Любой приоритет"
+            />
+            <CommandFilter
+              label="Сортировка"
+              value={filters.sort}
+              onValueChange={(value) => updateFilters({ sort: value })}
+              items={ACTION_CENTER_SORT_OPTIONS}
+              placeholder="Сортировка"
+              includeAll={false}
+            />
+            <MoreFiltersMenu filters={filters} updateFilters={updateFilters} />
+          </div>
+        </div>
+
+        <div className="flex min-w-0 items-center gap-1.5 border-t border-dashed pt-2">
+          <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
+            Вид
+          </span>
+          <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {ACTION_CENTER_SAVED_VIEWS.map((view) => {
+              const active = filters.view === view.value;
+              return (
+                <Button
+                  key={view.value}
+                  type="button"
+                  size="sm"
+                  variant={active ? "default" : "outline"}
+                  className={`h-7 shrink-0 rounded-full px-2.5 text-xs ${
+                    active ? "shadow-sm" : "border-border/70 bg-background"
+                  }`}
+                  onClick={() => updateFilters({ view: view.value })}
+                >
+                  {view.label}
+                </Button>
+              );
+            })}
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {canUseBeta ? (
+              <Button
+                size="sm"
+                variant={filters.include_beta ? "default" : "outline"}
+                className="h-8 rounded-full border-border/70"
+                onClick={() =>
+                  updateFilters({ include_beta: !filters.include_beta })
+                }
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Бета
+              </Button>
+            ) : null}
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-8 rounded-full px-3"
+              onClick={resetFilters}
+            >
+              <X className="h-3.5 w-3.5" />
+              Сбросить
+              {count ? (
+                <Badge
+                  variant="secondary"
+                  className="ml-1 h-5 rounded-full px-1.5 text-[10px]"
+                >
+                  {count}
+                </Badge>
+              ) : null}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ManualTaskStepper({
+  productCount,
+  hasTitle,
+  assigneeName,
+  deadline,
+  reviewing = false,
+}: {
+  productCount: number;
+  hasTitle: boolean;
+  assigneeName: string | null;
+  deadline: string;
+  reviewing?: boolean;
+}) {
+  const steps = [
+    {
+      label: "Товары",
+      value: productCount ? `${productCount} выбрано` : "выберите",
+      done: productCount > 0,
+      icon: <PackageSearch className="h-4 w-4" />,
+    },
+    {
+      label: "Задача",
+      value: hasTitle ? "описана" : "заполните",
+      done: hasTitle,
+      icon: <FileText className="h-4 w-4" />,
+    },
+    {
+      label: "Ответственный",
+      value: assigneeName || "назначьте",
+      done: Boolean(assigneeName),
+      icon: <UserRound className="h-4 w-4" />,
+    },
+    {
+      label: "Срок",
+      value: deadline ? "указан" : "укажите",
+      done: Boolean(deadline),
+      icon: <Clock3 className="h-4 w-4" />,
+    },
+    {
+      label: "Проверка",
+      value: reviewing ? "открыта" : "далее",
+      done: reviewing,
+      icon: <ClipboardCheck className="h-4 w-4" />,
+    },
+  ];
+  return (
+    <div className="grid gap-2 sm:grid-cols-5">
+      {steps.map((step, index) => (
+        <div
+          key={step.label}
+          className={`relative overflow-hidden rounded-lg border px-3 py-2 ${
+            step.done
+              ? "border-primary/30 bg-primary/5"
+              : "border-border bg-muted/20"
+          }`}
+        >
+          {index < steps.length - 1 ? (
+            <div className="absolute right-[-18px] top-1/2 hidden h-px w-9 bg-border sm:block" />
+          ) : null}
+          <div className="flex items-center gap-2">
+            <span
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${
+                step.done
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-background text-muted-foreground"
+              }`}
+            >
+              {step.done ? <Check className="h-4 w-4" /> : step.icon}
+            </span>
+            <div className="min-w-0">
+              <div className="truncate text-xs font-semibold">{step.label}</div>
+              <div className="truncate text-[11px] text-muted-foreground">
+                {step.value}
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ManualPresetButton({
+  item,
+  active,
+  onClick,
+}: {
+  item: (typeof MANUAL_TASK_PRESETS)[number];
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`group min-w-0 rounded-lg border p-3 text-left transition-all hover:-translate-y-0.5 hover:border-primary/45 hover:shadow-sm ${
+        active
+          ? "border-primary bg-primary/5 ring-1 ring-primary/20"
+          : "border-border bg-background"
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <span
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${item.tone}`}
+        >
+          {item.icon}
+        </span>
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-semibold">
+            {item.label}
+          </span>
+          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+            {item.hint}
+          </span>
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function ManualProductPickRow({
+  product,
+  active,
+  onToggle,
+}: {
+  product: PortalProductRow;
+  active: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={`group grid min-w-0 grid-cols-[48px_minmax(0,1fr)_32px] items-center gap-3 rounded-lg border bg-background p-2 text-left transition-all hover:border-primary/40 hover:shadow-sm ${
+        active
+          ? "border-primary bg-primary/5 ring-1 ring-primary/20"
+          : "border-border"
+      }`}
+    >
+      <ProductThumb
+        candidates={productRowImageCandidates(product)}
+        label={productRowTitle(product)}
+        className="h-[62px] w-12 rounded-lg"
+      />
+      <div className="min-w-0">
+        <div className="line-clamp-2 text-sm font-semibold leading-snug">
+          {productRowTitle(product)}
+        </div>
+        <div className="mt-1 truncate text-xs text-muted-foreground">
+          {productRowSubtitle(product)}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1">
+          {typeof product.revenue === "number" ? (
+            <Badge
+              variant="outline"
+              className="h-5 rounded-full px-2 text-[10px]"
+            >
+              {formatMoney(product.revenue)}
+            </Badge>
+          ) : null}
+          {typeof product.open_actions_count === "number" &&
+          product.open_actions_count > 0 ? (
+            <Badge
+              variant="outline"
+              className="h-5 rounded-full px-2 text-[10px]"
+            >
+              задач {product.open_actions_count}
+            </Badge>
+          ) : null}
+        </div>
+      </div>
+      <span
+        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors ${
+          active
+            ? "border-primary bg-primary text-primary-foreground"
+            : "border-border bg-muted/30 text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary"
+        }`}
+      >
+        {active ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+      </span>
+    </button>
+  );
+}
+
+function ManualTaskSummaryPanel({
+  selectedProducts,
+  title,
+  description,
+  selectedUserName,
+  deadline,
+  priority,
+}: {
+  selectedProducts: PortalProductRow[];
+  title: string;
+  description: string;
+  selectedUserName: string | null;
+  deadline: string;
+  priority: string;
+}) {
+  const previewProducts = selectedProducts.slice(0, 8);
+  return (
+    <div className="mx-auto w-full max-w-5xl p-5">
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+              <ClipboardCheck className="h-5 w-5" />
+            </span>
+            <div>
+              <div className="text-xl font-semibold tracking-tight">
+                Проверка перед созданием
+              </div>
+              <div className="text-sm text-muted-foreground">
+                Проверьте задачу, исполнителя, срок и выбранные товары.
+              </div>
+            </div>
+          </div>
+        </div>
+        <Badge variant="secondary" className="w-fit rounded-full px-3 py-1">
+          Приоритет {priority}
+        </Badge>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="space-y-4">
+          <div className="rounded-2xl border bg-card p-4 shadow-sm">
+            <div className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
+              Задача
+            </div>
+            <div className="text-lg font-semibold leading-tight">
+              {title.trim() || "Название задачи не заполнено"}
+            </div>
+            <div className="mt-3 whitespace-pre-wrap rounded-xl border bg-muted/25 p-4 text-sm leading-relaxed">
+              {description.trim() || "Инструкция не заполнена"}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border bg-card p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold">Товары</div>
+                <div className="text-xs text-muted-foreground">
+                  Объекты, по которым будет создана задача.
+                </div>
+              </div>
+              <Badge variant="outline" className="rounded-full">
+                {selectedProducts.length}
+              </Badge>
+            </div>
+            {previewProducts.length ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {previewProducts.map((product) => (
+                  <div
+                    key={product.nm_id}
+                    className="flex min-w-0 items-center gap-3 rounded-xl border bg-background p-2"
+                  >
+                    <ProductThumb
+                      candidates={productRowImageCandidates(product)}
+                      label={productRowTitle(product)}
+                      className="h-16 w-12 rounded-lg"
+                    />
+                    <div className="min-w-0">
+                      <div className="line-clamp-2 text-sm font-semibold leading-snug">
+                        {productRowTitle(product)}
+                      </div>
+                      <div className="mt-1 truncate text-xs text-muted-foreground">
+                        {productRowSubtitle(product)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed bg-background p-6 text-center text-sm text-muted-foreground">
+                Сначала выберите товар
+              </div>
+            )}
+            {selectedProducts.length > previewProducts.length ? (
+              <div className="mt-3 text-xs text-muted-foreground">
+                Ещё {selectedProducts.length - previewProducts.length} товаров
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-2xl border bg-card p-4 shadow-sm">
+            <div className="text-sm font-semibold">Исполнение</div>
+            <div className="mt-3 space-y-2">
+              <div className="rounded-xl border bg-background px-3 py-3">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <UserRound className="h-3.5 w-3.5" />
+                  Ответственный
+                </div>
+                <div className="mt-1 truncate text-sm font-semibold">
+                  {selectedUserName || "Не выбран"}
+                </div>
+              </div>
+              <div className="rounded-xl border bg-background px-3 py-3">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Clock3 className="h-3.5 w-3.5" />
+                  Срок
+                </div>
+                <div className="mt-1 truncate text-sm font-semibold">
+                  {deadline ? compactDateTime(deadline) : "Не указан"}
+                </div>
+              </div>
+              <div className="rounded-xl border bg-background px-3 py-3">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Gauge className="h-3.5 w-3.5" />
+                  Приоритет
+                </div>
+                <div className="mt-1 text-sm font-semibold">{priority}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border bg-muted/20 p-4">
+            <div className="text-sm font-semibold">Что произойдёт дальше</div>
+            <div className="mt-3 space-y-3">
+              {[
+                "Задача появится в группе «Ручные задачи».",
+                "Исполнитель увидит brief, товары, срок и кнопки выполнения.",
+                "После закрытия задача уйдёт из очереди.",
+              ].map((item, index) => (
+                <div
+                  key={item}
+                  className="grid grid-cols-[24px_1fr] gap-2 text-sm"
+                >
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                    {index + 1}
+                  </span>
+                  <span className="text-muted-foreground">{item}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ManualTaskEditFooter({
+  canSubmit,
+  createDisabledReason,
+  onCancel,
+  onNext,
+}: {
+  canSubmit: boolean;
+  createDisabledReason: string;
+  onCancel: () => void;
+  onNext: () => void;
+}) {
+  return (
+    <div className="shrink-0 border-t bg-card px-4 py-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 flex-1 text-xs text-muted-foreground">
+          {canSubmit
+            ? "Следующий шаг: проверка перед созданием."
+            : createDisabledReason}
+        </div>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 rounded-xl"
+            onClick={onCancel}
+          >
+            Отмена
+          </Button>
+          <Button
+            type="button"
+            className="h-10 rounded-xl shadow-sm"
+            onClick={onNext}
+            disabled={!canSubmit}
+          >
+            Далее
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ManualTaskReviewFooter({
+  onBack,
+  onCreate,
+  isCreating,
+}: {
+  onBack: () => void;
+  onCreate: () => void;
+  isCreating: boolean;
+}) {
+  return (
+    <div className="shrink-0 border-t bg-card px-4 py-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 flex-1 text-xs text-muted-foreground">
+          Проверьте данные. После создания задача попадёт в очередь.
+        </div>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 rounded-xl"
+            onClick={onBack}
+            disabled={isCreating}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Назад
+          </Button>
+          <Button
+            type="button"
+            className="h-10 rounded-xl shadow-sm"
+            onClick={onCreate}
+            disabled={isCreating}
+          >
+            {isCreating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Plus className="h-4 w-4" />
+            )}
+            Создать задачу
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ManualTaskDialog({
+  open,
+  onOpenChange,
+  accountId,
+  dateFrom,
+  dateTo,
+  users,
+  currentUserId,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (value: boolean) => void;
+  accountId: number | null | undefined;
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  users: PortalAssignableUser[] | undefined;
+  currentUserId: number | null;
+  onCreated: () => Promise<void> | void;
+}) {
+  const queryClient = useQueryClient();
+  const [productSearch, setProductSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [selectedProducts, setSelectedProducts] = useState<PortalProductRow[]>(
+    [],
+  );
+  const [taskKind, setTaskKind] = useState(MANUAL_TASK_PRESETS[0].key);
+  const [title, setTitle] = useState(MANUAL_TASK_PRESETS[0].title);
+  const [description, setDescription] = useState(
+    MANUAL_TASK_PRESETS[0].description,
+  );
+  const [priority, setPriority] = useState<"P1" | "P2" | "P3" | "P4">("P2");
+  const [deadline, setDeadline] = useState(defaultManualDeadline);
+  const [assigneeId, setAssigneeId] = useState<number | null>(null);
+  const [assigneeOpen, setAssigneeOpen] = useState(false);
+  const [manualTaskStage, setManualTaskStage] = useState<"edit" | "review">(
+    "edit",
+  );
+
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setDebouncedSearch(productSearch.trim()),
+      250,
+    );
+    return () => window.clearTimeout(timer);
+  }, [productSearch]);
+
+  useEffect(() => {
+    if (!open || assigneeId != null) return;
+    const list = users ?? [];
+    const current = currentUserId
+      ? list.find((item) => item.id === currentUserId)
+      : null;
+    setAssigneeId(current?.id ?? list[0]?.id ?? null);
+  }, [assigneeId, currentUserId, open, users]);
+
+  const productsQuery = useQuery({
+    queryKey: [
+      "action-center-manual-products",
+      accountId,
+      debouncedSearch,
+      dateFrom,
+      dateTo,
+    ],
+    enabled: open && !!accountId,
+    queryFn: () =>
+      fetchPortalProducts(
+        accountId!,
+        {
+          limit: 18,
+          offset: 0,
+          ...(debouncedSearch ? { search: debouncedSearch } : {}),
+          sort_by: "priority_score",
+          sort_dir: "desc",
+        },
+        { dateFrom, dateTo },
+      ),
+    staleTime: 20_000,
+  });
+
+  const selectedIds = useMemo(
+    () => new Set(selectedProducts.map((item) => Number(item.nm_id))),
+    [selectedProducts],
+  );
+  const selectedUser =
+    (users ?? []).find((item) => item.id === assigneeId) ?? null;
+  const preset =
+    MANUAL_TASK_PRESETS.find((item) => item.key === taskKind) ??
+    MANUAL_TASK_PRESETS[0];
+  const canSubmit = Boolean(
+    accountId &&
+    selectedProducts.length &&
+    title.trim().length >= 3 &&
+    deadline &&
+    assigneeId,
+  );
+
+  const resetForm = () => {
+    setProductSearch("");
+    setDebouncedSearch("");
+    setSelectedProducts([]);
+    setTaskKind(MANUAL_TASK_PRESETS[0].key);
+    setTitle(MANUAL_TASK_PRESETS[0].title);
+    setDescription(MANUAL_TASK_PRESETS[0].description);
+    setPriority("P2");
+    setDeadline(defaultManualDeadline());
+    setManualTaskStage("edit");
+    const list = users ?? [];
+    const current = currentUserId
+      ? list.find((item) => item.id === currentUserId)
+      : null;
+    setAssigneeId(current?.id ?? list[0]?.id ?? null);
+  };
+
+  const createTask = useMutation({
+    mutationFn: async () => {
+      if (!accountId || !assigneeId)
+        throw new Error("Не выбран аккаунт или ответственный.");
+      return createManualPortalAction({
+        account_id: accountId,
+        title: title.trim(),
+        description: description.trim() || null,
+        task_kind: taskKind,
+        priority,
+        assigned_to_user_id: assigneeId,
+        deadline_at: dateTimeLocalToIso(deadline),
+        products: selectedProducts.map((product) => ({
+          nm_id: Number(product.nm_id),
+          sku_id: numberFromUnknown(product.sku_id),
+          title: productRowTitle(product),
+          vendor_code: firstString(product.vendor_code, product.article),
+          photo_url: productRowImageCandidates(product)[0] ?? null,
+        })),
+      });
+    },
+    onSuccess: async () => {
+      toast.success("Ручная задача создана");
+      await queryClient.invalidateQueries({ queryKey: ["portal-actions"] });
+      await onCreated?.();
+      resetForm();
+      setManualTaskStage("edit");
+      onOpenChange(false);
+    },
+    onError: (error: any) => {
+      toast.error(error?.message ?? "Не удалось создать задачу");
+    },
+  });
+
+  const toggleProduct = (row: PortalProductRow) => {
+    const nmId = Number(row.nm_id);
+    if (!Number.isFinite(nmId)) return;
+    setSelectedProducts((prev) =>
+      prev.some((item) => Number(item.nm_id) === nmId)
+        ? prev.filter((item) => Number(item.nm_id) !== nmId)
+        : [...prev, row],
+    );
+  };
+
+  const choosePreset = (key: string) => {
+    const next =
+      MANUAL_TASK_PRESETS.find((item) => item.key === key) ??
+      MANUAL_TASK_PRESETS[0];
+    setTaskKind(next.key);
+    setTitle((current) =>
+      current === preset.title || !current.trim() ? next.title : current,
+    );
+    setDescription((current) =>
+      current === preset.description || !current.trim()
+        ? next.description
+        : current,
+    );
+  };
+  const selectedUserName =
+    selectedUser?.display_name ||
+    selectedUser?.full_name ||
+    selectedUser?.email ||
+    null;
+  const reviewing = manualTaskStage === "review";
+  const createDisabledReason = !selectedProducts.length
+    ? "Выберите хотя бы один товар"
+    : title.trim().length < 3
+      ? "Заполните название задачи"
+      : !assigneeId
+        ? "Назначьте ответственного"
+        : !deadline
+          ? "Укажите срок"
+          : "";
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(value) => {
+        if (!value) setManualTaskStage("edit");
+        onOpenChange(value);
+      }}
+    >
+      <DialogContent className="flex h-[min(860px,94vh)] max-w-6xl flex-col overflow-hidden rounded-2xl border bg-background p-0 shadow-2xl">
+        <div className="shrink-0 border-b bg-card">
+          <DialogHeader className="px-5 py-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <DialogTitle className="flex items-center gap-2 text-lg">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+                    <Plus className="h-4 w-4" />
+                  </span>
+                  Создать ручную задачу
+                </DialogTitle>
+                <DialogDescription className="mt-1">
+                  {reviewing
+                    ? "Проверьте всё перед созданием задачи."
+                    : "Выберите товары, опишите конкретный результат, назначьте исполнителя и срок."}
+                </DialogDescription>
+              </div>
+              <Badge variant="outline" className="h-7 rounded-full">
+                Action Center
+              </Badge>
+            </div>
+          </DialogHeader>
+          <div className="px-5 pb-4">
+            <ManualTaskStepper
+              productCount={selectedProducts.length}
+              hasTitle={title.trim().length >= 3}
+              assigneeName={selectedUserName}
+              deadline={deadline}
+              reviewing={reviewing}
+            />
+          </div>
+        </div>
+
+        {reviewing ? (
+          <>
+            <ScrollArea className="min-h-0 flex-1 bg-muted/10">
+              <ManualTaskSummaryPanel
+                selectedProducts={selectedProducts}
+                title={title}
+                description={description}
+                selectedUserName={selectedUserName}
+                deadline={deadline}
+                priority={priority}
+              />
+            </ScrollArea>
+            <ManualTaskReviewFooter
+              onBack={() => setManualTaskStage("edit")}
+              onCreate={() => createTask.mutate()}
+              isCreating={createTask.isPending}
+            />
+          </>
+        ) : (
+          <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_430px]">
+            <div className="flex min-h-0 flex-col border-r bg-muted/10">
+              <div className="border-b bg-background px-4 py-3">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold">
+                      Товары для задачи
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Можно выбрать один товар или сразу группу.
+                    </div>
+                  </div>
+                  <Badge
+                    variant={selectedProducts.length ? "default" : "secondary"}
+                    className="rounded-full"
+                  >
+                    {selectedProducts.length} выбрано
+                  </Badge>
+                </div>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    value={productSearch}
+                    onChange={(event) => setProductSearch(event.target.value)}
+                    placeholder="Найдите товар по nm, артикулу или названию"
+                    className="h-11 rounded-xl border-border/70 bg-muted/20 pl-9 pr-3 text-sm shadow-sm"
+                  />
+                </div>
+                {selectedProducts.length ? (
+                  <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    {selectedProducts.slice(0, 6).map((product) => (
+                      <div
+                        key={product.nm_id}
+                        className="flex max-w-[210px] shrink-0 items-center gap-2 rounded-full border bg-card py-1 pl-1 pr-2 text-left shadow-sm hover:border-primary/40"
+                      >
+                        <ProductThumb
+                          candidates={productRowImageCandidates(product)}
+                          label={productRowTitle(product)}
+                          className="h-7 w-7 rounded-full"
+                        />
+                        <span className="min-w-0 truncate text-xs font-medium">
+                          {productRowTitle(product)}
+                        </span>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleProduct(product);
+                          }}
+                          aria-label="Убрать товар"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                    {selectedProducts.length > 6 ? (
+                      <Badge
+                        variant="secondary"
+                        className="h-9 shrink-0 rounded-full px-3"
+                      >
+                        +{selectedProducts.length - 6}
+                      </Badge>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <ScrollArea className="min-h-0 flex-1">
+                <div className="grid gap-2.5 p-4">
+                  {productsQuery.isLoading ? (
+                    Array.from({ length: 6 }).map((_, index) => (
+                      <Skeleton key={index} className="h-[82px] rounded-lg" />
+                    ))
+                  ) : productsQuery.data?.items?.length ? (
+                    productsQuery.data.items.map((product) => {
+                      const active = selectedIds.has(Number(product.nm_id));
+                      return (
+                        <ManualProductPickRow
+                          key={product.nm_id}
+                          product={product}
+                          active={active}
+                          onToggle={() => toggleProduct(product)}
+                        />
+                      );
+                    })
+                  ) : (
+                    <div className="flex min-h-[360px] items-center justify-center rounded-xl border border-dashed bg-background p-6 text-center">
+                      <div className="max-w-xs space-y-2">
+                        <PackageSearch className="mx-auto h-9 w-9 text-muted-foreground" />
+                        <div className="font-semibold">Товары не найдены</div>
+                        <div className="text-sm text-muted-foreground">
+                          Попробуйте nm ID, артикул продавца или часть названия.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </ScrollArea>
+            </div>
+
+            <div className="flex min-h-0 flex-col bg-background">
+              <ScrollArea className="min-h-0 flex-1">
+                <div className="space-y-4 p-4">
+                  <div className="rounded-xl border bg-card p-3">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold">Тип работы</div>
+                        <div className="text-xs text-muted-foreground">
+                          Выберите шаблон, потом поправьте текст.
+                        </div>
+                      </div>
+                      <Badge variant="outline" className="rounded-full">
+                        {preset.label}
+                      </Badge>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {MANUAL_TASK_PRESETS.map((item) => (
+                        <ManualPresetButton
+                          key={item.key}
+                          item={item}
+                          active={taskKind === item.key}
+                          onClick={() => choosePreset(item.key)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border bg-card p-3">
+                    <div className="mb-3">
+                      <div className="text-sm font-semibold">
+                        Содержание задачи
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Пишите как поручение человеку: результат должен быть
+                        понятен без созвона.
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="manual-task-title">Название</Label>
+                        <Input
+                          id="manual-task-title"
+                          value={title}
+                          onChange={(event) => setTitle(event.target.value)}
+                          placeholder="Например: изменить title для летних костюмов"
+                          className="h-11 rounded-xl"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="manual-task-description">
+                          Инструкция
+                        </Label>
+                        <Textarea
+                          id="manual-task-description"
+                          value={description}
+                          onChange={(event) =>
+                            setDescription(event.target.value)
+                          }
+                          rows={5}
+                          placeholder="Что проверить, что изменить, где взять данные, какой результат считается готовым."
+                          className="min-h-[130px] rounded-xl"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border bg-card p-3">
+                    <div className="mb-3">
+                      <div className="text-sm font-semibold">Исполнение</div>
+                      <div className="text-xs text-muted-foreground">
+                        Кто делает, когда нужно закончить и насколько срочно.
+                      </div>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5 sm:col-span-2">
+                        <Label>Ответственный</Label>
+                        <Popover
+                          open={assigneeOpen}
+                          onOpenChange={setAssigneeOpen}
+                        >
+                          <PopoverTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              role="combobox"
+                              className="h-11 w-full justify-between rounded-xl"
+                            >
+                              <span className="flex min-w-0 items-center gap-2">
+                                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                                  <UserRound className="h-4 w-4" />
+                                </span>
+                                <span className="truncate">
+                                  {selectedUserName ||
+                                    "Выберите ответственного"}
+                                </span>
+                              </span>
+                              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            align="start"
+                            className="w-[360px] p-0"
+                          >
+                            <Command>
+                              <CommandInput placeholder="Найти сотрудника" />
+                              <CommandList>
+                                <CommandEmpty>Никого не найдено</CommandEmpty>
+                                <CommandGroup>
+                                  {(users ?? []).map((item) => {
+                                    const active = item.id === assigneeId;
+                                    return (
+                                      <CommandItem
+                                        key={item.id}
+                                        value={`${item.display_name} ${item.full_name} ${item.email}`}
+                                        onSelect={() => {
+                                          setAssigneeId(item.id);
+                                          setAssigneeOpen(false);
+                                        }}
+                                      >
+                                        <Check
+                                          className={`h-4 w-4 ${active ? "opacity-100" : "opacity-0"}`}
+                                        />
+                                        <div className="min-w-0">
+                                          <div className="truncate text-sm font-medium">
+                                            {item.display_name ||
+                                              item.full_name ||
+                                              item.email}
+                                          </div>
+                                          <div className="truncate text-xs text-muted-foreground">
+                                            {item.email}
+                                          </div>
+                                        </div>
+                                      </CommandItem>
+                                    );
+                                  })}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="manual-task-deadline">Срок</Label>
+                        <Input
+                          id="manual-task-deadline"
+                          type="datetime-local"
+                          value={deadline}
+                          onChange={(event) => setDeadline(event.target.value)}
+                          className="h-11 rounded-xl"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Приоритет</Label>
+                        <div className="grid h-11 grid-cols-4 gap-1 rounded-xl border bg-muted/30 p-1">
+                          {(["P1", "P2", "P3", "P4"] as const).map((item) => (
+                            <Button
+                              key={item}
+                              type="button"
+                              variant={
+                                priority === item ? "default" : "outline"
+                              }
+                              size="sm"
+                              className="h-full rounded-lg border-0 px-0 shadow-none"
+                              onClick={() => setPriority(item)}
+                            >
+                              {item}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </ScrollArea>
+
+              <ManualTaskEditFooter
+                canSubmit={canSubmit}
+                createDisabledReason={createDisabledReason}
+                onCancel={() => onOpenChange(false)}
+                onNext={() => setManualTaskStage("review")}
+              />
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function ActionCenterPageContainer({
+  routeSearch,
+}: {
+  routeSearch: ActionCenterSearch;
+}) {
+  const { activeId } = useAccounts();
+  const { user } = useAuth();
+  const { from: dateFrom, to: dateTo } = useDateRange();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const routeFilters = useActionCenterFilters(routeSearch);
+  const routeFilterKey = useMemo(
+    () => JSON.stringify(routeSearch ?? {}),
+    [routeSearch],
+  );
+  const [filters, setFilters] = useState<ActionCenterFilterState>(routeFilters);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedGroupKey, setSelectedGroupKey] =
+    useState<ProblemGroupKey | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [recheckBusy, setRecheckBusy] = useState<string | null>(null);
+  const [manualTaskOpen, setManualTaskOpen] = useState(false);
+
+  const canUseBeta = !!user?.is_superuser;
+  const currentUserId = user?.id ?? null;
+  const currentRole = userAccountRole(user, activeId);
+  const canAssignTasks = roleRank(currentRole) >= roleRank("operator");
+
+  useEffect(() => {
+    setFilters({
+      ...routeFilters,
+      include_beta: canUseBeta && routeFilters.include_beta,
+    });
+  }, [canUseBeta, routeFilterKey]);
+
+  const updateFilters = (patch: Partial<ActionCenterFilterState>) => {
+    const next = {
+      ...filters,
+      ...patch,
+      include_beta: canUseBeta
+        ? (patch.include_beta ?? filters.include_beta)
+        : false,
+    };
+    setFilters(next);
+    navigate({
+      to: "/action-center",
+      search: actionCenterSearchFromState(next) as ActionCenterSearch,
+      replace: true,
+    });
+  };
+
+  const resetFilters = () => {
+    const next = {
+      ...ACTION_CENTER_DEFAULT_FILTERS,
+      include_beta: canUseBeta && filters.include_beta,
+    };
+    setSelectedGroupKey(null);
+    setSelectedId(null);
+    updateFilters(next);
+  };
+
+  const queryFilters = useMemo(
+    () => ({
+      limit: MAX_QUEUE_ITEMS,
+      ...(filters.status !== "all" ? { status: filters.status } : {}),
+      ...(filters.source_module !== "all"
+        ? { source_module: [filters.source_module] }
+        : {}),
+      ...(filters.priority !== "all" ? { priority: [filters.priority] } : {}),
+      ...(filters.severity !== "all" ? { severity: [filters.severity] } : {}),
+      ...(filters.problem_code !== "all"
+        ? { problem_code: [filters.problem_code] }
+        : {}),
+      ...(filters.trust_state !== "all"
+        ? { trust_state: [filters.trust_state] }
+        : {}),
+      ...(filters.impact_type !== "all"
+        ? { impact_type: [filters.impact_type] }
+        : {}),
+      ...(routeSearch.nm_id ? { nm_id: routeSearch.nm_id } : {}),
+      ...(canUseBeta && filters.include_beta ? { include_beta: true } : {}),
+    }),
+    [canUseBeta, filters, routeSearch.nm_id],
+  );
+
+  const { actionsQuery, usersQuery } = useActionCenterData({
+    activeId,
+    canAssignTasks,
+    dateFrom,
+    dateTo,
+    queryFilters,
+  });
+  const { data, isLoading, error, refetch } = actionsQuery;
+  const mutation = useActionCenterMutations({
+    activeId,
+    queryClient,
+    setBusy,
+  });
+
+  const rawItems = extractActions(data);
+  const serverTotal = Number(data?.total ?? rawItems.length ?? 0);
+  const adaptedItems = useMemo(
+    () =>
+      rawItems.map((action) =>
+        adaptActionCenterItem(action, { users: usersQuery.data }),
+      ),
+    [rawItems, usersQuery.data],
+  );
+
+  const visibleItems = useMemo(
+    () =>
+      adaptedItems.filter((item) => {
+        if (isSystemHandledAction(item)) return false;
+        if (
+          actionCenterShouldHideBetaSignal(
+            isTestOnlyProblem(item) || isBetaAction(item),
+            {
+              canUseBeta,
+              includeBeta: filters.include_beta,
+            },
+          )
+        ) {
+          return false;
+        }
+        return item.is_seller_visible || canUseBeta;
+      }),
+    [adaptedItems, canUseBeta, filters.include_beta],
+  );
+
+  const now = useMemo(() => new Date(), [data]);
+  const filteredItems = useMemo(() => {
+    const matched = visibleItems.filter((item) =>
+      actionCenterMatchesFilters(item, filters, {
+        currentUserId,
+        now,
+        waitsForRecheck: waitsForRecheckAction(item),
+      }),
+    );
+    return sortActionCenterItems(matched, filters.sort);
+  }, [currentUserId, filters, now, visibleItems]);
+
+  const problemGroups = useMemo(
+    () => buildProblemGroups(filteredItems),
+    [filteredItems],
+  );
+  const selectedGroup = selectedGroupKey
+    ? (problemGroups.find((group) => group.key === selectedGroupKey) ?? null)
+    : null;
+  const workItems = selectedGroup ? selectedGroup.items : filteredItems;
+
+  useEffect(() => {
+    if (
+      selectedGroupKey &&
+      !problemGroups.some((group) => group.key === selectedGroupKey)
+    ) {
+      setSelectedGroupKey(null);
+      setSelectedId(null);
+    }
+  }, [problemGroups, selectedGroupKey]);
+
+  const queueItems = workItems.slice(0, MAX_QUEUE_ITEMS);
+  const openItems = workItems.filter((item) => !isClosedAction(item));
+  const closedItems = workItems.filter(isClosedAction);
+  const urgentItems = openItems.filter(isUrgentAction);
+  const blockerItems = openItems.filter(isDataBlockerAction);
+  const overdueItems = openItems.filter((item) => isOverdueAction(item, now));
+  const actionableItems = openItems.filter(isActionable);
+  const moneyAtStake = openItems.reduce(
+    (sum, item) => sum + Math.abs(Number(item.money_impact_amount ?? 0)),
+    0,
+  );
+
+  const selected = useMemo(() => {
+    if (!queueItems.length) return null;
+    return queueItems.find((item) => item.id === selectedId) ?? queueItems[0];
+  }, [queueItems, selectedId]);
+
+  useEffect(() => {
+    if (!queueItems.length) {
+      setSelectedId(null);
+      return;
+    }
+    if (!selectedId || !queueItems.some((item) => item.id === selectedId)) {
+      setSelectedId(queueItems[0].id);
+    }
+  }, [queueItems, selectedId]);
+
+  const selectedIndex = selected
+    ? queueItems.findIndex((item) => item.id === selected.id)
+    : -1;
+  const nextItem =
+    selectedIndex >= 0
+      ? (queueItems
+          .slice(selectedIndex + 1)
+          .find((item) => !isClosedAction(item)) ??
+        queueItems.find(
+          (item) => !isClosedAction(item) && item.id !== selected?.id,
+        ))
+      : queueItems.find((item) => !isClosedAction(item));
+
+  const goNext = () => {
+    if (nextItem) setSelectedId(nextItem.id);
+  };
+
+  const saveStatus = (
+    item: ActionCenterItem,
+    status: string,
+    moveNext = false,
+  ) => {
+    setBusy(`${item.id}:${status}`);
+    mutation.mutate(
+      {
+        a: item,
+        status,
+        last_comment:
+          status === "ignored"
+            ? "Пропущено из очереди Центра действий"
+            : status === "done"
+              ? "Отмечено выполненным из очереди Центра действий"
+              : "",
+      },
+      {
+        onSuccess: () => {
+          if (moveNext) goNext();
+        },
+      },
+    );
+  };
+
+  const recheck = async (item: ActionCenterItem) => {
+    const problemId = dynamicProblemInstanceId(item);
+    setRecheckBusy(item.id);
+    try {
+      if (problemId != null) {
+        await recheckProblemInstance(problemId, activeId);
+        toast.success("Перепроверка запущена");
+      } else {
+        await refetch();
+        toast.success("Очередь обновлена");
+      }
+      await queryClient.invalidateQueries({ queryKey: ["portal-actions"] });
+      await refetch();
+    } catch (e) {
+      toast.error("Не удалось запустить перепроверку");
+    } finally {
+      setRecheckBusy(null);
+    }
+  };
+
+  const applyGroupRecalculate = async () => {
+    const target = selected ?? openItems[0] ?? null;
+    if (target) {
+      await recheck(target);
+    } else {
+      await refetch();
+      toast.success("Очередь обновлена");
+    }
+  };
+
+  if (!activeId) {
+    return (
+      <PageShell>
+        <NoAccountSelected />
+      </PageShell>
+    );
+  }
+
+  if (isLoading) return <EmptyLoader />;
+
+  if (error) {
+    return (
+      <PageShell>
+        <EndpointError error={error} reset={() => refetch()} />
+      </PageShell>
+    );
+  }
+
+  return (
+    <PageShell>
+      <PageHeader
+        title="Центр действий"
+        description={
+          selectedGroup
+            ? `${selectedGroup.title}: осталось ${openItems.length}, срочно ${urgentItems.length}.`
+            : serverTotal > rawItems.length
+              ? `Показано ${filteredItems.length} из ${serverTotal} задач текущей выборки.`
+              : `Выберите группу проблем. Всего в текущей выборке ${filteredItems.length}.`
+        }
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              onClick={() => setManualTaskOpen(true)}
+              disabled={!canAssignTasks}
+              title={
+                canAssignTasks ? undefined : "Нужна роль оператора или выше"
+              }
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Создать задачу
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              <RefreshCw className="h-3.5 w-3.5" />
+              Обновить
+            </Button>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/results">
+                <BarChart3 className="h-3.5 w-3.5" />
+                Результаты
+              </Link>
+            </Button>
+          </div>
+        }
+      />
+
+      <ManualTaskDialog
+        open={manualTaskOpen}
+        onOpenChange={setManualTaskOpen}
+        accountId={activeId}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        users={usersQuery.data}
+        currentUserId={currentUserId}
+        onCreated={async () => {
+          updateFilters({ view: "all", source_module: "manual" });
+          setSelectedGroupKey("manual_tasks");
+          setSelectedId(null);
+          await refetch();
+        }}
+      />
+
+      <div className="space-y-4">
+        {!selectedGroup ? (
+          <>
+            <SummaryBar
+              total={workItems.length}
+              open={openItems.length}
+              closed={closedItems.length}
+              urgent={urgentItems.length}
+              overdue={overdueItems.length}
+              actionable={actionableItems.length}
+              blocked={blockerItems.length}
+              moneyAtStake={moneyAtStake}
+              filtered={workItems.length}
+            />
+
+            <ActionCenterFilterDock
+              filters={filters}
+              updateFilters={updateFilters}
+              resetFilters={resetFilters}
+              canUseBeta={canUseBeta}
+            />
+          </>
+        ) : null}
+
+        {!selectedGroup ? (
+          <ProblemGroupsOverview
+            groups={problemGroups}
+            onOpen={(key) => {
+              setSelectedGroupKey(key);
+              setSelectedId(null);
+            }}
+          />
+        ) : (
+          <>
+            <div className="rounded-md border bg-card px-4 py-3 shadow-sm">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md border ${selectedGroup.tone}`}
+                  >
+                    {selectedGroup.icon}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-lg font-semibold leading-tight">
+                        {selectedGroup.title}
+                      </h2>
+                      <Badge variant="outline">
+                        {selectedGroup.open} открыто
+                      </Badge>
+                      {selectedGroup.urgent ? (
+                        <Badge
+                          variant="outline"
+                          className="border-red-500/35 bg-red-500/10 text-red-700 dark:text-red-300"
+                        >
+                          {selectedGroup.urgent} срочно
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      {selectedGroup.subtitle}
+                    </div>
+                    <div className="mt-3 flex max-w-md items-center gap-3">
+                      <Progress
+                        value={selectedGroup.progress}
+                        className="h-2"
+                      />
+                      <span className="w-12 shrink-0 text-right text-sm font-semibold">
+                        {selectedGroup.progress}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={applyGroupRecalculate}
+                    disabled={Boolean(recheckBusy)}
+                    className="h-9 shadow-sm"
+                  >
+                    {recheckBusy ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RotateCw className="h-3.5 w-3.5" />
+                    )}
+                    Применить и пересчитать
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-9"
+                    onClick={() => {
+                      setSelectedGroupKey(null);
+                      setSelectedId(null);
+                    }}
+                  >
+                    <ArrowRight className="h-3.5 w-3.5 rotate-180" />
+                    Все группы
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+              <div className="rounded-md border bg-muted/20 shadow-sm xl:sticky xl:top-4 xl:self-start">
+                <div className="flex items-center justify-between gap-3 border-b bg-card px-4 py-3">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-semibold">
+                      <ListChecks className="h-4 w-4 text-primary" />
+                      Очередь решения
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {queueItems.length} показано, {openItems.length} всего
+                      осталось
+                    </div>
+                  </div>
+                </div>
+                <ScrollArea className="h-[calc(100vh-300px)] min-h-[440px]">
+                  <div className="space-y-2 p-3">
+                    {queueItems.length ? (
+                      queueItems.map((item, index) => (
+                        <QueueItem
+                          key={item.id}
+                          item={item}
+                          index={index}
+                          selected={selected?.id === item.id}
+                          currentUserId={currentUserId}
+                          onSelect={() => setSelectedId(item.id)}
+                        />
+                      ))
+                    ) : (
+                      <div className="flex min-h-[360px] items-center justify-center rounded-md border border-dashed bg-card p-6 text-center">
+                        <div className="space-y-2">
+                          <CheckCircle2 className="mx-auto h-9 w-9 text-emerald-600" />
+                          <div className="font-semibold">Очередь пуста</div>
+                          <div className="text-sm text-muted-foreground">
+                            По текущим фильтрам задач нет.
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+              </div>
+
+              <FocusPanel
+                item={selected}
+                accountId={activeId}
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                busy={busy || recheckBusy}
+                currentUserId={currentUserId}
+                onStatus={saveStatus}
+                onDoneNext={(item) => saveStatus(item, "done", true)}
+                onRecheck={recheck}
+                onChanged={async () => {
+                  await queryClient.invalidateQueries({
+                    queryKey: ["portal-actions"],
+                  });
+                  await refetch();
+                }}
+                onNext={goNext}
+                hasNext={Boolean(nextItem)}
+              />
+            </div>
+          </>
+        )}
+      </div>
+    </PageShell>
+  );
+}

@@ -1,0 +1,23 @@
+{
+  "status": "ok",
+  "module": "claims",
+  "account_id": 1,
+  "case_id": "10",
+  "draft": {
+    "id": "20",
+    "draft_type": "support_appeal",
+    "external_status": "draft_ready",
+    "account_id": 1,
+    "case_id": "10",
+    "title": "Appeal draft",
+    "text": "Просим проверить компенсацию по дефектному возврату.",
+    "language": "ru",
+    "status": "new",
+    "trust_state": "provisional",
+    "requires_confirmation": true
+  },
+  "message": "Draft generated locally. Submission requires proof-check and manual confirm.",
+  "warnings": [],
+  "unavailable_sources": [],
+  "trust_state": "operational"
+}
