@@ -1069,6 +1069,7 @@ class OperatorEndpointSnapshotService:
         offset: int = 0,
     ) -> MartBusinessDailyPage:
         params = {
+            "snapshot_schema": "ads_api_fallback_v1",
             "limit": limit,
             "offset": offset,
         }

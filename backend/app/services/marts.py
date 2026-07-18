@@ -1722,16 +1722,26 @@ class MartService:
             .where(MartAccountExpenseDaily.account_id == account_id)
             .group_by(MartAccountExpenseDaily.stat_date)
         )
+        ads_stmt = (
+            select(
+                WBAdStatsDaily.stat_date.label("stat_date"),
+                func.coalesce(func.sum(WBAdStatsDaily.sum), 0).label("ad_spend"),
+            )
+            .where(WBAdStatsDaily.account_id == account_id)
+            .group_by(WBAdStatsDaily.stat_date)
+        )
         if date_from is not None:
             sku_stmt = sku_stmt.where(MartSKUDaily.stat_date >= date_from)
             expense_stmt = expense_stmt.where(
                 MartAccountExpenseDaily.stat_date >= date_from
             )
+            ads_stmt = ads_stmt.where(WBAdStatsDaily.stat_date >= date_from)
         if date_to is not None:
             sku_stmt = sku_stmt.where(MartSKUDaily.stat_date <= date_to)
             expense_stmt = expense_stmt.where(
                 MartAccountExpenseDaily.stat_date <= date_to
             )
+            ads_stmt = ads_stmt.where(WBAdStatsDaily.stat_date <= date_to)
 
         rows: dict[date, dict[str, Any]] = {}
         for row in (await session.execute(sku_stmt)).mappings():
@@ -1786,6 +1796,34 @@ class MartService:
                 + max(0.0, additional_income)
             )
             bucket["expense_rows"] = int(row["expense_rows"] or 0)
+
+        for row in (await session.execute(ads_stmt)).mappings():
+            stat_date = row["stat_date"]
+            ads_api_spend = float(self._decimal(row["ad_spend"]))
+            if ads_api_spend <= 0:
+                continue
+            bucket = rows.setdefault(
+                stat_date,
+                {
+                    "account_id": account_id,
+                    "stat_date": stat_date,
+                    "revenue": 0.0,
+                    "payout": 0.0,
+                    "expenses": 0.0,
+                    "total_wb_expenses": 0.0,
+                    "total_seller_costs": 0.0,
+                    "ad_spend": 0.0,
+                    "profit": 0.0,
+                    "sku_rows": 0,
+                    "expense_rows": 0,
+                },
+            )
+            existing_ad_spend = float(bucket["ad_spend"])
+            if abs(existing_ad_spend) > 0.01:
+                continue
+            bucket["ad_spend"] = ads_api_spend
+            bucket["expenses"] = float(bucket["expenses"]) + ads_api_spend
+            bucket["profit"] = float(bucket["profit"]) - ads_api_spend
 
         items = [
             MartBusinessDailyRead(**bucket)

@@ -256,6 +256,24 @@ const TREND_METRICS: TrendMetricConfig[] = [
   },
 ];
 
+function optionalDashboardQuery<T>(promise: Promise<T>): Promise<T | null> {
+  return promise.catch((error) => {
+    if (isRequestAbort(error)) throw error;
+    return null;
+  });
+}
+
+function isRequestAbort(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const record = error as { name?: string; message?: string };
+  return (
+    record.name === "AbortError" ||
+    String(record.message ?? "")
+      .toLowerCase()
+      .includes("abort")
+  );
+}
+
 function OwnerDashboardPage() {
   const { activeId, loading: accountsLoading } = useAccounts();
   const { from, to, setRange, setPreset } = useDateRange();
@@ -292,14 +310,16 @@ function OwnerDashboardPage() {
     enabled: !!activeId,
     staleTime: 2 * 60 * 1000,
     queryFn: ({ signal }) =>
-      api<OwnerDashboard>(API_ENDPOINTS.dashboard.owner, {
-        query: buildBizQuery({
-          accountId: activeId as number,
-          dateFrom: from,
-          dateTo: to,
+      optionalDashboardQuery(
+        api<OwnerDashboard>(API_ENDPOINTS.dashboard.owner, {
+          query: buildBizQuery({
+            accountId: activeId as number,
+            dateFrom: from,
+            dateTo: to,
+          }),
+          signal,
         }),
-        signal,
-      }).catch(() => null),
+      ),
   });
 
   const healthQ = useQuery<DashboardDataHealth | null>({
@@ -307,14 +327,16 @@ function OwnerDashboardPage() {
     enabled: !!activeId,
     staleTime: 2 * 60 * 1000,
     queryFn: ({ signal }) =>
-      api<DashboardDataHealth>(API_ENDPOINTS.dashboard.dataHealth, {
-        query: buildBizQuery({
-          accountId: activeId as number,
-          dateFrom: from,
-          dateTo: to,
+      optionalDashboardQuery(
+        api<DashboardDataHealth>(API_ENDPOINTS.dashboard.dataHealth, {
+          query: buildBizQuery({
+            accountId: activeId as number,
+            dateFrom: from,
+            dateTo: to,
+          }),
+          signal,
         }),
-        signal,
-      }).catch(() => null),
+      ),
   });
 
   const actionsQ = useQuery<any>({
@@ -328,7 +350,7 @@ function OwnerDashboardPage() {
     queryKey: ["dashboard-data-blockers", activeId, from, to],
     enabled: !!params,
     staleTime: 90_000,
-    queryFn: () => fetchDataBlockers(params!).catch(() => null),
+    queryFn: () => optionalDashboardQuery(fetchDataBlockers(params!)),
   });
 
   const cardsQ = useQuery<Paginated<MCardItem> | MCardItem[] | null>({
@@ -336,9 +358,9 @@ function OwnerDashboardPage() {
     enabled: !!params,
     staleTime: 2 * 60 * 1000,
     queryFn: () =>
-      fetchMoneyArticles({ ...params!, limit: 8 }).catch(() => null) as Promise<
-        Paginated<MCardItem> | MCardItem[] | null
-      >,
+      optionalDashboardQuery(
+        fetchMoneyArticles({ ...params!, limit: 8 }),
+      ) as Promise<Paginated<MCardItem> | MCardItem[] | null>,
     placeholderData: (prev) => prev,
   });
 
@@ -347,7 +369,7 @@ function OwnerDashboardPage() {
     enabled: !!params,
     staleTime: 2 * 60 * 1000,
     queryFn: () =>
-      fetchBusinessDaily({ ...params!, limit: 200 }).catch(() => null),
+      optionalDashboardQuery(fetchBusinessDaily({ ...params!, limit: 200 })),
   });
   const previousTrendQ = useQuery<any>({
     queryKey: [
@@ -360,18 +382,21 @@ function OwnerDashboardPage() {
     enabled: !!previousParams,
     staleTime: 2 * 60 * 1000,
     queryFn: () =>
-      fetchBusinessDaily({ ...previousParams!, limit: 200 }).catch(() => null),
+      optionalDashboardQuery(
+        fetchBusinessDaily({ ...previousParams!, limit: 200 }),
+      ),
   });
   const ownerAiSummaryQ = useQuery<OwnerAiSummary | null>({
     queryKey: ["dashboard-owner-ai-summary", activeId, from, to],
     enabled: !!params,
     staleTime: 5 * 60 * 1000,
-    retry: false,
     queryFn: ({ signal }) =>
-      api<OwnerAiSummary>(API_ENDPOINTS.dashboard.ownerAiSummary, {
-        query: buildBizQuery(params!),
-        signal,
-      }).catch(() => null),
+      optionalDashboardQuery(
+        api<OwnerAiSummary>(API_ENDPOINTS.dashboard.ownerAiSummary, {
+          query: buildBizQuery(params!),
+          signal,
+        }),
+      ),
   });
 
   const owner = ownerQ.data ?? undefined;
@@ -381,6 +406,13 @@ function OwnerDashboardPage() {
   const actions = useMemo(
     () => extractActions(actionsQ.data, owner, summary),
     [actionsQ.data, owner, summary],
+  );
+  const actionEndpointSummary = useMemo(
+    () =>
+      actionsQ.data && typeof actionsQ.data === "object"
+        ? ((actionsQ.data as any).summary ?? {})
+        : {},
+    [actionsQ.data],
   );
   const blockers = useMemo(
     () => extractBlockers(blockersQ.data),
@@ -402,12 +434,24 @@ function OwnerDashboardPage() {
         summary,
         health,
         actions,
+        actionEndpointSummary,
         blockers,
         cards,
         trend,
         selectedRange: { from, to },
       }),
-    [owner, summary, health, actions, blockers, cards, trend, from, to],
+    [
+      owner,
+      summary,
+      health,
+      actions,
+      actionEndpointSummary,
+      blockers,
+      cards,
+      trend,
+      from,
+      to,
+    ],
   );
   const previousModel = useMemo(
     () =>
@@ -479,6 +523,9 @@ function OwnerDashboardPage() {
           model={model}
           previousRange={previousRange}
           loading={summaryQ.isLoading && !summary}
+          sourceLoading={
+            (ownerQ.isFetching && !owner) || (healthQ.isFetching && !health)
+          }
         />
 
         <OwnerStatusHero
@@ -630,14 +677,17 @@ function PeriodAuditPanel({
   model,
   previousRange,
   loading,
+  sourceLoading,
 }: {
   model: ReturnType<typeof buildOwnerModel>;
   previousRange: DateRangeValue;
   loading: boolean;
+  sourceLoading: boolean;
 }) {
+  const ownerMissing = !model.hasOwnerData && !sourceLoading;
   const hasMismatch =
     !model.hasMoneySummary ||
-    !model.hasOwnerData ||
+    ownerMissing ||
     model.summaryPeriodMismatch ||
     model.ownerPeriodMismatch;
   const items = [
@@ -663,9 +713,12 @@ function PeriodAuditPanel({
       label: "Панель владельца",
       value: model.hasOwnerData
         ? (model.ownerPeriodLabel ?? "по запросу")
-        : "нет данных",
-      tone:
-        !model.hasOwnerData || model.ownerPeriodMismatch
+        : sourceLoading
+          ? "загружается"
+          : "нет данных",
+      tone: sourceLoading
+        ? "info"
+        : !model.hasOwnerData || model.ownerPeriodMismatch
           ? "warning"
           : ("neutral" as MetricTone),
     },
@@ -756,6 +809,7 @@ function buildOwnerModel(input: {
   summary?: MMoneySummary;
   health?: DashboardDataHealth;
   actions: OwnerItem[];
+  actionEndpointSummary?: Record<string, unknown>;
   blockers: any[];
   cards: any[];
   trend: TrendPoint[];
@@ -766,6 +820,7 @@ function buildOwnerModel(input: {
     summary,
     health,
     actions,
+    actionEndpointSummary,
     blockers,
     cards,
     trend,
@@ -777,14 +832,21 @@ function buildOwnerModel(input: {
   const trust = (summary?.trust ?? (summary?.meta as any)?.data_trust) as any;
   const ownerTrust = owner?.trust;
 
-  const revenue = num(
-    fr.operational_revenue,
-    k?.finance_reconciliation_operational_revenue,
+  const reconciliationStatus = String(
+    fr.status ?? k?.finance_reconciliation_status ?? "not_available",
+  );
+  const financeNotAvailable = reconciliationStatus === "not_available";
+  const selectedPeriodRevenue = num(
     k?.revenue_final,
     k?.revenue,
     owner?.revenue_final,
     owner?.revenue,
   );
+  const reconciliationOperationalRevenue = num(
+    fr.operational_revenue,
+    k?.finance_reconciliation_operational_revenue,
+  );
+  const revenue = selectedPeriodRevenue ?? reconciliationOperationalRevenue;
   const financeConfirmedRevenue = num(
     fr.finance_confirmed_revenue,
     k?.finance_confirmed_revenue,
@@ -796,9 +858,6 @@ function buildOwnerModel(input: {
   const reconciliationDifferencePercent = num(
     fr.difference_percent,
     k?.finance_difference_percent,
-  );
-  const reconciliationStatus = String(
-    fr.status ?? k?.finance_reconciliation_status ?? "not_available",
   );
   const profitFinanceBasis = num(
     k?.net_profit_after_all_expenses,
@@ -884,24 +943,6 @@ function buildOwnerModel(input: {
     cardSummaryNum(cards, "stock_risk_count"),
   );
 
-  const actionSummary =
-    owner?.action_summary ?? (actions as any)?.summary ?? {};
-  const criticalActions = intNum(
-    actionSummary?.critical,
-    countByPriority(actions, "critical"),
-  );
-  const highActions = intNum(
-    actionSummary?.high,
-    countByPriority(actions, "high"),
-  );
-  const dataFixActions = intNum(
-    actionSummary?.data_blocked_count,
-    actionSummary?.data_fix,
-    actionSummary?.data_fix_actions_count,
-  );
-  const urgentActions = actions.filter((a) =>
-    ["critical", "high"].includes(String(a.priority ?? "").toLowerCase()),
-  ).length;
   const blockerCount = intNum(
     ownerTrust?.blocking_open_issues_total,
     owner?.blocking_open_issues_total,
@@ -913,6 +954,38 @@ function buildOwnerModel(input: {
     owner?.financial_final_blockers_total,
     health?.financial_final_blockers_total,
     (summary?.trust as any)?.financial_final_blockers_total,
+  );
+  const actionSummary = {
+    ...(actionEndpointSummary ?? {}),
+    ...(owner?.action_summary ?? {}),
+  } as Record<string, unknown>;
+  const criticalActions = Math.max(
+    countByPriority(actions, "critical"),
+    intNum(actionEndpointSummary?.critical),
+    intNum(owner?.action_summary?.critical),
+  );
+  const highActions = Math.max(
+    countByPriority(actions, "high"),
+    intNum(actionEndpointSummary?.high),
+    intNum(owner?.action_summary?.high),
+  );
+  const dataFixActions = Math.max(
+    countDataFixActions(actions),
+    intNum(
+      actionEndpointSummary?.data_blocked_count,
+      actionEndpointSummary?.data_fix,
+      actionEndpointSummary?.data_fix_actions_count,
+      actionSummary?.data_blocked_count,
+      actionSummary?.data_fix,
+      actionSummary?.data_fix_actions_count,
+    ),
+    finalBlockers,
+  );
+  const urgentActions = Math.max(
+    criticalActions + highActions,
+    actions.filter((a) =>
+      ["critical", "high"].includes(String(a.priority ?? "").toLowerCase()),
+    ).length,
   );
   const openIssues = intNum(health?.open_issues_total, blockerCount);
   const costCoverage = num(
@@ -957,9 +1030,7 @@ function buildOwnerModel(input: {
   });
 
   const totalRiskSku = negativeSku + dataBlockedSku + stockRisk;
-  const riskMoney =
-    sum(actions.map((a) => num(a.expected_effect_amount))) ||
-    sumRiskAmount(summary);
+  const riskMoney = sumRiskAmount(summary) || sumRiskActionAmounts(actions);
   const profitTone: MetricTone =
     profit == null
       ? "neutral"
@@ -1001,6 +1072,37 @@ function buildOwnerModel(input: {
       : fr.closed_finance_date_to
         ? formatShortDate(fr.closed_finance_date_to)
         : null);
+  const trendDays = trend.length;
+  const selectedDays = selectedRange ? daysInclusive(selectedRange) : 0;
+  const trendLastDate = trend.length ? trend[trend.length - 1]?.date : null;
+  const coverageLabel =
+    selectedDays > 0 && trendDays > 0 && trendDays < selectedDays
+      ? `${trendDays}/${selectedDays} дн. факта`
+      : selectedDays > 0
+        ? `${selectedDays} дн.`
+        : "Дневные данные";
+  const financeOpenReason = financeNotAvailable
+    ? "WB финальный отчёт за выбранный период ещё не закрыт. Выручка и действия показаны по операционным данным; финальную прибыль фиксируйте после отчёта WB."
+    : "";
+  const displayOwnerReason = financeOpenReason
+    ? financeOpenReason
+    : text(
+        owner?.owner_message?.reason,
+        summary?.answer?.short_text,
+        status.description,
+      );
+  const displayTodayFocus = financeNotAvailable
+    ? text(
+        actions[0]?.what_to_do,
+        actions[0]?.reason,
+        summary?.answer?.main_next_step,
+      )
+    : text(
+        owner?.owner_message?.today_focus,
+        actions[0]?.what_to_do,
+        actions[0]?.reason,
+        actions[0]?.title,
+      );
 
   return {
     selectedPeriodLabel,
@@ -1015,7 +1117,11 @@ function buildOwnerModel(input: {
     reconciliationDifference,
     reconciliationDifferencePercent,
     reconciliationStatus,
+    financeNotAvailable,
+    financeOpenReason,
     revenue,
+    selectedPeriodRevenue,
+    reconciliationOperationalRevenue,
     profit,
     profitFinanceBasis,
     margin,
@@ -1052,23 +1158,18 @@ function buildOwnerModel(input: {
     status,
     profitTone,
     trendProfit,
+    trendDays,
+    selectedDays,
+    trendLastDate,
+    coverageLabel,
     ownerTitle: text(
       owner?.owner_message?.title,
       owner?.primary_message,
       summary?.answer?.title,
       status.title,
     ),
-    ownerReason: text(
-      owner?.owner_message?.reason,
-      summary?.answer?.short_text,
-      status.description,
-    ),
-    todayFocus: text(
-      owner?.owner_message?.today_focus,
-      actions[0]?.what_to_do,
-      actions[0]?.reason,
-      actions[0]?.title,
-    ),
+    ownerReason: displayOwnerReason,
+    todayFocus: displayTodayFocus,
     updatedAt:
       owner?.computed_at ??
       summary?.computed_at ??
@@ -1099,6 +1200,16 @@ function deriveOwnerStatus(input: {
     };
   }
   if (input.blockerCount > 0 || input.finalBlockers > 0) {
+    if (input.operationalTrusted) {
+      return {
+        tone: "warning" as MetricTone,
+        label: "Предварительно",
+        title: "Операционно магазином можно управлять",
+        description:
+          "WB финальный отчёт или часть сверок ещё не закрыты. Используйте задачи для ежедневного управления, но не фиксируйте итоговую прибыль.",
+        icon: AlertTriangle,
+      };
+    }
     return {
       tone: "danger" as MetricTone,
       label: "Есть блокеры",
@@ -1294,6 +1405,7 @@ function MetricGrid({
       ? `DRR ${((model.adSpend / model.revenue) * 100).toFixed(1)}%`
       : null;
   const adFinanceNote =
+    !model.financeNotAvailable &&
     model.adSpend != null &&
     model.adSpendFinance != null &&
     Math.abs(model.adSpend - model.adSpendFinance) > 1
@@ -1305,8 +1417,9 @@ function MetricGrid({
     Math.abs(model.profit - model.profitFinanceBasis) > 1
       ? `финансы WB: ${formatMoneyCompact(model.profitFinanceBasis)}`
       : null;
-  const revenueFinanceNote =
-    model.financeConfirmedRevenue != null
+  const revenueFinanceNote = model.financeNotAvailable
+    ? "Операционная выручка, WB отчёт не закрыт"
+    : model.financeConfirmedRevenue != null
       ? `WB подтверждено: ${formatMoneyCompact(model.financeConfirmedRevenue)}`
       : null;
   const metrics = [
@@ -1315,7 +1428,7 @@ function MetricGrid({
       value: money(model.revenue),
       previousValue: previousModel.revenue,
       comparison: compareValue(model.revenue, previousModel.revenue),
-      sub: revenueFinanceNote ?? "Операционная выручка за выбранный период",
+      sub: revenueFinanceNote ?? "Выручка за выбранный период",
       icon: TrendingUp,
       tone: "info" as MetricTone,
       to: "/money",
@@ -1397,7 +1510,7 @@ function MetricGrid({
   ];
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
       {metrics.map((metric) => (
         <MetricTile key={metric.title} loading={loading} {...metric} />
       ))}
@@ -1455,7 +1568,7 @@ function MetricTile({
               <div className="truncate text-2xl font-semibold tabular-nums tracking-tight">
                 {value}
               </div>
-              <div className="mt-1 truncate text-xs text-muted-foreground">
+              <div className="mt-1 min-h-8 text-xs leading-4 text-muted-foreground">
                 {sub}
               </div>
               {comparison ? (
@@ -1508,6 +1621,9 @@ function MoneyTrendCard({
   const chartData = buildComparisonTrend(trend, previousTrend);
   const hasTrend = chartData.length > 1;
   const lastPoint = trend[trend.length - 1];
+  const selectedDays = daysInclusive(range);
+  const hasPartialTrend =
+    trend.length > 0 && selectedDays > 0 && trend.length < selectedDays;
   const currentMetricTotal = sumTrendMetric(trend, metric.key);
   const previousMetricTotal = sumTrendMetric(previousTrend, metric.key);
   const metricComparison = compareValue(
@@ -1533,7 +1649,11 @@ function MoneyTrendCard({
             </p>
           </div>
           <Badge variant="outline" className="shrink-0 rounded-md">
-            {hasTrend ? `${chartData.length} дн.` : "Дневные данные"}
+            {hasPartialTrend
+              ? `${trend.length}/${selectedDays} дн.`
+              : hasTrend
+                ? `${chartData.length} дн.`
+                : "Дневные данные"}
           </Badge>
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -1619,6 +1739,17 @@ function MoneyTrendCard({
             </Button>
           </div>
         )}
+
+        {hasPartialTrend ? (
+          <div className="mt-3 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs leading-5 text-warning">
+            В витрине mart есть фактические дни только до{" "}
+            <span className="font-semibold">
+              {lastPoint ? formatShortDate(lastPoint.date) : "—"}
+            </span>
+            . Текущий период ещё обновляется, поэтому сравнение с прошлой
+            неделей предварительное.
+          </div>
+        ) : null}
 
         <div className="mt-3 grid gap-2 sm:grid-cols-4">
           <MiniStat
@@ -1788,6 +1919,12 @@ function MoneyNowCard({
                 <span>Баланс WB: {money(model.cash)}</span>
               </div>
             </div>
+
+            {model.financeNotAvailable ? (
+              <div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs leading-5 text-warning">
+                {model.financeOpenReason}
+              </div>
+            ) : null}
 
             <div className="space-y-2">
               {rows.map((row) => {
@@ -2670,9 +2807,7 @@ function wbImageCandidates(nmId: unknown): string[] {
   const vol = Math.floor(n / 100000);
   const part = Math.floor(n / 1000);
   const host = wbBasketHost(vol);
-  return [
-    `https://${host}/vol${vol}/part${part}/${n}/images/c246x328/1.webp`,
-  ];
+  return [`https://${host}/vol${vol}/part${part}/${n}/images/c246x328/1.webp`];
 }
 
 function wbBasketHost(vol: number): string {
@@ -3250,7 +3385,7 @@ function buildComparisonTrend(
   current: TrendPoint[],
   previous: TrendPoint[],
 ): ComparisonTrendPoint[] {
-  const max = Math.max(current.length, previous.length);
+  const max = current.length > 0 ? current.length : previous.length;
   const result: ComparisonTrendPoint[] = [];
   for (let index = 0; index < max; index += 1) {
     const currentPoint = current[index];
@@ -3428,33 +3563,73 @@ function buildSourceRows(
   health: DashboardDataHealth | undefined,
   model: ReturnType<typeof buildOwnerModel>,
 ) {
+  const domainRows = ((health?.domains ?? []) as any[]).map((domain) => ({
+    raw: domain,
+    name: String(domain?.domain ?? domain?.name ?? "").toLowerCase(),
+    latestStatus: String(domain?.latest_status ?? "").toLowerCase(),
+    cursorStatus: String(domain?.cursor_status ?? "").toLowerCase(),
+    lastSuccessfulAt: text(domain?.last_successful_at),
+    cursorLastSyncedAt: text(domain?.cursor_last_synced_at),
+    latestError: text(domain?.latest_error_text),
+  }));
   const failed = new Set(
     (health?.failed_domains ?? []).map((x) => String(x).toLowerCase()),
   );
   const skipped = new Set(
     (health?.skipped_domains ?? []).map((x) => String(x).toLowerCase()),
   );
-  const domains = (health?.domains ?? []).map((d: any) =>
-    String(d.domain ?? d.name ?? "").toLowerCase(),
-  );
-  const status = (patterns: string[]) => {
+  const matches = (patterns: string[]) =>
+    domainRows.filter((domain) =>
+      patterns.some((pattern) => domain.name.includes(pattern)),
+    );
+  const status = (patterns: string[], options: { finance?: boolean } = {}) => {
     if (!health)
       return {
-        status: "Нет данных",
+        status: "Нет статуса",
         className: "border-muted text-muted-foreground",
       };
-    if (patterns.some((p) => [...failed].some((x) => x.includes(p))))
+    const found = matches(patterns);
+    const hasSuccess = found.some(
+      (domain) =>
+        domain.latestStatus === "completed" ||
+        domain.cursorStatus === "completed" ||
+        Boolean(domain.lastSuccessfulAt || domain.cursorLastSyncedAt),
+    );
+    const hasHardFailure =
+      patterns.some((p) => [...failed].some((x) => x.includes(p))) &&
+      !hasSuccess;
+    const hasSkipped = patterns.some((p) =>
+      [...skipped].some((x) => x.includes(p)),
+    );
+    const skippedBecauseRunning = found.some(
+      (domain) =>
+        domain.latestStatus === "skipped" &&
+        domain.latestError.toLowerCase().includes("already running"),
+    );
+
+    if (options.finance && model.financeNotAvailable) {
+      return {
+        status: hasSuccess ? "Отчёт не закрыт" : "Нет отчёта",
+        className: "border-warning/30 text-warning",
+      };
+    }
+    if (hasHardFailure)
       return {
         status: "Нужна синхронизация",
         className: "border-destructive/30 text-destructive",
       };
-    if (patterns.some((p) => [...skipped].some((x) => x.includes(p))))
+    if (hasSuccess && (hasSkipped || skippedBecauseRunning))
       return {
-        status: "Нет источника",
+        status: "Есть данные",
+        className: "border-success/30 text-success",
+      };
+    if (hasSuccess)
+      return { status: "OK", className: "border-success/30 text-success" };
+    if (hasSkipped)
+      return {
+        status: "Пропущено",
         className: "border-warning/30 text-warning",
       };
-    if (patterns.some((p) => domains.some((x) => x.includes(p))))
-      return { status: "OK", className: "border-success/30 text-success" };
     return {
       status: "Неизвестно",
       className: "border-muted text-muted-foreground",
@@ -3481,8 +3656,10 @@ function buildSourceRows(
     {
       key: "finance",
       label: "Финансы WB",
-      affects: "Выручка, выплаты, чистая прибыль",
-      ...status(["finance", "reconcil", "report"]),
+      affects: model.financeNotAvailable
+        ? "Финальная прибыль ждёт закрытия отчёта WB"
+        : "Выручка, выплаты, чистая прибыль",
+      ...status(["finance", "reconcil", "report"], { finance: true }),
     },
     {
       key: "sales",
@@ -3578,6 +3755,57 @@ function countByPriority(actions: OwnerItem[], priority: string) {
   return actions.filter(
     (a) => String(a.priority ?? "").toLowerCase() === priority,
   ).length;
+}
+
+function countDataFixActions(actions: OwnerItem[]) {
+  return actions.filter((action) => {
+    const category = String(action.category ?? "").toLowerCase();
+    const type = String(action.action_type ?? "").toLowerCase();
+    return (
+      category.includes("data") ||
+      category.includes("fix") ||
+      type.includes("data") ||
+      type.includes("cost") ||
+      type.includes("reconcile") ||
+      type.includes("finance")
+    );
+  }).length;
+}
+
+function sumRiskActionAmounts(actions: OwnerItem[]) {
+  return sum(
+    actions.map((action) =>
+      isRiskAction(action) ? num(action.expected_effect_amount) : null,
+    ),
+  );
+}
+
+function isRiskAction(action: OwnerItem) {
+  const category = String(action.category ?? "").toLowerCase();
+  const type = String(action.action_type ?? "").toLowerCase();
+  const priority = String(action.priority ?? "").toLowerCase();
+  if (
+    category.includes("growth") ||
+    category.includes("opportun") ||
+    type.includes("card_content_review")
+  ) {
+    return false;
+  }
+  return (
+    priority === "critical" ||
+    priority === "high" ||
+    category.includes("risk") ||
+    category.includes("protect") ||
+    category.includes("release_cash") ||
+    category.includes("save_money") ||
+    category.includes("data") ||
+    type.includes("liquidate") ||
+    type.includes("stock") ||
+    type.includes("cost") ||
+    type.includes("reconcile") ||
+    type.includes("protect") ||
+    type.includes("save")
+  );
 }
 
 function sumRiskAmount(summary?: MMoneySummary) {
@@ -3787,6 +4015,9 @@ function actionCategoryLabel(category: unknown) {
     save_money: "Снизить расходы",
     data_fix: "Исправить данные",
     fix_data: "Исправить данные",
+    finance_reconcile: "Сверка финансов",
+    finance_reconciliation: "Сверка финансов",
+    reconciliation: "Сверка финансов",
     pricing: "Цена",
     ads: "Реклама",
     stock: "Остатки",
