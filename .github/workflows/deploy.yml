@@ -23,8 +23,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Validate deploy SSH key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY || secrets.FINANCE_SERVER_SSH_KEY }}
+        run: |
+          if [ -z "$DEPLOY_SSH_KEY" ]; then
+            echo "::error::Missing deploy SSH key. Add repository secret SSH_PRIVATE_KEY, or FINANCE_SERVER_SSH_KEY."
+            exit 1
+          fi
+
       - name: Set up SSH
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY || secrets.FINANCE_SERVER_SSH_KEY }}
 
