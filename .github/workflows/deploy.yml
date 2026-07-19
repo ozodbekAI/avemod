@@ -63,7 +63,7 @@ jobs:
             --exclude '_incoming_projects/' \
             --exclude '*_extracted/' \
             --exclude 'source/' \
-            --exclude 'exports/' \
+            --exclude '/exports/' \
             --exclude 'audit_*/' \
             --exclude 'audit-*/' \
             --exclude 'audit-bundle*/' \
