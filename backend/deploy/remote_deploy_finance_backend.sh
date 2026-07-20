@@ -65,7 +65,7 @@ nginx -t
 systemctl reload nginx
 
 for _ in $(seq 1 6); do
-  if curl --max-time 5 -fsS http://127.0.0.1:8016/api/v1/health >/dev/null; then
+  if curl -fsS http://127.0.0.1:8016/api/v1/health --max-time 5 >/dev/null; then
     exit 0
   fi
   sleep 1

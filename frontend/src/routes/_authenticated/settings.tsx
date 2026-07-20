@@ -182,6 +182,7 @@ function SettingsPage() {
 
   const lastUpdated = settingsQ.data?.updated_at;
   const lastComment = settingsQ.data?.comment;
+  const visibleLastComment = settingsCommentLabel(lastComment);
   const currentPolicy = form.cost_trust_policy ?? "mixed";
   const policyMeta = COST_POLICY_DESC[currentPolicy] ?? COST_POLICY_DESC.mixed;
 
@@ -220,9 +221,9 @@ function SettingsPage() {
                 Последнее обновление: <b>{new Date(lastUpdated).toLocaleString("ru-RU")}</b>
               </>
             )}
-            {lastComment && (
+            {visibleLastComment && (
               <div className="mt-1">
-                Комментарий: <i>{lastComment}</i>
+                Комментарий: <i>{visibleLastComment}</i>
               </div>
             )}
           </AlertDescription>
@@ -489,6 +490,19 @@ function SettingsPage() {
       </div>
     </PageShell>
   );
+}
+
+function settingsCommentLabel(value: string | null | undefined): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  if (raw.toLowerCase().includes("demo/test readiness")) {
+    return "Демо-данные подтверждены для локального UI-аудита; видимые блокеры нужно закрыть для реалистичной проверки.";
+  }
+  return raw
+    .replace(/\bdemo\b/gi, "демо")
+    .replace(/\btest\b/gi, "тест")
+    .replace(/\blocal data\b/gi, "локальные данные")
+    .replace(/\bUI smoke\b/gi, "проверка интерфейса");
 }
 
 function Field({

@@ -72,6 +72,7 @@ import {
 } from "lucide-react";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { proxyWbImageUrl } from "@/lib/wb-images";
 import { NullValue } from "@/components/money/NullValue";
 import { humanizeModuleMessage } from "@/lib/copy";
 import { MoneyWaterfall } from "@/components/money/MoneyWaterfall";
@@ -148,9 +149,10 @@ function ProductImage({
   alt: string;
   className?: string;
 }) {
-  const candidates = [src, ...wbImageCandidates(nmId)].filter(
-    Boolean,
-  ) as string[];
+  const candidates = [src, ...wbImageCandidates(nmId)]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => proxyWbImageUrl(value))
+    .filter((value): value is string => Boolean(value));
   const [idx, setIdx] = useState(0);
   const [loaded, setLoaded] = useState(false);
   if (candidates.length === 0 || idx >= candidates.length) {
@@ -3472,7 +3474,16 @@ function getProductCockpit(data: any, nmId: string | number) {
   );
   const inTransit =
     sumPresent(stockBlock.in_way_to_client, stockBlock.in_way_from_client) ??
-    firstNumber(stockBlock.in_transit, stockops.in_transit);
+    firstNumber(
+      stockBlock.in_transit_qty,
+      stockBlock.in_transit,
+      stockSummary.in_transit_qty,
+      stockSummary.in_transit,
+      moneyStock.in_transit_qty,
+      moneyStock.in_transit,
+      stockops.in_transit_qty,
+      stockops.in_transit,
+    );
   const daysOfStock = firstNumber(
     stockBlock.days_of_stock,
     stockBlock.days_left,
@@ -6389,7 +6400,9 @@ function ForecastScenarioDecisionRow({
         </div>
       </div>
       <div>
-        <div className="text-[10px] uppercase text-muted-foreground">Период</div>
+        <div className="text-[10px] uppercase text-muted-foreground">
+          Период
+        </div>
         <div
           className={cn(
             "font-semibold tabular-nums",
@@ -6487,7 +6500,10 @@ function ProductForecastPanelSimple({
                 </DialogDescription>
               </div>
               <div className="flex flex-wrap justify-end gap-1.5">
-                <Badge variant="outline" className="h-6 bg-background text-[10px]">
+                <Badge
+                  variant="outline"
+                  className="h-6 bg-background text-[10px]"
+                >
                   {period}
                 </Badge>
                 <Badge
@@ -6569,7 +6585,10 @@ function ProductForecastPanelSimple({
               <div className="rounded-[22px] border border-border/55 p-4">
                 <div className="flex items-center justify-between gap-2">
                   <h3 className="text-base font-semibold">1 продажа сейчас</h3>
-                  <Badge variant="outline" className="h-6 bg-background text-[10px]">
+                  <Badge
+                    variant="outline"
+                    className="h-6 bg-background text-[10px]"
+                  >
                     {forecast.unitsEstimated ? "шт оценены" : "шт из отчета"}
                   </Badge>
                 </div>
@@ -6668,7 +6687,9 @@ function ProductForecastPanelSimple({
                   <div className="rounded-2xl bg-muted/20 px-3 py-2.5">
                     <div className="grid gap-2">
                       <div className="flex items-center justify-between gap-3 border-b border-border/50 pb-2">
-                        <div className="text-sm font-medium">Прибыль с 1 шт</div>
+                        <div className="text-sm font-medium">
+                          Прибыль с 1 шт
+                        </div>
                         <div
                           className={cn(
                             "text-lg font-semibold tabular-nums",
@@ -6769,7 +6790,10 @@ function ProductForecastPanelSimple({
                       Нажмите строку, чтобы подставить цену.
                     </p>
                   </div>
-                  <Badge variant="outline" className="h-6 bg-background text-[10px]">
+                  <Badge
+                    variant="outline"
+                    className="h-6 bg-background text-[10px]"
+                  >
                     1 шт + период
                   </Badge>
                 </div>
@@ -9976,7 +10000,7 @@ function Product360Page() {
           </Button>
           {activeId ? (
             <Badge variant="outline" className="text-[10px]">
-              Product 360
+              Товар 360
             </Badge>
           ) : null}
         </div>

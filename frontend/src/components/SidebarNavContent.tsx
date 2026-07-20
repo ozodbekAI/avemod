@@ -26,6 +26,7 @@ import {
   TrendingUp,
   Truck,
   Wallet,
+  Warehouse,
   type LucideIcon,
 } from "lucide-react";
 
@@ -58,6 +59,7 @@ const sellerNav: readonly NavItem[] = [
   { to: "/dashboard", label: "Обзор", icon: Activity },
   { to: "/action-center", label: "Фокус на сегодня", icon: Target },
   { to: "/money", label: "Деньги", icon: CircleDollarSign },
+  { to: "/logistics", label: "Логистика", icon: Warehouse },
   { to: "/products", label: "Товары", icon: Package },
   { to: "/checker", label: "Проверка карточек", icon: ClipboardCheck },
   { to: "/data-fix", label: "Качество данных", icon: ShieldAlert },

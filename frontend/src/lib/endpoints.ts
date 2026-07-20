@@ -118,6 +118,8 @@ export const API_ENDPOINTS = {
   portal: {
     modulesHealth: "/portal/modules/health",
     agentMessage: "/portal/agent/message",
+    agentTools: "/portal/agent/tools",
+    agentToolCall: "/portal/agent/tool-call",
     agentManualTask: "/portal/agent/manual-task",
     doctor: "/portal/doctor",
     overview: "/portal/overview",
@@ -179,6 +181,8 @@ export const API_ENDPOINTS = {
       `/portal/grouping/candidates/${id}/status`,
     productEvents: (nmId: number | string) => `/portal/products/${nmId}/events`,
     results: "/portal/results",
+    logisticsOverview: "/portal/logistics/overview",
+    logisticsExportCsv: "/portal/logistics/export.csv",
     reputationSummary: "/portal/reputation/summary",
     reputationInbox: "/portal/reputation/inbox",
     reputationAnalytics: "/portal/reputation/analytics",

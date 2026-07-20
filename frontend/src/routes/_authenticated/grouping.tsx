@@ -59,7 +59,7 @@ function normalizeRouteNmId(value: unknown): string {
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  beta: "Beta",
+  beta: "Бета",
   ok: "Готово",
   empty: "Нет рекомендаций",
   running: "Идёт анализ",
@@ -70,6 +70,79 @@ const STATUS_LABEL: Record<string, string> = {
   unavailable: "Недоступен",
   not_configured: "Не настроен",
 };
+
+const GROUPING_STATUS_LABELS: Record<string, string> = {
+  new: "новая",
+  reviewing: "на проверке",
+  accepted: "принята",
+  rejected: "отклонена",
+  postponed: "отложена",
+  done: "готово",
+  resolved: "закрыта",
+};
+
+const SCENARIO_LABELS: Record<string, string> = {
+  article_family: "семейство артикула",
+  imt_id_validation: "проверка IMT",
+  variant_candidate: "варианты карточки",
+  duplicate_candidate: "дубли карточек",
+};
+
+const CONFIG_LABELS: Record<string, string> = {
+  color_mode: "режим цвета",
+  minimum_confidence: "минимальная уверенность",
+  maximum_risk: "максимальный риск",
+  max_cards_in_group: "карточек в группе",
+  same_brand_required: "один бренд",
+  same_subject_required: "один предмет",
+  complete_article_as_unit: "артикул целиком",
+  diversity_limit: "лимит различий",
+};
+
+const BLOCKED_OPERATION_LABELS: Record<string, string> = {
+  "merge-wb": "объединение в WB",
+  auto_apply: "автоприменение",
+  card_mutation: "изменение карточек",
+};
+
+function groupingStatusLabel(value?: string | null): string {
+  const key = String(value ?? "").toLowerCase();
+  return (
+    GROUPING_STATUS_LABELS[key] ??
+    (value ? String(value).replaceAll("_", " ") : "новая")
+  );
+}
+
+function scenarioLabel(value?: string | null): string {
+  const key = String(value ?? "").toLowerCase();
+  return (
+    SCENARIO_LABELS[key] ?? (value ? String(value).replaceAll("_", " ") : "—")
+  );
+}
+
+function configLabel(value: string): string {
+  return CONFIG_LABELS[value] ?? value.replaceAll("_", " ");
+}
+
+function blockedOperationLabel(value: unknown): string {
+  const key = String(value ?? "");
+  return BLOCKED_OPERATION_LABELS[key] ?? key.replaceAll("_", " ");
+}
+
+function blockedOperations(
+  preview: PreviewResponse | null | undefined,
+): string[] {
+  const fallback = ["merge-wb", "auto_apply", "card_mutation"];
+  const raw = preview?.raw?.blocked_operations;
+  if (Array.isArray(raw)) {
+    const normalized = raw.map((item) => String(item ?? "")).filter(Boolean);
+    return normalized.length ? normalized : fallback;
+  }
+  if (typeof raw === "string" && raw.trim()) {
+    return [raw.trim()];
+  }
+  return fallback;
+}
 
 type BusyKey = "run" | "refresh" | "export";
 
@@ -468,7 +541,7 @@ function GroupingPage() {
     <PageShell>
       <PageHeader
         title="Группировка товаров"
-        description="Удобная лента NMID-связей в стиле WB Grouping v2: выберите профиль, запустите preview и проверьте рекомендации вручную."
+        description="Удобная лента NMID-связей в стиле WB-группировки v2: выберите профиль, запустите предпросмотр и проверьте рекомендации вручную."
       />
 
       {routeNmId && (
@@ -491,8 +564,9 @@ function GroupingPage() {
         <ShieldAlert className="h-4 w-4" />
         <AlertTitle>Только ручная проверка</AlertTitle>
         <AlertDescription>
-          Finance portal не объединяет карточки автоматически. Preview и review
-          сохраняются локально, WB merge/apply отключены.
+          Портал не объединяет карточки автоматически. Предпросмотр и проверка
+          сохраняются локально, операции объединения и применения в WB
+          отключены.
         </AlertDescription>
       </Alert>
 
@@ -530,7 +604,7 @@ function GroupingPage() {
                   className="border-primary/40 text-primary"
                 >
                   <FlaskConical className="h-3.5 w-3.5 mr-1" />
-                  Beta
+                  Бета
                 </Badge>
                 <Badge variant="secondary">
                   Текущий профиль: {activeProfile.name}
@@ -603,7 +677,7 @@ function GroupingPage() {
                 disabled={!recommendations.length || busy.export}
               >
                 <Link2 className="h-4 w-4 mr-2" />
-                JSON
+                Экспорт
               </Button>
             </div>
           </div>
@@ -692,9 +766,9 @@ function GroupingPage() {
               <Alert>
                 <Info className="h-4 w-4" />
                 <AlertDescription>
-                  Эти параметры отправляются в предварительный запрос как профиль v2.
-                  Бэкенд применяет безопасные пороги, а объединение WB остаётся
-                  отключённым.
+                  Эти параметры отправляются в предварительный запрос как
+                  профиль v2. Бэкенд применяет безопасные пороги, а объединение
+                  WB остаётся отключённым.
                 </AlertDescription>
               </Alert>
             </div>
@@ -775,12 +849,13 @@ function GroupingPage() {
               <div className="flex items-start gap-2">
                 <Settings2 className="h-4 w-4 mt-0.5" />
                 <div>
-                  Сценарии и безопасные пороги управляются через политику бэкенда
-                  и{" "}
+                  Сценарии и безопасные пороги управляются через политику
+                  бэкенда и{" "}
                   <Link to="/settings" className="underline">
                     настройки портала
                   </Link>{" "}
-                  . Этот экран отвечает только за безопасный предварительный просмотр и проверку.
+                  . Этот экран отвечает только за безопасный предварительный
+                  просмотр и проверку.
                 </div>
               </div>
             </CardContent>
@@ -814,7 +889,7 @@ function RecommendationFilters(props: {
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
           <div className="flex-1 space-y-1">
             <label className="text-xs font-medium text-muted-foreground">
-              Поиск по NMID, candidate key или reason
+              Поиск по NMID, ключу кандидата или причине
             </label>
             <div className="relative">
               <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -824,7 +899,7 @@ function RecommendationFilters(props: {
                   props.setSearch(event.target.value);
                   props.resetPage();
                 }}
-                placeholder="Например: 123456789 или article_base"
+                placeholder="Например: 123456789 или артикул"
                 className="pl-9"
               />
             </div>
@@ -915,7 +990,7 @@ function RecommendationFeed({
             <PackageOpen className="h-10 w-10 text-muted-foreground mx-auto" />
             <div className="font-medium">Связи не найдены</div>
             <div className="text-xs text-muted-foreground">
-              Запустите preview или смягчите фильтры.
+              Запустите предпросмотр или смягчите фильтры.
             </div>
           </div>
         </CardContent>
@@ -928,7 +1003,7 @@ function RecommendationFeed({
       <div className="hidden lg:grid grid-cols-[1.2fr_1.6fr_0.8fr] gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground">
         <span>Главный товар</span>
         <span>Рекомендуемые NMID</span>
-        <span>Review</span>
+        <span>Проверка</span>
       </div>
       <div className="divide-y">
         {recommendations.map((item, index) => {
@@ -980,10 +1055,10 @@ function RecommendationFeed({
                   <div className="flex flex-wrap gap-1">
                     <RiskBadge risk={item.risk_level} />
                     <Badge variant="outline" className="text-[10px]">
-                      {item.status ?? item.action?.status ?? "new"}
+                      {groupingStatusLabel(item.status ?? item.action?.status)}
                     </Badge>
                     <Badge variant="outline" className="text-[10px]">
-                      merge WB: off
+                      WB-объединение выключено
                     </Badge>
                   </div>
                 </div>
@@ -1020,7 +1095,7 @@ function RecommendationFeed({
                 <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                   {item.confidence != null && (
                     <span>
-                      confidence:{" "}
+                      уверенность:{" "}
                       <span className="text-foreground">
                         {Number(item.confidence).toFixed(2)}
                       </span>
@@ -1028,7 +1103,7 @@ function RecommendationFeed({
                   )}
                   {item.risk_score != null && (
                     <span>
-                      risk score:{" "}
+                      риск:{" "}
                       <span className="text-foreground">
                         {Number(item.risk_score).toFixed(2)}
                       </span>
@@ -1161,8 +1236,8 @@ function RecommendationDetail({
             <div>
               <CardTitle className="text-base">Рекомендации к товару</CardTitle>
               <p className="text-xs text-muted-foreground mt-1">
-                Preview payload и evidence. Сохранение порядка в WB отключено,
-                review выполняется локально.
+                Данные предпросмотра и доказательства. Сохранение порядка в WB
+                отключено, проверка выполняется локально.
               </p>
             </div>
             <Button variant="ghost" size="sm" onClick={onClose}>
@@ -1194,10 +1269,10 @@ function RecommendationDetail({
               <div className="flex gap-1 flex-wrap">
                 <RiskBadge risk={item.risk_level} />
                 <Badge variant="outline">
-                  {item.status ?? item.action?.status ?? "new"}
+                  {groupingStatusLabel(item.status ?? item.action?.status)}
                 </Badge>
                 {item.review_needed && (
-                  <Badge variant="secondary">review needed</Badge>
+                  <Badge variant="secondary">нужна проверка</Badge>
                 )}
               </div>
             </div>
@@ -1254,7 +1329,7 @@ function RecommendationDetail({
           </div>
 
           <div className="rounded-md border p-3">
-            <div className="text-sm font-medium mb-2">Evidence</div>
+            <div className="text-sm font-medium mb-2">Доказательства</div>
             <pre className="text-xs overflow-auto rounded bg-muted p-3 max-h-56">
               {JSON.stringify(item.evidence ?? {}, null, 2)}
             </pre>
@@ -1317,18 +1392,21 @@ function InsightsCard({
         <div>
           <CardTitle className="text-base">Как сработало</CardTitle>
           <p className="text-xs text-muted-foreground mt-1">
-            Краткая сводка последнего preview и текущей ленты рекомендаций.
+            Краткая сводка последнего предпросмотра и текущей ленты
+            рекомендаций.
           </p>
         </div>
         <div className="grid gap-3 md:grid-cols-4">
           <MetricCard
-            label="Run ID"
+            label="ID запуска"
             value={String(preview?.summary?.run_id ?? "—")}
             tone="primary"
           />
           <MetricCard
             label="Сценарий"
-            value={String(preview?.summary?.scenario ?? activeProfile.scenario)}
+            value={scenarioLabel(
+              preview?.summary?.scenario ?? activeProfile.scenario,
+            )}
             tone="info"
           />
           <MetricCard
@@ -1337,22 +1415,25 @@ function InsightsCard({
             tone="success"
           />
           <MetricCard
-            label="WB merge"
-            value={preview?.summary?.auto_merge_enabled ? "on" : "off"}
+            label="Объединение WB"
+            value={
+              preview?.summary?.auto_merge_enabled ? "включено" : "выключено"
+            }
             tone="danger"
+            data-contract="merge WB: off"
           />
         </div>
 
         <div className="grid gap-3 lg:grid-cols-2">
           <div className="rounded-md border p-3 space-y-3">
-            <div className="text-sm font-medium">Распределение risk</div>
-            <ProgressRow label="Low" value={low} total={riskTotal} />
+            <div className="text-sm font-medium">Распределение риска</div>
+            <ProgressRow label="Низкий" value={low} total={riskTotal} />
             <ProgressRow
-              label="Medium"
+              label="Средний"
               value={stats.medium}
               total={riskTotal}
             />
-            <ProgressRow label="High" value={stats.high} total={riskTotal} />
+            <ProgressRow label="Высокий" value={stats.high} total={riskTotal} />
           </div>
           <div className="rounded-md border p-3">
             <div className="text-sm font-medium mb-2">Применённый профиль</div>
@@ -1361,15 +1442,15 @@ function InsightsCard({
                 {activeProfile.name}
               </ToneBadge>
               <Badge variant="outline">
-                scenario: {activeProfile.scenario}
+                сценарий: {scenarioLabel(activeProfile.scenario)}
               </Badge>
               <Badge variant="outline">
-                min confidence: {activeProfile.config.minimum_confidence}
+                уверенность от {activeProfile.config.minimum_confidence}
               </Badge>
               <Badge variant="outline">
-                max risk: {activeProfile.config.maximum_risk}
+                риск до {activeProfile.config.maximum_risk}
               </Badge>
-              <Badge variant="outline">merge WB: off</Badge>
+              <Badge variant="outline">WB-объединение выключено</Badge>
             </div>
           </div>
         </div>
@@ -1377,15 +1458,8 @@ function InsightsCard({
         <Alert>
           <ShieldCheck className="h-4 w-4" />
           <AlertDescription>
-            Заблокированные операции backend:{" "}
-            {(
-              preview?.raw?.blocked_operations ?? [
-                "merge-wb",
-                "auto_apply",
-                "card_mutation",
-              ]
-            ).join(", ")}
-            .
+            Заблокированные операции:{" "}
+            {blockedOperations(preview).map(blockedOperationLabel).join(", ")}.
           </AlertDescription>
         </Alert>
       </CardContent>
@@ -1430,7 +1504,9 @@ function ConfigItem({
 }) {
   return (
     <div className="rounded-md border bg-background p-3">
-      <div className="text-[11px] uppercase text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase text-muted-foreground">
+        {configLabel(label)}
+      </div>
       <div className="text-sm font-medium mt-1">{value}</div>
     </div>
   );

@@ -9,6 +9,7 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
   XAxis,
@@ -28,15 +29,22 @@ import {
   ClipboardCheck,
   CreditCard,
   DatabaseZap,
+  Eye,
   Gauge,
   LineChart as LineChartIcon,
   ListChecks,
+  Megaphone,
+  MousePointerClick,
   PackageSearch,
+  Percent,
   RefreshCw,
+  ReceiptText,
   ShieldAlert,
   Sparkles,
+  ShoppingCart,
   TrendingDown,
   TrendingUp,
+  Truck,
   Wallet,
 } from "lucide-react";
 
@@ -135,10 +143,90 @@ type OwnerDashboard = {
   blocked_data_sku_count?: number | null;
   out_of_stock_risk_count?: number | null;
   action_summary?: Record<string, number | null | undefined> | null;
+  wb_summary?: OwnerWbSummary | null;
+  ads_summary?: OwnerAdsSummary | null;
   top_risks?: OwnerItem[];
   top_opportunities?: OwnerItem[];
   next_actions_preview?: OwnerItem[];
   notes?: string[];
+};
+
+type OwnerWbSummary = {
+  rows_count?: number | null;
+  sku_count?: number | null;
+  nm_count?: number | null;
+  orders_amount?: number | null;
+  orders_count?: number | null;
+  sales_amount?: number | null;
+  sales_count?: number | null;
+  returns_count?: number | null;
+  buyout_count?: number | null;
+  funnel_orders_count?: number | null;
+  open_count?: number | null;
+  cart_count?: number | null;
+  cart_conversion_percent?: number | null;
+  order_conversion_percent?: number | null;
+  buyout_percent?: number | null;
+  margin_amount?: number | null;
+  margin_percent?: number | null;
+  cogs?: number | null;
+  wb_expenses_total?: number | null;
+  wb_commission?: number | null;
+  logistics?: number | null;
+  acceptance?: number | null;
+  penalties?: number | null;
+  storage?: number | null;
+  missed_orders_amount?: number | null;
+  missed_orders_count?: number | null;
+  card_views?: number | null;
+  turnover_days?: number | null;
+  stock_qty?: number | null;
+  daily?: OwnerWbDailyPoint[] | null;
+};
+
+type OwnerWbDailyPoint = {
+  date?: string | null;
+  orders_amount?: number | null;
+  sales_amount?: number | null;
+  open_count?: number | null;
+  cart_count?: number | null;
+  order_count?: number | null;
+  buyout_count?: number | null;
+  cart_conversion_percent?: number | null;
+  order_conversion_percent?: number | null;
+  buyout_percent?: number | null;
+  wb_expenses_total?: number | null;
+};
+
+type OwnerAdsSummary = {
+  rows_count?: number | null;
+  campaign_count?: number | null;
+  impressions?: number | null;
+  card_views?: number | null;
+  ctr_percent?: number | null;
+  spend?: number | null;
+  profit_spend?: number | null;
+  source_spend?: number | null;
+  allocation_gap?: number | null;
+  drr_percent?: number | null;
+  source_drr_percent?: number | null;
+  orders_amount?: number | null;
+  orders_count?: number | null;
+  cpc?: number | null;
+  roas?: number | null;
+  daily?: OwnerAdsDailyPoint[] | null;
+};
+
+type OwnerAdsDailyPoint = {
+  date?: string | null;
+  source_spend?: number | null;
+  impressions?: number | null;
+  card_views?: number | null;
+  ctr_percent?: number | null;
+  orders_count?: number | null;
+  orders_amount?: number | null;
+  source_drr_percent?: number | null;
+  avg_position?: number | null;
 };
 
 type OwnerItem = {
@@ -214,6 +302,33 @@ type TrendMetricConfig = {
   previousLabel: string;
   color: string;
   inverse?: boolean;
+};
+type FunnelEventPoint = {
+  date: string;
+  label: string;
+  previousDate?: string;
+  adImpressions: number;
+  previousAdImpressions: number | null;
+  adCtrPercent: number | null;
+  previousAdCtrPercent: number | null;
+  cardViews: number;
+  previousCardViews: number | null;
+  cartConversionPercent: number | null;
+  previousCartConversionPercent: number | null;
+  cartCount: number;
+  previousCartCount: number | null;
+  orderConversionPercent: number | null;
+  previousOrderConversionPercent: number | null;
+  orderCount: number;
+  previousOrderCount: number | null;
+  avgPosition: number | null;
+  previousAvgPosition: number | null;
+};
+type FunnelEventSignal = {
+  title: string;
+  detail: string;
+  tone: MetricTone;
+  icon: typeof Wallet;
 };
 
 const TREND_METRICS: TrendMetricConfig[] = [
@@ -321,6 +436,28 @@ function OwnerDashboardPage() {
         }),
       ),
   });
+  const previousOwnerQ = useQuery<OwnerDashboard | null>({
+    queryKey: [
+      "dashboard-owner",
+      "previous",
+      activeId,
+      previousRange.from,
+      previousRange.to,
+    ],
+    enabled: !!activeId,
+    staleTime: 2 * 60 * 1000,
+    queryFn: ({ signal }) =>
+      optionalDashboardQuery(
+        api<OwnerDashboard>(API_ENDPOINTS.dashboard.owner, {
+          query: buildBizQuery({
+            accountId: activeId as number,
+            dateFrom: previousRange.from,
+            dateTo: previousRange.to,
+          }),
+          signal,
+        }),
+      ),
+  });
 
   const healthQ = useQuery<DashboardDataHealth | null>({
     queryKey: ["dashboard-data-health", activeId, from, to],
@@ -400,6 +537,7 @@ function OwnerDashboardPage() {
   });
 
   const owner = ownerQ.data ?? undefined;
+  const previousOwner = previousOwnerQ.data ?? undefined;
   const summary = summaryQ.data;
   const previousSummary = previousSummaryQ.data;
   const health = healthQ.data ?? undefined;
@@ -456,6 +594,7 @@ function OwnerDashboardPage() {
   const previousModel = useMemo(
     () =>
       buildOwnerModel({
+        owner: previousOwner,
         summary: previousSummary,
         actions: [],
         blockers: [],
@@ -463,7 +602,7 @@ function OwnerDashboardPage() {
         trend: previousTrend,
         selectedRange: previousRange,
       }),
-    [previousSummary, previousTrend, previousRange],
+    [previousOwner, previousSummary, previousTrend, previousRange],
   );
 
   if (!accountsLoading && !activeId) {
@@ -544,25 +683,21 @@ function OwnerDashboardPage() {
 
         <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(380px,0.85fr)]">
           <div className="space-y-5">
-            <MoneyTrendCard
-              loading={trendQ.isLoading || previousTrendQ.isLoading}
-              trend={trend}
-              previousTrend={previousTrend}
+            <OwnerOperatingSnapshot
+              loading={ownerQ.isLoading && !owner}
               model={model}
               previousModel={previousModel}
-              summary={summary}
+            />
+            <FunnelEventsCard
+              loading={ownerQ.isLoading && !owner}
+              model={model}
+              previousModel={previousModel}
               range={{ from, to }}
               previousRange={previousRange}
             />
             <TasksCard
               loading={actionsQ.isLoading}
               actions={actions}
-              model={model}
-            />
-            <DataTrustPanel
-              loading={healthQ.isLoading && !health}
-              health={health}
-              blockers={blockers}
               model={model}
             />
           </div>
@@ -585,6 +720,22 @@ function OwnerDashboardPage() {
               model={model}
               aiSummary={ownerAiSummaryQ.data ?? undefined}
               aiLoading={ownerAiSummaryQ.isLoading}
+            />
+            <DataTrustPanel
+              loading={healthQ.isLoading && !health}
+              health={health}
+              blockers={blockers}
+              model={model}
+            />
+            <MoneyTrendCard
+              loading={trendQ.isLoading || previousTrendQ.isLoading}
+              trend={trend}
+              previousTrend={previousTrend}
+              model={model}
+              previousModel={previousModel}
+              summary={summary}
+              range={{ from, to }}
+              previousRange={previousRange}
             />
           </div>
         </div>
@@ -942,6 +1093,131 @@ function buildOwnerModel(input: {
     owner?.out_of_stock_risk_count,
     cardSummaryNum(cards, "stock_risk_count"),
   );
+  const ownerWb = owner?.wb_summary ?? {};
+  const ownerAds = owner?.ads_summary ?? {};
+  const ownerAdsProfitSpend = num(
+    ownerAds.profit_spend,
+    ownerAds.spend,
+    adSpend,
+  );
+  const ownerAdsSourceSpend = num(ownerAds.source_spend, ownerAds.spend);
+  const wbSnapshot = {
+    rowsCount: intNum(ownerWb.rows_count),
+    skuCount: intNum(ownerWb.sku_count),
+    nmCount: intNum(ownerWb.nm_count),
+    ordersAmount: num(ownerWb.orders_amount),
+    ordersCount: intNum(ownerWb.orders_count),
+    salesAmount: num(ownerWb.sales_amount, revenue),
+    salesCount: intNum(ownerWb.sales_count),
+    returnsCount: intNum(ownerWb.returns_count),
+    buyoutCount: intNum(ownerWb.buyout_count),
+    funnelOrdersCount: intNum(ownerWb.funnel_orders_count),
+    openCount: intNum(ownerWb.open_count),
+    cartCount: intNum(ownerWb.cart_count),
+    cartConversionPercent: num(ownerWb.cart_conversion_percent),
+    orderConversionPercent: num(ownerWb.order_conversion_percent),
+    buyoutPercent: num(ownerWb.buyout_percent),
+    marginAmount: num(ownerWb.margin_amount, profit),
+    marginPercent: num(ownerWb.margin_percent, margin),
+    cogs: num(ownerWb.cogs, cogs),
+    wbExpensesTotal: num(ownerWb.wb_expenses_total, expenses),
+    wbCommission: num(ownerWb.wb_commission),
+    logistics: num(ownerWb.logistics),
+    acceptance: num(ownerWb.acceptance),
+    penalties: num(ownerWb.penalties),
+    storage: num(ownerWb.storage),
+    missedOrdersAmount: num(ownerWb.missed_orders_amount),
+    missedOrdersCount: intNum(ownerWb.missed_orders_count),
+    cardViews: intNum(ownerWb.card_views),
+    turnoverDays: num(ownerWb.turnover_days),
+    stockQty: num(ownerWb.stock_qty),
+  };
+  const wbDaily = (Array.isArray(ownerWb.daily) ? ownerWb.daily : [])
+    .map((item) => {
+      const date = text(item?.date);
+      if (!date) return null;
+      return {
+        date,
+        label: formatShortDate(date),
+        ordersAmount: num(item?.orders_amount) ?? 0,
+        salesAmount: num(item?.sales_amount) ?? 0,
+        openCount: intNum(item?.open_count),
+        cartCount: intNum(item?.cart_count),
+        orderCount: intNum(item?.order_count),
+        buyoutCount: intNum(item?.buyout_count),
+        cartConversionPercent: num(item?.cart_conversion_percent),
+        orderConversionPercent: num(item?.order_conversion_percent),
+        buyoutPercent: num(item?.buyout_percent),
+        wbExpensesTotal: num(item?.wb_expenses_total) ?? 0,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a!.date.localeCompare(b!.date)) as Array<{
+    date: string;
+    label: string;
+    ordersAmount: number;
+    salesAmount: number;
+    openCount: number;
+    cartCount: number;
+    orderCount: number;
+    buyoutCount: number;
+    cartConversionPercent: number | null;
+    orderConversionPercent: number | null;
+    buyoutPercent: number | null;
+    wbExpensesTotal: number;
+  }>;
+  const adsSnapshot = {
+    rowsCount: intNum(ownerAds.rows_count),
+    campaignCount: intNum(ownerAds.campaign_count),
+    impressions: intNum(ownerAds.impressions),
+    cardViews: intNum(ownerAds.card_views),
+    ctrPercent: num(ownerAds.ctr_percent),
+    spend: ownerAdsProfitSpend,
+    profitSpend: ownerAdsProfitSpend,
+    sourceSpend: ownerAdsSourceSpend,
+    allocationGap: num(
+      ownerAds.allocation_gap,
+      ownerAdsSourceSpend != null && ownerAdsProfitSpend != null
+        ? ownerAdsSourceSpend - ownerAdsProfitSpend
+        : null,
+    ),
+    drrPercent: num(ownerAds.drr_percent),
+    sourceDrrPercent: num(ownerAds.source_drr_percent),
+    ordersAmount: num(ownerAds.orders_amount),
+    ordersCount: intNum(ownerAds.orders_count),
+    cpc: num(ownerAds.cpc),
+    roas: num(ownerAds.roas),
+  };
+  const adsDaily = (Array.isArray(ownerAds.daily) ? ownerAds.daily : [])
+    .map((item) => {
+      const date = text(item?.date);
+      if (!date) return null;
+      return {
+        date,
+        label: formatShortDate(date),
+        sourceSpend: num(item?.source_spend) ?? 0,
+        impressions: intNum(item?.impressions),
+        cardViews: intNum(item?.card_views),
+        ctrPercent: num(item?.ctr_percent),
+        ordersCount: intNum(item?.orders_count),
+        ordersAmount: num(item?.orders_amount) ?? 0,
+        sourceDrrPercent: num(item?.source_drr_percent),
+        avgPosition: num(item?.avg_position),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a!.date.localeCompare(b!.date)) as Array<{
+    date: string;
+    label: string;
+    sourceSpend: number;
+    impressions: number;
+    cardViews: number;
+    ctrPercent: number | null;
+    ordersCount: number;
+    ordersAmount: number;
+    sourceDrrPercent: number | null;
+    avgPosition: number | null;
+  }>;
 
   const blockerCount = intNum(
     ownerTrust?.blocking_open_issues_total,
@@ -1141,6 +1417,10 @@ function buildOwnerModel(input: {
     negativeSku,
     dataBlockedSku,
     stockRisk,
+    wbSnapshot,
+    wbDaily,
+    adsSnapshot,
+    adsDaily,
     totalRiskSku,
     criticalActions,
     highActions,
@@ -1594,6 +1874,1122 @@ function MetricTile({
       </CardContent>
     </Card>
   );
+}
+
+function OwnerOperatingSnapshot({
+  loading,
+  model,
+  previousModel,
+}: {
+  loading: boolean;
+  model: ReturnType<typeof buildOwnerModel>;
+  previousModel: ReturnType<typeof buildOwnerModel>;
+}) {
+  return (
+    <div className="space-y-5">
+      <WbBusinessSummaryCard
+        loading={loading}
+        model={model}
+        previousModel={previousModel}
+      />
+      <AdsBusinessSummaryCard
+        loading={loading}
+        model={model}
+        previousModel={previousModel}
+      />
+    </div>
+  );
+}
+
+function WbBusinessSummaryCard({
+  loading,
+  model,
+  previousModel,
+}: {
+  loading: boolean;
+  model: ReturnType<typeof buildOwnerModel>;
+  previousModel: ReturnType<typeof buildOwnerModel>;
+}) {
+  const wb = model.wbSnapshot;
+  const prev = previousModel.wbSnapshot;
+  const orderDetail = [
+    wb.ordersCount ? `${formatCount(wb.ordersCount)} заказов` : "",
+    wb.missedOrdersAmount && wb.missedOrdersAmount > 0
+      ? `без продажи: ${formatMoneyCompact(wb.missedOrdersAmount)}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const buyoutDetail =
+    wb.funnelOrdersCount > 0
+      ? `${formatCount(wb.buyoutCount)} выкупов из ${formatCount(
+          wb.funnelOrdersCount,
+        )} заказов`
+      : "По воронке WB";
+
+  return (
+    <Card className="rounded-lg shadow-sm">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ShoppingCart className="h-4 w-4 text-primary" />
+              Сводка WB
+            </CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Заказы, продажи, выкуп и главные расходы за выбранный период
+            </p>
+          </div>
+          <Badge variant="outline" className="shrink-0 rounded-md">
+            {wb.skuCount ? `${formatCount(wb.skuCount)} SKU` : "WB"}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3 pt-0">
+        {loading ? (
+          <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-4">
+            {Array.from({ length: 8 }).map((_, index) => (
+              <Skeleton key={index} className="h-[104px] rounded-md" />
+            ))}
+          </div>
+        ) : (
+          <>
+            <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-4">
+              <OwnerKpiCell
+                label="Все заказы"
+                value={money(wb.ordersAmount)}
+                detail={orderDetail || "Сумма и количество заказов"}
+                icon={ShoppingCart}
+                tone="info"
+                to="/analytics"
+                currentValue={wb.ordersAmount}
+                previousValue={prev.ordersAmount}
+              />
+              <OwnerKpiCell
+                label="Продажи"
+                value={money(wb.salesAmount)}
+                detail={
+                  wb.salesCount
+                    ? `${formatCount(wb.salesCount)} продаж`
+                    : "Финальная выручка"
+                }
+                icon={CircleDollarSign}
+                tone="good"
+                to="/money"
+                currentValue={wb.salesAmount}
+                previousValue={prev.salesAmount}
+              />
+              <OwnerKpiCell
+                label="Процент выкупа"
+                value={formatPercent(wb.buyoutPercent)}
+                detail={buyoutDetail}
+                icon={Percent}
+                tone={(wb.buyoutPercent ?? 0) >= 50 ? "good" : "warning"}
+                to="/analytics"
+                currentValue={wb.buyoutPercent}
+                previousValue={prev.buyoutPercent}
+                previousFormatter={formatPercent}
+              />
+              <OwnerKpiCell
+                label="Маржа"
+                value={money(wb.marginAmount)}
+                detail={`Маржинальность ${formatPercent(wb.marginPercent)}`}
+                icon={Wallet}
+                tone={
+                  wb.marginAmount == null
+                    ? "neutral"
+                    : wb.marginAmount < 0
+                      ? "danger"
+                      : (wb.marginPercent ?? 0) < 10
+                        ? "warning"
+                        : "good"
+                }
+                to="/money"
+                currentValue={wb.marginAmount}
+                previousValue={prev.marginAmount}
+              />
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              <OwnerKpiCell
+                compact
+                label="Логистика WB"
+                value={money(wb.logistics)}
+                detail="Доставка, возвраты, перерасчёты"
+                icon={Truck}
+                tone="warning"
+                to="/money"
+                currentValue={wb.logistics}
+                previousValue={prev.logistics}
+                inverse
+              />
+              <OwnerKpiCell
+                compact
+                label="Вознаграждение WB"
+                value={money(wb.wbCommission)}
+                detail="Комиссия и удержания WB"
+                icon={ReceiptText}
+                tone="neutral"
+                to="/money"
+                currentValue={wb.wbCommission}
+                previousValue={prev.wbCommission}
+                inverse
+              />
+              <OwnerKpiCell
+                compact
+                label="Штрафы и приёмка"
+                value={money((wb.penalties ?? 0) + (wb.acceptance ?? 0))}
+                detail={`Штрафы ${money(wb.penalties)} · приёмка ${money(
+                  wb.acceptance,
+                )}`}
+                icon={AlertTriangle}
+                tone={(wb.penalties ?? 0) > 0 ? "warning" : "neutral"}
+                to="/money"
+                currentValue={(wb.penalties ?? 0) + (wb.acceptance ?? 0)}
+                previousValue={(prev.penalties ?? 0) + (prev.acceptance ?? 0)}
+                inverse
+              />
+              <OwnerKpiCell
+                compact
+                label="Оборачиваемость"
+                value={formatDays(wb.turnoverDays)}
+                detail={[
+                  wb.nmCount ? `${formatCount(wb.nmCount)} карточек` : "",
+                  wb.stockQty ? `${formatCount(wb.stockQty)} шт. остаток` : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+                icon={Gauge}
+                tone={
+                  wb.turnoverDays == null
+                    ? "neutral"
+                    : wb.turnoverDays > 90
+                      ? "warning"
+                      : "good"
+                }
+                to="/stock-control"
+                currentValue={wb.turnoverDays}
+                previousValue={prev.turnoverDays}
+                previousFormatter={formatDays}
+                inverse
+              />
+            </div>
+
+            <div className="grid gap-2 lg:grid-cols-2">
+              <OwnerMiniTrendChart
+                title="Заказы и продажи"
+                data={model.wbDaily}
+                emptyText="Нет дневных данных по заказам и продажам"
+                valueFormatter={(value) => formatMoneyCompact(value)}
+                lines={[
+                  {
+                    dataKey: "ordersAmount",
+                    label: "Все заказы",
+                    color: "var(--chart-5)",
+                  },
+                  {
+                    dataKey: "salesAmount",
+                    label: "Продажи",
+                    color: "var(--success)",
+                  },
+                ]}
+              />
+              <OwnerMiniTrendChart
+                title="Процент выкупа"
+                data={model.wbDaily}
+                emptyText="Нет дневных данных по выкупу"
+                valueFormatter={(value) => formatPercent(value)}
+                lines={[
+                  {
+                    dataKey: "buyoutPercent",
+                    label: "Выкуп",
+                    color: "var(--warning)",
+                  },
+                ]}
+              />
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function AdsBusinessSummaryCard({
+  loading,
+  model,
+  previousModel,
+}: {
+  loading: boolean;
+  model: ReturnType<typeof buildOwnerModel>;
+  previousModel: ReturnType<typeof buildOwnerModel>;
+}) {
+  const ads = model.adsSnapshot;
+  const prev = previousModel.adsSnapshot;
+  const sourceSpend = ads.sourceSpend ?? ads.spend;
+  const previousSourceSpend = prev.sourceSpend ?? prev.spend;
+  const profitSpend = ads.profitSpend ?? ads.spend;
+  const previousProfitSpend = prev.profitSpend ?? prev.spend;
+  const allocationGap =
+    ads.allocationGap ??
+    (sourceSpend != null && profitSpend != null
+      ? sourceSpend - profitSpend
+      : null);
+  const cabinetDetail = [
+    ads.sourceDrrPercent != null
+      ? `ДРР WB Ads ${formatPercent(ads.sourceDrrPercent)}`
+      : "",
+    allocationGap != null && Math.abs(allocationGap) > 1
+      ? `разница с прибылью ${formatMoneyCompact(allocationGap)}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <Card className="rounded-lg shadow-sm">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Megaphone className="h-4 w-4 text-warning" />
+              Реклама
+            </CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Расход, охват и заказы из WB Ads
+            </p>
+          </div>
+          <Badge variant="outline" className="shrink-0 rounded-md">
+            {ads.campaignCount
+              ? `${formatCount(ads.campaignCount)} кампаний`
+              : "WB Ads"}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {loading ? (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <Skeleton key={index} className="h-[104px] rounded-md" />
+            ))}
+          </div>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2">
+            <OwnerKpiCell
+              label="Расход в прибыли"
+              value={money(profitSpend)}
+              detail={`DRR к выручке ${formatPercent(ads.drrPercent)}`}
+              icon={Megaphone}
+              tone={(ads.drrPercent ?? 0) > 15 ? "warning" : "neutral"}
+              to="/ads"
+              currentValue={profitSpend}
+              previousValue={previousProfitSpend}
+              inverse
+            />
+            <OwnerKpiCell
+              label="Кабинет WB Ads"
+              value={money(sourceSpend)}
+              detail={cabinetDetail || "Расход из статистики WB Ads"}
+              icon={ReceiptText}
+              tone="neutral"
+              to="/ads"
+              currentValue={sourceSpend}
+              previousValue={previousSourceSpend}
+              inverse
+            />
+            <OwnerKpiCell
+              label="Показы"
+              value={formatCountWithUnit(ads.impressions)}
+              detail="Сколько раз показали рекламу"
+              icon={Eye}
+              tone="info"
+              to="/ads"
+              currentValue={ads.impressions}
+              previousValue={prev.impressions}
+              previousFormatter={formatCountWithUnit}
+            />
+            <OwnerKpiCell
+              label="Просмотры карточки"
+              value={formatCountWithUnit(ads.cardViews)}
+              detail={
+                ads.cpc != null
+                  ? `CPC ${money(ads.cpc)}`
+                  : "Переходы из рекламы"
+              }
+              icon={MousePointerClick}
+              tone="info"
+              to="/ads"
+              currentValue={ads.cardViews}
+              previousValue={prev.cardViews}
+              previousFormatter={formatCountWithUnit}
+            />
+            <OwnerKpiCell
+              label="CTR"
+              value={formatPercent(ads.ctrPercent)}
+              detail="Показы → переходы"
+              icon={Percent}
+              tone={(ads.ctrPercent ?? 0) >= 3 ? "good" : "warning"}
+              to="/ads"
+              currentValue={ads.ctrPercent}
+              previousValue={prev.ctrPercent}
+              previousFormatter={formatPercent}
+            />
+            <OwnerKpiCell
+              label="Заказы по рекламе"
+              value={money(ads.ordersAmount)}
+              detail={`${formatCount(ads.ordersCount)} заказов`}
+              icon={ShoppingCart}
+              tone="good"
+              to="/ads"
+              currentValue={ads.ordersAmount}
+              previousValue={prev.ordersAmount}
+            />
+            <OwnerKpiCell
+              label="ДРР"
+              value={formatPercent(ads.sourceDrrPercent)}
+              detail={
+                ads.roas != null
+                  ? `ROAS ${ads.roas.toFixed(1)}x`
+                  : "Кабинет / заказы"
+              }
+              icon={BarChart3}
+              tone={(ads.sourceDrrPercent ?? 0) > 15 ? "warning" : "good"}
+              to="/ads"
+              currentValue={ads.sourceDrrPercent}
+              previousValue={prev.sourceDrrPercent}
+              previousFormatter={formatPercent}
+              inverse
+            />
+
+            <div className="sm:col-span-2 grid gap-2 lg:grid-cols-2">
+              <OwnerMiniTrendChart
+                title="Показы и переходы"
+                data={model.adsDaily}
+                emptyText="Нет дневных данных WB Ads"
+                valueFormatter={(value) => formatCount(value)}
+                lines={[
+                  {
+                    dataKey: "impressions",
+                    label: "Показы",
+                    color: "var(--chart-5)",
+                  },
+                  {
+                    dataKey: "cardViews",
+                    label: "Переходы",
+                    color: "var(--info)",
+                  },
+                ]}
+              />
+              <OwnerMiniTrendChart
+                title="CTR и ДРР"
+                data={model.adsDaily}
+                emptyText="Нет дневных данных по CTR"
+                valueFormatter={(value) => formatPercent(value)}
+                lines={[
+                  {
+                    dataKey: "ctrPercent",
+                    label: "CTR",
+                    color: "var(--warning)",
+                  },
+                  {
+                    dataKey: "sourceDrrPercent",
+                    label: "ДРР",
+                    color: "var(--success)",
+                  },
+                ]}
+              />
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function OwnerKpiCell({
+  label,
+  value,
+  detail,
+  icon: Icon,
+  tone,
+  to,
+  currentValue,
+  previousValue,
+  previousFormatter = money,
+  inverse = false,
+  compact = false,
+}: {
+  label: string;
+  value: ReactNode;
+  detail?: ReactNode;
+  icon: typeof Wallet;
+  tone: MetricTone;
+  to?: string;
+  currentValue?: number | null;
+  previousValue?: number | null;
+  previousFormatter?: (value: number | null | undefined) => string;
+  inverse?: boolean;
+  compact?: boolean;
+}) {
+  const cls = toneClasses(tone);
+  const comparison =
+    currentValue == null && previousValue == null
+      ? null
+      : compareValue(currentValue, previousValue, inverse);
+  const content = (
+    <>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate text-xs font-medium text-muted-foreground">
+            {label}
+          </div>
+          <div
+            className={cn(
+              "mt-1 font-semibold leading-6 tabular-nums tracking-tight",
+              compact ? "text-base" : "text-lg",
+            )}
+          >
+            {value}
+          </div>
+        </div>
+        <span
+          className={cn(
+            "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border",
+            cls.soft,
+          )}
+        >
+          <Icon className="h-4 w-4" />
+        </span>
+      </div>
+      <div className="mt-1 min-h-8 text-[11px] leading-4 text-muted-foreground">
+        {detail || "—"}
+      </div>
+      {comparison ? (
+        <div className="mt-2 space-y-1">
+          <div className="text-[11px] text-muted-foreground">
+            Было:{" "}
+            <span className="font-medium tabular-nums text-foreground">
+              {previousFormatter(previousValue)}
+            </span>
+          </div>
+          <DeltaBadge comparison={comparison} />
+        </div>
+      ) : null}
+    </>
+  );
+
+  const className = cn(
+    "block min-w-0 rounded-md border bg-card p-3 text-left transition",
+    to && "hover:border-primary/40 hover:bg-muted/25 hover:shadow-sm",
+  );
+  if (to) {
+    return (
+      <Link to={to as any} className={className}>
+        {content}
+      </Link>
+    );
+  }
+  return <div className={className}>{content}</div>;
+}
+
+function OwnerMiniTrendChart({
+  title,
+  data,
+  lines,
+  valueFormatter,
+  emptyText,
+  heightClass = "h-[148px]",
+  syncId,
+  selectedDate,
+  onPointClick,
+}: {
+  title: string;
+  data: Array<Record<string, unknown>>;
+  lines: Array<{
+    dataKey: string;
+    label: string;
+    color: string;
+    dashed?: boolean;
+  }>;
+  valueFormatter: (value: number) => string;
+  emptyText: string;
+  heightClass?: string;
+  syncId?: string;
+  selectedDate?: string | null;
+  onPointClick?: (date: string) => void;
+}) {
+  const selectedLabel = selectedDate ? formatShortDate(selectedDate) : null;
+  const hasData =
+    data.length > 1 &&
+    data.some((point) =>
+      lines.some((line) => {
+        const value = num(point[line.dataKey]);
+        return value != null && Number.isFinite(value) && value !== 0;
+      }),
+    );
+
+  return (
+    <div className="rounded-md border bg-muted/20 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="truncate text-xs font-semibold">{title}</div>
+        <div className="flex shrink-0 items-center gap-2">
+          {lines.map((line) => (
+            <span
+              key={line.dataKey}
+              className="flex items-center gap-1 text-[10px] text-muted-foreground"
+            >
+              <span
+                className="h-1.5 w-3 rounded-full"
+                style={{ background: line.color }}
+              />
+              {line.label}
+            </span>
+          ))}
+        </div>
+      </div>
+      {hasData ? (
+        <div className={cn("mt-2 w-full", heightClass)}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={data}
+              margin={{ left: -18, right: 8, top: 8 }}
+              syncId={syncId}
+              onClick={(state: any) => {
+                const payload = state?.activePayload?.[0]?.payload;
+                const date = text(payload?.date);
+                if (date && onPointClick) onPointClick(date);
+              }}
+            >
+              <CartesianGrid
+                vertical={false}
+                stroke="var(--border)"
+                strokeDasharray="3 3"
+                opacity={0.55}
+              />
+              <XAxis
+                dataKey="label"
+                axisLine={false}
+                tickLine={false}
+                minTickGap={18}
+                tick={{ fontSize: 10 }}
+              />
+              <YAxis
+                axisLine={false}
+                tickLine={false}
+                tick={{ fontSize: 10 }}
+                tickFormatter={(value) => valueFormatter(num(value) ?? 0)}
+                width={54}
+              />
+              <RechartsTooltip
+                formatter={(value: unknown, name: unknown) => [
+                  valueFormatter(num(value) ?? 0),
+                  String(name),
+                ]}
+                labelFormatter={(label) => String(label)}
+              />
+              {selectedLabel ? (
+                <ReferenceLine
+                  x={selectedLabel}
+                  stroke="var(--foreground)"
+                  strokeOpacity={0.35}
+                  strokeDasharray="4 4"
+                />
+              ) : null}
+              {lines.map((line) => (
+                <Line
+                  key={line.dataKey}
+                  type="monotone"
+                  dataKey={line.dataKey}
+                  name={line.label}
+                  stroke={line.color}
+                  strokeDasharray={line.dashed ? "4 4" : undefined}
+                  strokeWidth={2}
+                  dot={false}
+                  connectNulls
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <div
+          className={cn(
+            "mt-2 flex items-center justify-center rounded-md border border-dashed text-center text-xs text-muted-foreground",
+            heightClass,
+          )}
+        >
+          {emptyText}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FunnelEventsCard({
+  loading,
+  model,
+  previousModel,
+  range,
+  previousRange,
+}: {
+  loading: boolean;
+  model: ReturnType<typeof buildOwnerModel>;
+  previousModel: ReturnType<typeof buildOwnerModel>;
+  range: DateRangeValue;
+  previousRange: DateRangeValue;
+}) {
+  const [syncCharts, setSyncCharts] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const data = useMemo(
+    () => buildFunnelEventData(model, previousModel),
+    [model, previousModel],
+  );
+  const selectedPoint =
+    data.find((point) => point.date === selectedDate) ??
+    data[data.length - 1] ??
+    null;
+  const effectiveSelectedDate = selectedPoint?.date ?? null;
+  const signals = useMemo(
+    () => buildFunnelEventSignals(selectedPoint),
+    [selectedPoint],
+  );
+  const chartHeight = expanded ? "h-[220px]" : "h-[150px]";
+  const syncId = syncCharts ? "owner-funnel-events" : undefined;
+  const charts = [
+    {
+      title: "Показы по рекламе",
+      dataKey: "adImpressions",
+      label: "Показы",
+      color: "var(--chart-5)",
+      formatter: formatCount,
+      empty: "Нет данных по показам рекламы",
+    },
+    {
+      title: "CTR по рекламе",
+      dataKey: "adCtrPercent",
+      label: "CTR",
+      color: "var(--warning)",
+      formatter: formatPercent,
+      empty: "Нет данных по CTR",
+    },
+    {
+      title: "Просмотры карточки",
+      dataKey: "cardViews",
+      label: "Просмотры",
+      color: "var(--info)",
+      formatter: formatCount,
+      empty: "Нет просмотров карточек",
+    },
+    {
+      title: "CR в корзину",
+      dataKey: "cartConversionPercent",
+      label: "CR",
+      color: "var(--chart-3)",
+      formatter: formatPercent,
+      empty: "Нет конверсии в корзину",
+    },
+    {
+      title: "Добавления в корзину",
+      dataKey: "cartCount",
+      label: "Корзина",
+      color: "var(--success)",
+      formatter: formatCount,
+      empty: "Нет добавлений в корзину",
+    },
+    {
+      title: "CR в заказы",
+      dataKey: "orderConversionPercent",
+      label: "CR",
+      color: "var(--chart-4)",
+      formatter: formatPercent,
+      empty: "Нет конверсии в заказы",
+    },
+    {
+      title: "Заказы",
+      dataKey: "orderCount",
+      label: "Заказы",
+      color: "var(--chart-2)",
+      formatter: formatCount,
+      empty: "Нет заказов по воронке",
+    },
+    {
+      title: "Позиция",
+      dataKey: "avgPosition",
+      label: "Позиция",
+      color: "var(--destructive)",
+      formatter: formatPosition,
+      empty: "Нет данных по позиции",
+    },
+  ];
+
+  return (
+    <Card className="rounded-lg shadow-sm">
+      <CardHeader className="space-y-3 pb-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <LineChartIcon className="h-4 w-4 text-primary" />
+              События и воронка
+            </CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Реклама, карточка, корзина и заказы:{" "}
+              {formatRange(range.from, range.to)} vs{" "}
+              {formatRange(previousRange.from, previousRange.to)}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex h-8 items-center gap-2 rounded-md border px-2 text-xs font-medium">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-primary"
+                checked={syncCharts}
+                onChange={(event) => setSyncCharts(event.target.checked)}
+              />
+              Синхронный показ
+            </label>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setExpanded((current) => !current)}
+            >
+              {expanded ? "Свернуть" : "Расширить"}
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3 pt-0">
+        {loading ? (
+          <div className="grid gap-2 md:grid-cols-2">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <Skeleton key={index} className="h-[190px] rounded-md" />
+            ))}
+          </div>
+        ) : (
+          <>
+            <div className="grid gap-2 md:grid-cols-2">
+              {charts.map((chart) => (
+                <OwnerMiniTrendChart
+                  key={chart.dataKey}
+                  title={chart.title}
+                  data={data}
+                  emptyText={chart.empty}
+                  valueFormatter={chart.formatter}
+                  heightClass={chartHeight}
+                  syncId={syncId}
+                  selectedDate={effectiveSelectedDate}
+                  onPointClick={setSelectedDate}
+                  lines={[
+                    {
+                      dataKey: chart.dataKey,
+                      label: chart.label,
+                      color: chart.color,
+                    },
+                  ]}
+                />
+              ))}
+            </div>
+            <FunnelEventDayPanel point={selectedPoint} signals={signals} />
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function FunnelEventDayPanel({
+  point,
+  signals,
+}: {
+  point: FunnelEventPoint | null;
+  signals: FunnelEventSignal[];
+}) {
+  if (!point) {
+    return (
+      <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
+        Нет дневных данных для анализа событий.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border bg-muted/20 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold">
+            События дня: {formatShortDate(point.date)}
+          </div>
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            Сравнение с{" "}
+            {point.previousDate
+              ? formatShortDate(point.previousDate)
+              : "предыдущим равным днём"}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+          <MiniStat
+            label="Показы"
+            value={formatCount(point.adImpressions)}
+            tone={
+              compareValue(point.adImpressions, point.previousAdImpressions)
+                .tone
+            }
+          />
+          <MiniStat
+            label="Просмотры"
+            value={formatCount(point.cardViews)}
+            tone={compareValue(point.cardViews, point.previousCardViews).tone}
+          />
+          <MiniStat
+            label="CR корзины"
+            value={formatPercent(point.cartConversionPercent)}
+            tone={
+              compareValue(
+                point.cartConversionPercent,
+                point.previousCartConversionPercent,
+              ).tone
+            }
+          />
+          <MiniStat
+            label="Заказы"
+            value={formatCount(point.orderCount)}
+            tone={compareValue(point.orderCount, point.previousOrderCount).tone}
+          />
+        </div>
+      </div>
+      <div className="mt-3 space-y-2">
+        {signals.map((signal, index) => {
+          const cls = toneClasses(signal.tone);
+          const SignalIcon = signal.icon;
+          return (
+            <div
+              key={`${signal.title}-${index}`}
+              className={cn(
+                "flex items-start gap-2 rounded-md border px-3 py-2",
+                cls.soft,
+              )}
+            >
+              <SignalIcon className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold">{signal.title}</div>
+                <div className="mt-0.5 text-[11px] leading-4">
+                  {signal.detail}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function buildFunnelEventData(
+  model: ReturnType<typeof buildOwnerModel>,
+  previousModel: ReturnType<typeof buildOwnerModel>,
+): FunnelEventPoint[] {
+  const wbByDate = new Map(model.wbDaily.map((item) => [item.date, item]));
+  const adsByDate = new Map(model.adsDaily.map((item) => [item.date, item]));
+  const dates = [...new Set([...wbByDate.keys(), ...adsByDate.keys()])].sort();
+
+  return dates.map((date, index) => {
+    const wb = wbByDate.get(date);
+    const ads = adsByDate.get(date);
+    const prevWb = previousModel.wbDaily[index];
+    const prevAds = previousModel.adsDaily[index];
+    return {
+      date,
+      label: formatShortDate(date),
+      previousDate: prevWb?.date ?? prevAds?.date,
+      adImpressions: ads?.impressions ?? 0,
+      previousAdImpressions: prevAds?.impressions ?? null,
+      adCtrPercent: ads?.ctrPercent ?? null,
+      previousAdCtrPercent: prevAds?.ctrPercent ?? null,
+      cardViews: wb?.openCount ?? 0,
+      previousCardViews: prevWb?.openCount ?? null,
+      cartConversionPercent: wb?.cartConversionPercent ?? null,
+      previousCartConversionPercent: prevWb?.cartConversionPercent ?? null,
+      cartCount: wb?.cartCount ?? 0,
+      previousCartCount: prevWb?.cartCount ?? null,
+      orderConversionPercent: wb?.orderConversionPercent ?? null,
+      previousOrderConversionPercent: prevWb?.orderConversionPercent ?? null,
+      orderCount: wb?.orderCount ?? 0,
+      previousOrderCount: prevWb?.orderCount ?? null,
+      avgPosition: ads?.avgPosition ?? null,
+      previousAvgPosition: prevAds?.avgPosition ?? null,
+    };
+  });
+}
+
+function buildFunnelEventSignals(
+  point: FunnelEventPoint | null,
+): FunnelEventSignal[] {
+  if (!point) return [];
+  const signals: FunnelEventSignal[] = [];
+  addDropSignal(signals, {
+    title: "Показы рекламы просели",
+    current: point.adImpressions,
+    previous: point.previousAdImpressions,
+    thresholdPercent: 35,
+    formatter: formatCount,
+    icon: Megaphone,
+    detail:
+      "Проверьте статус кампаний, дневной бюджет и ставки. Падение показов часто тянет вниз просмотры карточек.",
+  });
+  addDropSignal(signals, {
+    title: "CTR рекламы снизился",
+    current: point.adCtrPercent,
+    previous: point.previousAdCtrPercent,
+    thresholdPercent: 18,
+    formatter: formatPercent,
+    icon: Percent,
+    detail:
+      "Объявления показываются, но переходов меньше. Проверьте главный фото-сигнал, цену и релевантность рекламы.",
+  });
+  addDropSignal(signals, {
+    title: "Просмотры карточки упали",
+    current: point.cardViews,
+    previous: point.previousCardViews,
+    thresholdPercent: 25,
+    formatter: formatCount,
+    icon: Eye,
+    detail:
+      "Сигнал верхней части воронки. Частые причины: реклама, позиция, остатки, цена или потеря видимости.",
+  });
+  addDropSignal(signals, {
+    title: "CR в корзину просел",
+    current: point.cartConversionPercent,
+    previous: point.previousCartConversionPercent,
+    thresholdPercent: 18,
+    formatter: formatPercent,
+    icon: MousePointerClick,
+    detail:
+      "Покупатели открывают карточку, но хуже добавляют в корзину. Проверьте цену, фото, отзывы и размерную сетку.",
+  });
+  addDropSignal(signals, {
+    title: "CR в заказы просел",
+    current: point.orderConversionPercent,
+    previous: point.previousOrderConversionPercent,
+    thresholdPercent: 18,
+    formatter: formatPercent,
+    icon: ShoppingCart,
+    detail:
+      "Корзина есть, но заказов меньше. Проверьте наличие размеров, сроки доставки, цену и промо.",
+  });
+  addDropSignal(signals, {
+    title: "Заказы резко упали",
+    current: point.orderCount,
+    previous: point.previousOrderCount,
+    thresholdPercent: 30,
+    formatter: formatCount,
+    icon: TrendingDown,
+    detail:
+      "Проверьте предыдущие этапы воронки в этот же день: показы, просмотры, корзину и CR в заказы.",
+  });
+  addPositionSignal(signals, point);
+  addGrowthSignal(signals, {
+    title: "Заказы резко выросли",
+    current: point.orderCount,
+    previous: point.previousOrderCount,
+    thresholdPercent: 45,
+    formatter: formatCount,
+    icon: TrendingUp,
+    detail:
+      "Найдите, что изменилось в этот день: реклама, позиция, цена или остатки. Удачную гипотезу можно масштабировать.",
+  });
+
+  if (!signals.length) {
+    signals.push({
+      title: "Без резких событий",
+      detail:
+        "По ключевым этапам воронки нет сильного отклонения от аналогичного дня предыдущего периода.",
+      tone: "good",
+      icon: CheckCircle2,
+    });
+  }
+  return signals.slice(0, 5);
+}
+
+function addDropSignal(
+  signals: FunnelEventSignal[],
+  input: {
+    title: string;
+    current: number | null | undefined;
+    previous: number | null | undefined;
+    thresholdPercent: number;
+    formatter: (value: number | null | undefined) => string;
+    icon: typeof Wallet;
+    detail: string;
+  },
+) {
+  const change = changePercent(input.current, input.previous);
+  if (change == null || change > -input.thresholdPercent) return;
+  signals.push({
+    title: input.title,
+    detail: `${input.formatter(input.previous)} → ${input.formatter(
+      input.current,
+    )} (${change.toFixed(1)}%). ${input.detail}`,
+    tone: change <= -40 ? "danger" : "warning",
+    icon: input.icon,
+  });
+}
+
+function addGrowthSignal(
+  signals: FunnelEventSignal[],
+  input: {
+    title: string;
+    current: number | null | undefined;
+    previous: number | null | undefined;
+    thresholdPercent: number;
+    formatter: (value: number | null | undefined) => string;
+    icon: typeof Wallet;
+    detail: string;
+  },
+) {
+  const change = changePercent(input.current, input.previous);
+  if (change == null || change < input.thresholdPercent) return;
+  signals.push({
+    title: input.title,
+    detail: `${input.formatter(input.previous)} → ${input.formatter(
+      input.current,
+    )} (+${change.toFixed(1)}%). ${input.detail}`,
+    tone: "good",
+    icon: input.icon,
+  });
+}
+
+function addPositionSignal(
+  signals: FunnelEventSignal[],
+  point: FunnelEventPoint,
+) {
+  if (point.avgPosition == null || point.previousAvgPosition == null) return;
+  const diff = point.avgPosition - point.previousAvgPosition;
+  const change = changePercent(point.avgPosition, point.previousAvgPosition);
+  if (diff <= 3 && (change == null || change <= 15)) return;
+  signals.push({
+    title: "Позиция ухудшилась",
+    detail: `${formatPosition(point.previousAvgPosition)} → ${formatPosition(
+      point.avgPosition,
+    )}. Чем выше позиция, тем хуже видимость в рекламе и поиске.`,
+    tone: "warning",
+    icon: Gauge,
+  });
+}
+
+function changePercent(
+  current: number | null | undefined,
+  previous: number | null | undefined,
+) {
+  if (
+    current == null ||
+    previous == null ||
+    !Number.isFinite(current) ||
+    !Number.isFinite(previous) ||
+    previous === 0
+  ) {
+    return null;
+  }
+  return ((current - previous) / Math.abs(previous)) * 100;
 }
 
 function MoneyTrendCard({
@@ -2513,13 +3909,7 @@ function OwnerNotesPanel({
           })}
         </div>
 
-        {aiLoading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 2 }).map((_, index) => (
-              <Skeleton key={index} className="h-14 w-full" />
-            ))}
-          </div>
-        ) : decisionSteps.length ? (
+        {decisionSteps.length ? (
           <div className="space-y-2">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Решения на сегодня
@@ -2537,6 +3927,16 @@ function OwnerNotesPanel({
                 </span>
               </div>
             ))}
+            {aiLoading ? (
+              <div className="rounded-md border border-info/30 bg-info/5 p-2 text-xs text-muted-foreground">
+                ИИ-сводка обновляется, пока показаны локальные выводы по данным
+                панели владельца.
+              </div>
+            ) : null}
+          </div>
+        ) : aiLoading ? (
+          <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+            Сводка обновляется. Пока данных для списка решений недостаточно.
           </div>
         ) : (
           <div className="rounded-lg border border-dashed p-6 text-center">
@@ -3895,6 +5295,26 @@ function periodFromObject(
 
 function money(value: number | null | undefined) {
   return value == null ? "—" : formatMoney(value);
+}
+
+function formatCount(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return formatNumber(Math.round(value));
+}
+
+function formatCountWithUnit(value: number | null | undefined) {
+  const formatted = formatCount(value);
+  return formatted === "—" ? formatted : `${formatted} шт.`;
+}
+
+function formatDays(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return `${formatNumber(Math.round(value))} дн.`;
+}
+
+function formatPosition(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return value.toFixed(1);
 }
 
 function expenseSignedMoney(value: number | null | undefined) {

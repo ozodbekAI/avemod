@@ -23,6 +23,7 @@ import { Route as AuthenticatedPhotoStudioRouteImport } from './routes/_authenti
 import { Route as AuthenticatedOperationsRouteImport } from './routes/_authenticated/operations'
 import { Route as AuthenticatedMoneyRouteImport } from './routes/_authenticated/money'
 import { Route as AuthenticatedMartsRouteImport } from './routes/_authenticated/marts'
+import { Route as AuthenticatedLogisticsRouteImport } from './routes/_authenticated/logistics'
 import { Route as AuthenticatedGroupingRouteImport } from './routes/_authenticated/grouping'
 import { Route as AuthenticatedFinanceRouteImport } from './routes/_authenticated/finance'
 import { Route as AuthenticatedExpensesRouteImport } from './routes/_authenticated/expenses'
@@ -121,6 +122,11 @@ const AuthenticatedMoneyRoute = AuthenticatedMoneyRouteImport.update({
 const AuthenticatedMartsRoute = AuthenticatedMartsRouteImport.update({
   id: '/marts',
   path: '/marts',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedLogisticsRoute = AuthenticatedLogisticsRouteImport.update({
+  id: '/logistics',
+  path: '/logistics',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedGroupingRoute = AuthenticatedGroupingRouteImport.update({
@@ -286,6 +292,7 @@ export interface FileRoutesByFullPath {
   '/expenses': typeof AuthenticatedExpensesRoute
   '/finance': typeof AuthenticatedFinanceRoute
   '/grouping': typeof AuthenticatedGroupingRoute
+  '/logistics': typeof AuthenticatedLogisticsRoute
   '/marts': typeof AuthenticatedMartsRoute
   '/money': typeof AuthenticatedMoneyRoute
   '/operations': typeof AuthenticatedOperationsRoute
@@ -328,6 +335,7 @@ export interface FileRoutesByTo {
   '/expenses': typeof AuthenticatedExpensesRoute
   '/finance': typeof AuthenticatedFinanceRoute
   '/grouping': typeof AuthenticatedGroupingRoute
+  '/logistics': typeof AuthenticatedLogisticsRoute
   '/marts': typeof AuthenticatedMartsRoute
   '/money': typeof AuthenticatedMoneyRoute
   '/operations': typeof AuthenticatedOperationsRoute
@@ -372,6 +380,7 @@ export interface FileRoutesById {
   '/_authenticated/expenses': typeof AuthenticatedExpensesRoute
   '/_authenticated/finance': typeof AuthenticatedFinanceRoute
   '/_authenticated/grouping': typeof AuthenticatedGroupingRoute
+  '/_authenticated/logistics': typeof AuthenticatedLogisticsRoute
   '/_authenticated/marts': typeof AuthenticatedMartsRoute
   '/_authenticated/money': typeof AuthenticatedMoneyRoute
   '/_authenticated/operations': typeof AuthenticatedOperationsRoute
@@ -416,6 +425,7 @@ export interface FileRouteTypes {
     | '/expenses'
     | '/finance'
     | '/grouping'
+    | '/logistics'
     | '/marts'
     | '/money'
     | '/operations'
@@ -458,6 +468,7 @@ export interface FileRouteTypes {
     | '/expenses'
     | '/finance'
     | '/grouping'
+    | '/logistics'
     | '/marts'
     | '/money'
     | '/operations'
@@ -501,6 +512,7 @@ export interface FileRouteTypes {
     | '/_authenticated/expenses'
     | '/_authenticated/finance'
     | '/_authenticated/grouping'
+    | '/_authenticated/logistics'
     | '/_authenticated/marts'
     | '/_authenticated/money'
     | '/_authenticated/operations'
@@ -630,6 +642,13 @@ declare module '@tanstack/react-router' {
       path: '/marts'
       fullPath: '/marts'
       preLoaderRoute: typeof AuthenticatedMartsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/logistics': {
+      id: '/_authenticated/logistics'
+      path: '/logistics'
+      fullPath: '/logistics'
+      preLoaderRoute: typeof AuthenticatedLogisticsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/grouping': {
@@ -877,6 +896,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedExpensesRoute: typeof AuthenticatedExpensesRoute
   AuthenticatedFinanceRoute: typeof AuthenticatedFinanceRoute
   AuthenticatedGroupingRoute: typeof AuthenticatedGroupingRoute
+  AuthenticatedLogisticsRoute: typeof AuthenticatedLogisticsRoute
   AuthenticatedMartsRoute: typeof AuthenticatedMartsRoute
   AuthenticatedMoneyRoute: typeof AuthenticatedMoneyRoute
   AuthenticatedOperationsRoute: typeof AuthenticatedOperationsRoute
@@ -915,6 +935,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedExpensesRoute: AuthenticatedExpensesRoute,
   AuthenticatedFinanceRoute: AuthenticatedFinanceRoute,
   AuthenticatedGroupingRoute: AuthenticatedGroupingRoute,
+  AuthenticatedLogisticsRoute: AuthenticatedLogisticsRoute,
   AuthenticatedMartsRoute: AuthenticatedMartsRoute,
   AuthenticatedMoneyRoute: AuthenticatedMoneyRoute,
   AuthenticatedOperationsRoute: AuthenticatedOperationsRoute,

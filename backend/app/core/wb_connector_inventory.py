@@ -230,7 +230,7 @@ WB_CONNECTOR_INVENTORY: tuple[WBConnectorInventoryEntry, ...] = (
         dq_checks=("promotions_nomenclatures_unavailable",),
         raw_response_storage="DomainSyncBase._request_json",
         client_path="app.modules.promotions.client.PromotionsClient",
-        client_method="promotions/details/nomenclatures",
+        client_method="nomenclatures",
         source_doc="https://dev.wildberries.ru/en/docs/openapi/promotion",
         compliance_notes="Read-only sync. Promotion upload/write is intentionally not automated without explicit user confirmation.",
     ),

@@ -11,9 +11,12 @@ import {
   SidebarFooter,
   SidebarHeader,
   SidebarRail,
+  useSidebar,
 } from "@/components/ui/sidebar";
 
 export function AppSidebar() {
+  const { setOpenMobile } = useSidebar();
+
   return (
     <Sidebar
       collapsible="icon"
@@ -36,7 +39,7 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
 
-      <SidebarNavContent />
+      <SidebarNavContent onNavigate={() => setOpenMobile(false)} />
 
       <SidebarFooter className="border-t border-sidebar-border/70 px-3 py-2 group-data-[collapsible=icon]:hidden">
         <div className="flex h-11 items-center gap-2 rounded-lg border border-sidebar-border bg-card px-2.5 shadow-sm shadow-black/[0.025]">

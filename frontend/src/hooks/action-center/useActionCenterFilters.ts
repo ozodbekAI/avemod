@@ -9,6 +9,7 @@ import { routeSearchText } from "@/lib/action-center-routing";
 export type ActionCenterSearch = Partial<ActionCenterFilterState> & {
   action_id?: string;
   code?: string;
+  group?: string;
   source?: string;
   source_id?: string;
   nm_id?: string;
@@ -23,6 +24,7 @@ export function validateActionCenterSearch(
     ...actionCenterStateFromSearch(s),
     action_id: routeSearchText(s.action_id),
     code: routeSearchText(s.code),
+    group: routeSearchText(s.group),
     source: routeSearchText(s.source),
     source_id: routeSearchText(s.source_id),
     nm_id: routeSearchText(s.nm_id),

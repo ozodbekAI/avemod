@@ -47,11 +47,19 @@ AgentIntent = Literal[
     "stock_export",
     "title_update",
     "page_explain",
+    "reputation_agent",
+    "scenario_create",
+    "pricing_agent",
+    "insights_report",
+    "strategy_advice",
+    "module_navigate",
+    "open_logistics",
     "open_action_center",
     "open_checker",
     "open_pricing",
     "open_stock_control",
     "open_money",
+    "api_action",
 ]
 
 AgentActionType = Literal[
@@ -62,6 +70,7 @@ AgentActionType = Literal[
     "open_preview_dialog",
     "download_file",
     "create_manual_task",
+    "api_request",
 ]
 
 
@@ -71,6 +80,31 @@ class AgentMessageRequest(AgentBaseModel):
     intent: AgentIntent | None = None
     selected_nm_id: int | None = None
     new_title: str | None = Field(default=None, max_length=500)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentToolSpec(AgentBaseModel):
+    name: str
+    intent: AgentIntent
+    title: str
+    description: str
+    required_args: list[str] = Field(default_factory=list)
+    write_policy: str
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentToolsResponse(AgentBaseModel):
+    protocol: Literal["finance-agent-tools-v1"] = "finance-agent-tools-v1"
+    tools: list[AgentToolSpec] = Field(default_factory=list)
+    modules: dict[str, dict[str, str]] = Field(default_factory=dict)
+    api_actions: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    direct_marketplace_writes: bool = False
+
+
+class AgentToolCallRequest(AgentBaseModel):
+    account_id: int | None = None
+    tool_name: str = Field(min_length=1, max_length=120)
+    arguments: dict[str, Any] = Field(default_factory=dict)
     context: dict[str, Any] = Field(default_factory=dict)
 
 

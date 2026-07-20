@@ -293,9 +293,7 @@ def _compact_action_dict_for_list(value: object) -> object:
     source_references = item.get("source_references")
     if isinstance(source_references, list):
         item["source_references"] = source_references[:3]
-    item["evidence_ledger"] = _compact_evidence_ledger_dict(
-        item.get("evidence_ledger")
-    )
+    item["evidence_ledger"] = _compact_evidence_ledger_dict(item.get("evidence_ledger"))
     return item
 
 
@@ -1006,7 +1004,12 @@ async def portal_products(
     search: str | None = Query(default=None),
     card_quality_status: str | None = Query(default=None),
     sort_by: Literal[
-        "priority_score", "revenue", "profit", "quality_score", "quality_issues"
+        "priority_score",
+        "revenue",
+        "profit",
+        "margin",
+        "quality_score",
+        "quality_issues",
     ] = Query(default="priority_score"),
     sort_dir: Literal["asc", "desc"] = Query(default="desc"),
     limit: int = Query(default=50, ge=1, le=200),

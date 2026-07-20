@@ -88,7 +88,7 @@ async def money_profit_cascade(
     session: AsyncSession = Depends(get_db_session),
 ) -> ProfitCascadeRead:
     await _require_money_read(session, current_user, account_id=account_id)
-    return await service.profit_cascade(
+    return await snapshot_service.profit_cascade(
         session,
         account_id=account_id,
         date_from=date_from,
@@ -107,22 +107,7 @@ async def money_expense_breakdown(
     session: AsyncSession = Depends(get_db_session),
 ) -> ExpenseBreakdownSummaryRead:
     await _require_money_read(session, current_user, account_id=account_id)
-    if group_by == "category" and include_unallocated:
-        summary = await snapshot_service.summary(
-            session,
-            account_id=account_id,
-            date_from=date_from,
-            date_to=date_to,
-        )
-        if summary.expense_breakdown is not None:
-            return summary.expense_breakdown.model_copy(
-                deep=False,
-                update={
-                    "group_by": group_by,
-                    "include_unallocated": include_unallocated,
-                },
-            )
-    return await service.expense_breakdown(
+    return await snapshot_service.expense_breakdown(
         session,
         account_id=account_id,
         date_from=date_from,
@@ -143,7 +128,7 @@ async def money_expense_logistics(
     session: AsyncSession = Depends(get_db_session),
 ) -> MoneyExpenseLogisticsRead:
     await _require_money_read(session, current_user, account_id=account_id)
-    return await service.expense_logistics(
+    return await snapshot_service.expense_logistics(
         session,
         account_id=account_id,
         date_from=date_from,
@@ -239,7 +224,7 @@ async def money_card_detail(
     _: AuthUser = Depends(get_current_superuser),
     session: AsyncSession = Depends(get_db_session),
 ) -> MoneyCardDetailRead:
-    return await service.card_detail(
+    return await snapshot_service.card_detail(
         session,
         account_id=account_id,
         sku_id=sku_id,
@@ -292,7 +277,7 @@ async def money_article_detail(
     _: AuthUser = Depends(get_current_superuser),
     session: AsyncSession = Depends(get_db_session),
 ) -> MoneyArticleDetailRead:
-    return await service.article_detail(
+    return await snapshot_service.article_detail(
         session,
         account_id=account_id,
         nm_id=nm_id,

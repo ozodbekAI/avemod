@@ -134,16 +134,53 @@ def test_register_jobs_does_not_raise_and_registers_jobs() -> None:
     register_jobs(scheduler)
 
     job_ids = {job.id for job in scheduler.get_jobs()}
-    assert len(job_ids) == 26
+    assert len(job_ids) == 27
     assert "process-card-quality-runs" in job_ids
     assert "process-queued-stock-control-runs" in job_ids
     assert "dynamic-problem-nightly" in job_ids
+    assert "sync-promotions" in job_ids
     assert "sync-local-reputation" in job_ids
     assert "process-queued-claim-detection-runs" in job_ids
     assert "process-queued-grouping-runs" in job_ids
     assert "process-queued-photo-jobs" in job_ids
     assert "collect-experiment-metric-snapshots" in job_ids
     assert "process-due-experiment-evaluations" in job_ids
+
+    def cron_field(job_id: str, field_name: str) -> str:
+        job = scheduler.get_job(job_id)
+        assert job is not None
+        return next(
+            str(field) for field in job.trigger.fields if field.name == field_name
+        )
+
+    daily_jobs = {
+        "sync-orders",
+        "sync-sales",
+        "sync-stocks",
+        "sync-product-cards",
+        "sync-prices",
+        "sync-finance",
+        "sync-supplies",
+        "sync-ads",
+        "sync-promotions",
+        "sync-analytics",
+        "sync-tariffs",
+        "sync-documents",
+        "sync-local-reputation",
+        "reputation-auto-draft-local",
+        "refresh-marts",
+        "dynamic-problem-nightly",
+        "run-data-quality",
+        "refresh-money-snapshots",
+    }
+    for job_id in daily_jobs:
+        hour = cron_field(job_id, "hour")
+        minute = cron_field(job_id, "minute")
+        assert hour != "*"
+        assert "*/" not in hour
+        assert "," not in hour
+        assert "*/" not in minute
+        assert "," not in minute
 
 
 def test_dedupe_datetime_normalizes_to_canonical_utc_isoformat() -> None:
@@ -159,7 +196,9 @@ def test_dedupe_datetime_normalizes_to_canonical_utc_isoformat() -> None:
     assert dedupe == expected
 
 
-def test_orders_current_subquery_keeps_distinct_rows_for_same_srid_and_different_nm_id() -> None:
+def test_orders_current_subquery_keeps_distinct_rows_for_same_srid_and_different_nm_id() -> (
+    None
+):
     engine = create_engine("sqlite:///:memory:")
     WBOrder.__table__.create(engine)
     with engine.begin() as connection:
@@ -170,11 +209,15 @@ def test_orders_current_subquery_keeps_distinct_rows_for_same_srid_and_different
                     "id": 1,
                     "account_id": 1,
                     "date": datetime(2026, 5, 15, 10, 0, tzinfo=timezone.utc),
-                    "last_change_date": datetime(2026, 5, 15, 10, 5, tzinfo=timezone.utc),
+                    "last_change_date": datetime(
+                        2026, 5, 15, 10, 5, tzinfo=timezone.utc
+                    ),
                     "dedupe_key": _order_dedupe_key(
                         account_id=1,
                         srid="SRID-1",
-                        last_change_date=datetime(2026, 5, 15, 10, 5, tzinfo=timezone.utc),
+                        last_change_date=datetime(
+                            2026, 5, 15, 10, 5, tzinfo=timezone.utc
+                        ),
                         nm_id=1001,
                         barcode="111",
                     ),
@@ -186,11 +229,15 @@ def test_orders_current_subquery_keeps_distinct_rows_for_same_srid_and_different
                     "id": 2,
                     "account_id": 1,
                     "date": datetime(2026, 5, 15, 10, 1, tzinfo=timezone.utc),
-                    "last_change_date": datetime(2026, 5, 15, 10, 6, tzinfo=timezone.utc),
+                    "last_change_date": datetime(
+                        2026, 5, 15, 10, 6, tzinfo=timezone.utc
+                    ),
                     "dedupe_key": _order_dedupe_key(
                         account_id=1,
                         srid="SRID-1",
-                        last_change_date=datetime(2026, 5, 15, 10, 6, tzinfo=timezone.utc),
+                        last_change_date=datetime(
+                            2026, 5, 15, 10, 6, tzinfo=timezone.utc
+                        ),
                         nm_id=1002,
                         barcode="222",
                     ),
@@ -202,11 +249,15 @@ def test_orders_current_subquery_keeps_distinct_rows_for_same_srid_and_different
                     "id": 3,
                     "account_id": 1,
                     "date": datetime(2026, 5, 15, 10, 2, tzinfo=timezone.utc),
-                    "last_change_date": datetime(2026, 5, 15, 10, 7, tzinfo=timezone.utc),
+                    "last_change_date": datetime(
+                        2026, 5, 15, 10, 7, tzinfo=timezone.utc
+                    ),
                     "dedupe_key": _order_dedupe_key(
                         account_id=1,
                         srid="SRID-1",
-                        last_change_date=datetime(2026, 5, 15, 10, 7, tzinfo=timezone.utc),
+                        last_change_date=datetime(
+                            2026, 5, 15, 10, 7, tzinfo=timezone.utc
+                        ),
                         nm_id=1001,
                         barcode="111",
                     ),
@@ -216,11 +267,23 @@ def test_orders_current_subquery_keeps_distinct_rows_for_same_srid_and_different
                 },
             ],
         )
-        rows = connection.execute(
-            select(orders_current_subquery()).order_by("nm_id", "barcode")
-        ).mappings().all()
+        rows = (
+            connection.execute(
+                select(orders_current_subquery()).order_by("nm_id", "barcode")
+            )
+            .mappings()
+            .all()
+        )
 
-    assert [(row["nm_id"], row["barcode"], row["last_change_date"].hour, row["last_change_date"].minute) for row in rows] == [
+    assert [
+        (
+            row["nm_id"],
+            row["barcode"],
+            row["last_change_date"].hour,
+            row["last_change_date"].minute,
+        )
+        for row in rows
+    ] == [
         (1001, "111", 10, 7),
         (1002, "222", 10, 6),
     ]
@@ -237,11 +300,15 @@ def test_sales_current_subquery_keeps_distinct_rows_for_same_srid_and_barcode() 
                     "id": 1,
                     "account_id": 1,
                     "date": datetime(2026, 5, 15, 11, 0, tzinfo=timezone.utc),
-                    "last_change_date": datetime(2026, 5, 15, 11, 5, tzinfo=timezone.utc),
+                    "last_change_date": datetime(
+                        2026, 5, 15, 11, 5, tzinfo=timezone.utc
+                    ),
                     "dedupe_key": _sale_dedupe_key(
                         account_id=1,
                         srid="SRID-2",
-                        last_change_date=datetime(2026, 5, 15, 11, 5, tzinfo=timezone.utc),
+                        last_change_date=datetime(
+                            2026, 5, 15, 11, 5, tzinfo=timezone.utc
+                        ),
                         nm_id=2001,
                         barcode="AAA",
                     ),
@@ -253,11 +320,15 @@ def test_sales_current_subquery_keeps_distinct_rows_for_same_srid_and_barcode() 
                     "id": 2,
                     "account_id": 1,
                     "date": datetime(2026, 5, 15, 11, 1, tzinfo=timezone.utc),
-                    "last_change_date": datetime(2026, 5, 15, 11, 6, tzinfo=timezone.utc),
+                    "last_change_date": datetime(
+                        2026, 5, 15, 11, 6, tzinfo=timezone.utc
+                    ),
                     "dedupe_key": _sale_dedupe_key(
                         account_id=1,
                         srid="SRID-2",
-                        last_change_date=datetime(2026, 5, 15, 11, 6, tzinfo=timezone.utc),
+                        last_change_date=datetime(
+                            2026, 5, 15, 11, 6, tzinfo=timezone.utc
+                        ),
                         nm_id=2001,
                         barcode="AAA",
                     ),
@@ -269,11 +340,15 @@ def test_sales_current_subquery_keeps_distinct_rows_for_same_srid_and_barcode() 
                     "id": 3,
                     "account_id": 1,
                     "date": datetime(2026, 5, 15, 11, 2, tzinfo=timezone.utc),
-                    "last_change_date": datetime(2026, 5, 15, 11, 4, tzinfo=timezone.utc),
+                    "last_change_date": datetime(
+                        2026, 5, 15, 11, 4, tzinfo=timezone.utc
+                    ),
                     "dedupe_key": _sale_dedupe_key(
                         account_id=1,
                         srid="SRID-2",
-                        last_change_date=datetime(2026, 5, 15, 11, 4, tzinfo=timezone.utc),
+                        last_change_date=datetime(
+                            2026, 5, 15, 11, 4, tzinfo=timezone.utc
+                        ),
                         nm_id=2002,
                         barcode="BBB",
                     ),
@@ -283,17 +358,31 @@ def test_sales_current_subquery_keeps_distinct_rows_for_same_srid_and_barcode() 
                 },
             ],
         )
-        rows = connection.execute(
-            select(sales_current_subquery()).order_by("nm_id", "barcode")
-        ).mappings().all()
+        rows = (
+            connection.execute(
+                select(sales_current_subquery()).order_by("nm_id", "barcode")
+            )
+            .mappings()
+            .all()
+        )
 
-    assert [(row["nm_id"], row["barcode"], row["last_change_date"].hour, row["last_change_date"].minute) for row in rows] == [
+    assert [
+        (
+            row["nm_id"],
+            row["barcode"],
+            row["last_change_date"].hour,
+            row["last_change_date"].minute,
+        )
+        for row in rows
+    ] == [
         (2001, "AAA", 11, 6),
         (2002, "BBB", 11, 4),
     ]
 
 
-def test_orders_current_subquery_keeps_distinct_rows_for_same_line_and_different_order_ids() -> None:
+def test_orders_current_subquery_keeps_distinct_rows_for_same_line_and_different_order_ids() -> (
+    None
+):
     engine = create_engine("sqlite:///:memory:")
     WBOrder.__table__.create(engine)
     same_ts = datetime(2026, 5, 15, 10, 0, tzinfo=timezone.utc)
@@ -339,14 +428,18 @@ def test_orders_current_subquery_keeps_distinct_rows_for_same_line_and_different
                 },
             ],
         )
-        rows = connection.execute(
-            select(orders_current_subquery()).order_by("order_id")
-        ).mappings().all()
+        rows = (
+            connection.execute(select(orders_current_subquery()).order_by("order_id"))
+            .mappings()
+            .all()
+        )
 
     assert [row["order_id"] for row in rows] == [11, 22]
 
 
-def test_sales_current_subquery_keeps_distinct_rows_for_same_line_and_different_sale_ids() -> None:
+def test_sales_current_subquery_keeps_distinct_rows_for_same_line_and_different_sale_ids() -> (
+    None
+):
     engine = create_engine("sqlite:///:memory:")
     WBSale.__table__.create(engine)
     same_ts = datetime(2026, 5, 15, 11, 0, tzinfo=timezone.utc)
@@ -392,9 +485,11 @@ def test_sales_current_subquery_keeps_distinct_rows_for_same_line_and_different_
                 },
             ],
         )
-        rows = connection.execute(
-            select(sales_current_subquery()).order_by("sale_id")
-        ).mappings().all()
+        rows = (
+            connection.execute(select(sales_current_subquery()).order_by("sale_id"))
+            .mappings()
+            .all()
+        )
 
     assert [row["sale_id"] for row in rows] == ["SALE-11", "SALE-22"]
 
@@ -461,12 +556,19 @@ async def test_orders_sync_paginates_until_empty_and_uses_dedupe_key() -> None:
     service.dq_service = SimpleNamespace(resolve_issues=AsyncMock())
     service._open_issue = AsyncMock()
 
-    result = await service.run(SimpleNamespace(), account=SimpleNamespace(id=1), force_full=True)
+    result = await service.run(
+        SimpleNamespace(), account=SimpleNamespace(id=1), force_full=True
+    )
 
     assert service.client.fetch_orders.await_count == 3
-    assert service.repo.upsert_many.await_args.kwargs["conflict_fields"] == ["dedupe_key"]
+    assert service.repo.upsert_many.await_args.kwargs["conflict_fields"] == [
+        "dedupe_key"
+    ]
     assert len(service.repo.upsert_many.await_args.args[1]) == 3
-    assert service._set_cursor.await_args.kwargs["cursor_value"]["lastChangeDate"] == "2026-05-15T10:07:00+00:00"
+    assert (
+        service._set_cursor.await_args.kwargs["cursor_value"]["lastChangeDate"]
+        == "2026-05-15T10:07:00+00:00"
+    )
     assert result["pagesLoaded"] == 3
 
 
@@ -510,17 +612,26 @@ async def test_sales_sync_paginates_until_empty_and_uses_dedupe_key() -> None:
     service.dq_service = SimpleNamespace(resolve_issues=AsyncMock())
     service._open_issue = AsyncMock()
 
-    result = await service.run(SimpleNamespace(), account=SimpleNamespace(id=1), force_full=True)
+    result = await service.run(
+        SimpleNamespace(), account=SimpleNamespace(id=1), force_full=True
+    )
 
     assert service.client.fetch_sales.await_count == 3
-    assert service.repo.upsert_many.await_args.kwargs["conflict_fields"] == ["dedupe_key"]
+    assert service.repo.upsert_many.await_args.kwargs["conflict_fields"] == [
+        "dedupe_key"
+    ]
     assert len(service.repo.upsert_many.await_args.args[1]) == 3
-    assert service._set_cursor.await_args.kwargs["cursor_value"]["lastChangeDate"] == "2026-05-15T10:07:00+00:00"
+    assert (
+        service._set_cursor.await_args.kwargs["cursor_value"]["lastChangeDate"]
+        == "2026-05-15T10:07:00+00:00"
+    )
     assert result["pagesLoaded"] == 3
 
 
 @pytest.mark.asyncio
-async def test_orders_sync_boundary_replay_does_not_raise_stuck_issue_for_small_page() -> None:
+async def test_orders_sync_boundary_replay_does_not_raise_stuck_issue_for_small_page() -> (
+    None
+):
     service = OrdersSyncService()
     boundary = "2026-05-15T10:05:00+00:00"
     service.client = SimpleNamespace(
@@ -537,12 +648,16 @@ async def test_orders_sync_boundary_replay_does_not_raise_stuck_issue_for_small_
         )
     )
     service.repo = SimpleNamespace(upsert_many=AsyncMock())
-    service._get_cursor = AsyncMock(return_value=SimpleNamespace(cursor_value={"lastChangeDate": boundary}))
+    service._get_cursor = AsyncMock(
+        return_value=SimpleNamespace(cursor_value={"lastChangeDate": boundary})
+    )
     service._set_cursor = AsyncMock()
     service.dq_service = SimpleNamespace(resolve_issues=AsyncMock())
     service._open_issue = AsyncMock()
 
-    result = await service.run(SimpleNamespace(), account=SimpleNamespace(id=1), force_full=False)
+    result = await service.run(
+        SimpleNamespace(), account=SimpleNamespace(id=1), force_full=False
+    )
 
     assert result["pagesLoaded"] == 1
     service._open_issue.assert_not_called()
@@ -567,12 +682,16 @@ async def test_sales_sync_boundary_replay_raises_stuck_issue_near_limit() -> Non
         )
     )
     service.repo = SimpleNamespace(upsert_many=AsyncMock())
-    service._get_cursor = AsyncMock(return_value=SimpleNamespace(cursor_value={"lastChangeDate": boundary}))
+    service._get_cursor = AsyncMock(
+        return_value=SimpleNamespace(cursor_value={"lastChangeDate": boundary})
+    )
     service._set_cursor = AsyncMock()
     service.dq_service = SimpleNamespace(resolve_issues=AsyncMock())
     service._open_issue = AsyncMock()
 
-    result = await service.run(SimpleNamespace(), account=SimpleNamespace(id=1), force_full=False)
+    result = await service.run(
+        SimpleNamespace(), account=SimpleNamespace(id=1), force_full=False
+    )
 
     assert result["pagesLoaded"] == 1
     service._open_issue.assert_awaited_once()
@@ -589,7 +708,13 @@ def test_orders_table_supports_same_srid_same_last_change_for_different_skus() -
                 {
                     "id": 1,
                     "account_id": 1,
-                    "dedupe_key": _order_dedupe_key(account_id=1, srid="SAME", last_change_date=same_ts, nm_id=111, barcode="AAA"),
+                    "dedupe_key": _order_dedupe_key(
+                        account_id=1,
+                        srid="SAME",
+                        last_change_date=same_ts,
+                        nm_id=111,
+                        barcode="AAA",
+                    ),
                     "date": same_ts,
                     "last_change_date": same_ts,
                     "srid": "SAME",
@@ -599,7 +724,13 @@ def test_orders_table_supports_same_srid_same_last_change_for_different_skus() -
                 {
                     "id": 2,
                     "account_id": 1,
-                    "dedupe_key": _order_dedupe_key(account_id=1, srid="SAME", last_change_date=same_ts, nm_id=222, barcode="BBB"),
+                    "dedupe_key": _order_dedupe_key(
+                        account_id=1,
+                        srid="SAME",
+                        last_change_date=same_ts,
+                        nm_id=222,
+                        barcode="BBB",
+                    ),
                     "date": same_ts,
                     "last_change_date": same_ts,
                     "srid": "SAME",
@@ -608,7 +739,11 @@ def test_orders_table_supports_same_srid_same_last_change_for_different_skus() -
                 },
             ],
         )
-        rows = connection.execute(select(orders_current_subquery()).order_by("nm_id")).mappings().all()
+        rows = (
+            connection.execute(select(orders_current_subquery()).order_by("nm_id"))
+            .mappings()
+            .all()
+        )
 
     assert len(rows) == 2
 
@@ -624,7 +759,13 @@ def test_sales_table_supports_same_srid_same_last_change_for_different_skus() ->
                 {
                     "id": 1,
                     "account_id": 1,
-                    "dedupe_key": _sale_dedupe_key(account_id=1, srid="SAME", last_change_date=same_ts, nm_id=111, barcode="AAA"),
+                    "dedupe_key": _sale_dedupe_key(
+                        account_id=1,
+                        srid="SAME",
+                        last_change_date=same_ts,
+                        nm_id=111,
+                        barcode="AAA",
+                    ),
                     "date": same_ts,
                     "last_change_date": same_ts,
                     "srid": "SAME",
@@ -634,7 +775,13 @@ def test_sales_table_supports_same_srid_same_last_change_for_different_skus() ->
                 {
                     "id": 2,
                     "account_id": 1,
-                    "dedupe_key": _sale_dedupe_key(account_id=1, srid="SAME", last_change_date=same_ts, nm_id=222, barcode="BBB"),
+                    "dedupe_key": _sale_dedupe_key(
+                        account_id=1,
+                        srid="SAME",
+                        last_change_date=same_ts,
+                        nm_id=222,
+                        barcode="BBB",
+                    ),
                     "date": same_ts,
                     "last_change_date": same_ts,
                     "srid": "SAME",
@@ -643,12 +790,18 @@ def test_sales_table_supports_same_srid_same_last_change_for_different_skus() ->
                 },
             ],
         )
-        rows = connection.execute(select(sales_current_subquery()).order_by("nm_id")).mappings().all()
+        rows = (
+            connection.execute(select(sales_current_subquery()).order_by("nm_id"))
+            .mappings()
+            .all()
+        )
 
     assert len(rows) == 2
 
 
-def test_orders_table_supports_same_srid_same_last_change_same_sku_with_different_order_ids() -> None:
+def test_orders_table_supports_same_srid_same_last_change_same_sku_with_different_order_ids() -> (
+    None
+):
     engine = create_engine("sqlite:///:memory:")
     WBOrder.__table__.create(engine)
     same_ts = datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc)
@@ -694,12 +847,18 @@ def test_orders_table_supports_same_srid_same_last_change_same_sku_with_differen
                 },
             ],
         )
-        rows = connection.execute(select(WBOrder.__table__).order_by(WBOrder.order_id)).mappings().all()
+        rows = (
+            connection.execute(select(WBOrder.__table__).order_by(WBOrder.order_id))
+            .mappings()
+            .all()
+        )
 
     assert [row["order_id"] for row in rows] == [101, 202]
 
 
-def test_sales_table_supports_same_srid_same_last_change_same_sku_with_different_sale_ids() -> None:
+def test_sales_table_supports_same_srid_same_last_change_same_sku_with_different_sale_ids() -> (
+    None
+):
     engine = create_engine("sqlite:///:memory:")
     WBSale.__table__.create(engine)
     same_ts = datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc)
@@ -745,7 +904,11 @@ def test_sales_table_supports_same_srid_same_last_change_same_sku_with_different
                 },
             ],
         )
-        rows = connection.execute(select(WBSale.__table__).order_by(WBSale.sale_id)).mappings().all()
+        rows = (
+            connection.execute(select(WBSale.__table__).order_by(WBSale.sale_id))
+            .mappings()
+            .all()
+        )
 
     assert [row["sale_id"] for row in rows] == ["SALE-101", "SALE-202"]
 
@@ -815,8 +978,12 @@ async def test_ads_sync_uses_dedupe_key_conflicts_for_stats_and_clusters() -> No
 
     await service.run(session, account=SimpleNamespace(id=1))
 
-    assert service.stats.upsert_many.await_args.kwargs["conflict_fields"] == ["dedupe_key"]
-    assert service.cluster_stats.upsert_many.await_args.kwargs["conflict_fields"] == ["dedupe_key"]
+    assert service.stats.upsert_many.await_args.kwargs["conflict_fields"] == [
+        "dedupe_key"
+    ]
+    assert service.cluster_stats.upsert_many.await_args.kwargs["conflict_fields"] == [
+        "dedupe_key"
+    ]
 
 
 def test_ads_sync_stats_only_include_allowed_statuses() -> None:
@@ -872,7 +1039,9 @@ async def test_analytics_region_sales_uses_dedupe_key_conflict() -> None:
 
     await service.run(session, account=SimpleNamespace(id=1))
 
-    assert service.region_repo.upsert_many.await_args.kwargs["conflict_fields"] == ["dedupe_key"]
+    assert service.region_repo.upsert_many.await_args.kwargs["conflict_fields"] == [
+        "dedupe_key"
+    ]
 
 
 def test_analytics_batches_respect_wb_limit() -> None:
@@ -1105,19 +1274,29 @@ def test_product_cards_sync_resync_keeps_manual_cost_sku_id() -> None:
                 dedupe_key = row.get("dedupe_key") or compute_dedupe_key_from_mapping(
                     CoreSKU.__dedupe_fields__, row
                 )
-                existing = next((item for item in self.rows if item.dedupe_key == dedupe_key), None)
+                existing = next(
+                    (item for item in self.rows if item.dedupe_key == dedupe_key), None
+                )
                 if existing is None:
-                    self.rows.append(SimpleNamespace(id=self.next_id, dedupe_key=dedupe_key, **row))
+                    self.rows.append(
+                        SimpleNamespace(id=self.next_id, dedupe_key=dedupe_key, **row)
+                    )
                     self.next_id += 1
                 else:
                     for key, value in row.items():
                         setattr(existing, key, value)
                     existing.dedupe_key = dedupe_key
 
-        async def archive_missing_for_nm(self, _session, *, account_id, nm_id, active_dedupe_keys):
+        async def archive_missing_for_nm(
+            self, _session, *, account_id, nm_id, active_dedupe_keys
+        ):
             for row in self.rows:
                 if row.account_id == account_id and row.nm_id == nm_id:
-                    row.is_active = row.dedupe_key in active_dedupe_keys if active_dedupe_keys else False
+                    row.is_active = (
+                        row.dedupe_key in active_dedupe_keys
+                        if active_dedupe_keys
+                        else False
+                    )
 
     service.core_skus = _FakeCoreSKURepo([existing_row])
     desired_rows = [
@@ -1181,10 +1360,16 @@ def test_product_cards_sync_archives_stale_rows_without_deleting_them() -> None:
         async def upsert_many(self, _session, rows, *, conflict_fields):
             assert conflict_fields == ["dedupe_key"]
 
-        async def archive_missing_for_nm(self, _session, *, account_id, nm_id, active_dedupe_keys):
+        async def archive_missing_for_nm(
+            self, _session, *, account_id, nm_id, active_dedupe_keys
+        ):
             for row in self.rows:
                 if row.account_id == account_id and row.nm_id == nm_id:
-                    row.is_active = row.dedupe_key in active_dedupe_keys if active_dedupe_keys else False
+                    row.is_active = (
+                        row.dedupe_key in active_dedupe_keys
+                        if active_dedupe_keys
+                        else False
+                    )
 
     service.core_skus = _FakeCoreSKURepo([active_row, stale_row])
     desired_rows = [
@@ -1225,7 +1410,9 @@ def test_product_cards_sync_archives_stale_rows_without_deleting_them() -> None:
 
 
 @pytest.mark.asyncio
-async def test_product_cards_sync_relinks_manual_cost_from_inactive_sku_to_active_sku() -> None:
+async def test_product_cards_sync_relinks_manual_cost_from_inactive_sku_to_active_sku() -> (
+    None
+):
     engine = create_engine("sqlite:///:memory:")
     WBAccount.__table__.create(engine)
     CoreSKU.__table__.create(engine)
@@ -1335,7 +1522,9 @@ async def test_product_cards_sync_relinks_manual_cost_from_inactive_sku_to_activ
             nm_id=1001,
             vendor_codes={"SKU-1"},
         )
-        updated_cost = sync_session.execute(select(ManualCost).where(ManualCost.id == 100)).scalar_one()
+        updated_cost = sync_session.execute(
+            select(ManualCost).where(ManualCost.id == 100)
+        ).scalar_one()
 
     assert metrics["relinked"] == 1
     assert updated_cost.sku_id == 11
@@ -1403,7 +1592,9 @@ async def test_product_cards_sync_uses_cursor_total_and_persists_last_cursor() -
                             brand="Brand",
                             subject_id=10,
                             subject_name="Outerwear",
-                            updated_at_wb=datetime(2026, 5, 16, 10, 0, tzinfo=timezone.utc),
+                            updated_at_wb=datetime(
+                                2026, 5, 16, 10, 0, tzinfo=timezone.utc
+                            ),
                         )
                         for nm_id in range(1, 101)
                     ]
@@ -1419,7 +1610,9 @@ async def test_product_cards_sync_uses_cursor_total_and_persists_last_cursor() -
                             brand="Brand",
                             subject_id=10,
                             subject_name="Outerwear",
-                            updated_at_wb=datetime(2026, 5, 16, 11, 0, tzinfo=timezone.utc),
+                            updated_at_wb=datetime(
+                                2026, 5, 16, 11, 0, tzinfo=timezone.utc
+                            ),
                         )
                         for nm_id in range(101, 106)
                     ]
@@ -1460,12 +1653,16 @@ async def test_mart_sales_loader_uses_event_date_not_last_change_date() -> None:
                     "dedupe_key": _sale_dedupe_key(
                         account_id=1,
                         srid="SALE-1",
-                        last_change_date=datetime(2026, 5, 11, 9, 0, tzinfo=timezone.utc),
+                        last_change_date=datetime(
+                            2026, 5, 11, 9, 0, tzinfo=timezone.utc
+                        ),
                         nm_id=1001,
                         barcode="111",
                     ),
                     "date": datetime(2026, 5, 10, 10, 0, tzinfo=timezone.utc),
-                    "last_change_date": datetime(2026, 5, 11, 9, 0, tzinfo=timezone.utc),
+                    "last_change_date": datetime(
+                        2026, 5, 11, 9, 0, tzinfo=timezone.utc
+                    ),
                     "srid": "SALE-1",
                     "nm_id": 1001,
                     "barcode": "111",
@@ -1505,12 +1702,16 @@ async def test_mart_orders_loader_uses_event_date_not_last_change_date() -> None
                     "dedupe_key": _order_dedupe_key(
                         account_id=1,
                         srid="ORDER-1",
-                        last_change_date=datetime(2026, 5, 11, 9, 0, tzinfo=timezone.utc),
+                        last_change_date=datetime(
+                            2026, 5, 11, 9, 0, tzinfo=timezone.utc
+                        ),
                         nm_id=1001,
                         barcode="111",
                     ),
                     "date": datetime(2026, 5, 10, 10, 0, tzinfo=timezone.utc),
-                    "last_change_date": datetime(2026, 5, 11, 9, 0, tzinfo=timezone.utc),
+                    "last_change_date": datetime(
+                        2026, 5, 11, 9, 0, tzinfo=timezone.utc
+                    ),
                     "srid": "ORDER-1",
                     "nm_id": 1001,
                     "barcode": "111",
@@ -1532,7 +1733,9 @@ async def test_mart_orders_loader_uses_event_date_not_last_change_date() -> None
 
 
 @pytest.mark.asyncio
-async def test_mart_sales_loader_does_not_fallback_to_last_change_date_when_event_date_is_missing() -> None:
+async def test_mart_sales_loader_does_not_fallback_to_last_change_date_when_event_date_is_missing() -> (
+    None
+):
     engine = create_engine("sqlite:///:memory:")
     WBAccount.__table__.create(engine)
     WBSale.__table__.create(engine)
@@ -1550,12 +1753,16 @@ async def test_mart_sales_loader_does_not_fallback_to_last_change_date_when_even
                     "dedupe_key": _sale_dedupe_key(
                         account_id=1,
                         srid="SALE-NULL-DATE",
-                        last_change_date=datetime(2026, 5, 10, 9, 0, tzinfo=timezone.utc),
+                        last_change_date=datetime(
+                            2026, 5, 10, 9, 0, tzinfo=timezone.utc
+                        ),
                         nm_id=1001,
                         barcode="111",
                     ),
                     "date": None,
-                    "last_change_date": datetime(2026, 5, 10, 9, 0, tzinfo=timezone.utc),
+                    "last_change_date": datetime(
+                        2026, 5, 10, 9, 0, tzinfo=timezone.utc
+                    ),
                     "srid": "SALE-NULL-DATE",
                     "nm_id": 1001,
                     "barcode": "111",
@@ -1576,7 +1783,9 @@ async def test_mart_sales_loader_does_not_fallback_to_last_change_date_when_even
 
 
 @pytest.mark.asyncio
-async def test_mart_orders_loader_does_not_fallback_to_last_change_date_when_event_date_is_missing() -> None:
+async def test_mart_orders_loader_does_not_fallback_to_last_change_date_when_event_date_is_missing() -> (
+    None
+):
     engine = create_engine("sqlite:///:memory:")
     WBAccount.__table__.create(engine)
     WBOrder.__table__.create(engine)
@@ -1594,12 +1803,16 @@ async def test_mart_orders_loader_does_not_fallback_to_last_change_date_when_eve
                     "dedupe_key": _order_dedupe_key(
                         account_id=1,
                         srid="ORDER-NULL-DATE",
-                        last_change_date=datetime(2026, 5, 10, 9, 0, tzinfo=timezone.utc),
+                        last_change_date=datetime(
+                            2026, 5, 10, 9, 0, tzinfo=timezone.utc
+                        ),
                         nm_id=1001,
                         barcode="111",
                     ),
                     "date": None,
-                    "last_change_date": datetime(2026, 5, 10, 9, 0, tzinfo=timezone.utc),
+                    "last_change_date": datetime(
+                        2026, 5, 10, 9, 0, tzinfo=timezone.utc
+                    ),
                     "srid": "ORDER-NULL-DATE",
                     "nm_id": 1001,
                     "barcode": "111",
@@ -1620,10 +1833,13 @@ async def test_mart_orders_loader_does_not_fallback_to_last_change_date_when_eve
 
 
 def test_http_rate_limit_sleep_prefers_retry_header() -> None:
-    assert WBHTTPClient._rate_limit_sleep_seconds(
-        {"x-ratelimit-retry": "20"},
-        attempt_count=2,
-    ) == 20
+    assert (
+        WBHTTPClient._rate_limit_sleep_seconds(
+            {"x-ratelimit-retry": "20"},
+            attempt_count=2,
+        )
+        == 20
+    )
 
 
 def test_http_rate_limit_sleep_falls_back_without_headers() -> None:
@@ -1653,13 +1869,17 @@ async def test_raw_response_service_stores_response_headers() -> None:
         loaded_at=datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc),
     )
 
-    assert service.repo.create.await_args.kwargs["response_headers"] == {"x-ratelimit-retry": "20"}
+    assert service.repo.create.await_args.kwargs["response_headers"] == {
+        "x-ratelimit-retry": "20"
+    }
 
 
 @pytest.mark.asyncio
 async def test_domain_sync_base_tracks_rate_limit_runtime_details(monkeypatch) -> None:
     service = OrdersSyncService()
-    service.account_service = SimpleNamespace(get_decrypted_token=AsyncMock(return_value="token"))
+    service.account_service = SimpleNamespace(
+        get_decrypted_token=AsyncMock(return_value="token")
+    )
     service.raw_service = SimpleNamespace(store=AsyncMock())
 
     async def _fake_request_json(self, _method, _url, *, params=None, json_body=None):
@@ -1675,7 +1895,9 @@ async def test_domain_sync_base_tracks_rate_limit_runtime_details(monkeypatch) -
             last_rate_limit_retry_after=20.0,
         )
 
-    monkeypatch.setattr("app.core.wb_sync.WBHTTPClient.request_json", _fake_request_json)
+    monkeypatch.setattr(
+        "app.core.wb_sync.WBHTTPClient.request_json", _fake_request_json
+    )
 
     payload = await service._request_json(
         SimpleNamespace(),
@@ -1692,7 +1914,9 @@ async def test_domain_sync_base_tracks_rate_limit_runtime_details(monkeypatch) -
 
 
 @pytest.mark.asyncio
-async def test_refresh_account_expense_daily_collects_unallocated_finance_expenses() -> None:
+async def test_refresh_account_expense_daily_collects_unallocated_finance_expenses() -> (
+    None
+):
     service = MartService()
     service.account_expense_repo = SimpleNamespace(upsert_many=AsyncMock())
     session = SimpleNamespace(

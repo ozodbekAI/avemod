@@ -38,12 +38,12 @@ from app.schemas.control_tower import (
 from app.schemas.meta import EnumOption, EnumOptionListResponse
 from app.services.auth import get_current_superuser
 from app.services.control_tower import ControlTowerService
-from app.services.money_management import MoneyManagementService
+from app.services.money_snapshots import MoneyEndpointSnapshotService
 from app.services.operator_snapshots import OperatorEndpointSnapshotService
 
 router = APIRouter(tags=["control-tower"])
 service = ControlTowerService()
-money_service = MoneyManagementService()
+money_snapshot_service = MoneyEndpointSnapshotService()
 snapshot_service = OperatorEndpointSnapshotService()
 snapshot_service.control_tower = service
 logger = logging.getLogger(__name__)
@@ -79,7 +79,7 @@ async def owner_ai_summary(
         date_from=date_from,
         date_to=date_to,
     )
-    summary = await money_service.summary(
+    summary = await money_snapshot_service.summary(
         session,
         account_id=account_id,
         date_from=date_from,

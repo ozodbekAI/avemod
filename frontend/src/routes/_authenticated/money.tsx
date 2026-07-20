@@ -68,6 +68,10 @@ import {
   categoryLabel,
 } from "@/lib/queries/expenses";
 import { moneySummaryQueryOptions } from "@/lib/queries/money-summary";
+import {
+  fetchPortalDataReadiness,
+  type PortalDataReadinessRead,
+} from "@/lib/portal";
 import { useStrictFinal } from "@/lib/queries/strict-final";
 import { normalizeTrust } from "@/lib/trust";
 import { cn } from "@/lib/utils";
@@ -222,6 +226,16 @@ function MoneyPage() {
       dateTo: range.to,
     }),
   );
+  const readinessQ = useQuery<PortalDataReadinessRead>({
+    queryKey: ["money-data-readiness", activeId, range.from, range.to],
+    enabled,
+    queryFn: () =>
+      fetchPortalDataReadiness(activeId, {
+        dateFrom: range.from,
+        dateTo: range.to,
+      }),
+    staleTime: 2 * 60 * 1000,
+  });
 
   const s = sumQ.data;
   const k = s?.kpis as any;
@@ -248,6 +262,19 @@ function MoneyPage() {
     pickNum(quality, "finance_difference_amount") ??
     pickNum(financeReconciliation, "difference_amount") ??
     pickNum(revenueSources, "difference_amount");
+  const financeConfirmedRevenue =
+    pickNum(k, "finance_confirmed_revenue") ??
+    pickNum(financeReconciliation, "finance_confirmed_revenue") ??
+    pickNum(revenueSources, "finance_confirmed_revenue");
+  const financeAvailable = isFinanceReportAvailable(
+    financeStatus,
+    financeConfirmedRevenue,
+    financeReconciliation,
+  );
+  const financeRecommendation =
+    pickStr(financeReconciliation, "recommendation") ??
+    pickStr(revenueSources, "mismatch_reason") ??
+    null;
   const supplierCoverage = pickNum(
     k,
     "supplier_confirmed_revenue_coverage_percent",
@@ -328,6 +355,10 @@ function MoneyPage() {
     if (wb == null) return null;
     return unallocated == null ? wb : Math.max(0, wb - unallocated);
   }, [k]);
+  const visibleDirectWbExpenses =
+    financeAvailable || positive(directWbExpenses) > 0
+      ? directWbExpenses
+      : null;
 
   const financeOperationalRevenue =
     pickNum(financeReconciliation, "operational_revenue") ??
@@ -390,6 +421,35 @@ function MoneyPage() {
     const additionalIncome =
       pickNum(k, "additional_income") ??
       pickNum(cascadeQ.data?.cascade?.totals, "additional_income");
+    const wbExpenseDetail = expenseDetailFromGroup(
+      "WB расходы",
+      visibleDirectWbExpenses,
+      cascadeGroups,
+      breakdownItems,
+      ["wb_direct_expenses", "wb_expenses", "other_wb_expenses"],
+      "/expenses",
+    );
+    if (!financeAvailable && positive(directWbExpenses) === 0) {
+      wbExpenseDetail.tone = "warn";
+      wbExpenseDetail.subtitle = "нет закрытого финансового отчёта WB";
+      wbExpenseDetail.formula =
+        "WB-расходы придут из финансового отчёта WB. Пока отчёт не загружен, ноль не считается подтвержденным расходом.";
+      wbExpenseDetail.rows = [
+        {
+          label: "Статус финансового отчёта",
+          value: financeStatus ?? "not_available",
+          op: "info",
+          tone: "warn",
+        },
+        {
+          label: "Что сделать",
+          value: financeRecommendation ?? "дождаться или загрузить отчёт WB",
+          op: "info",
+          tone: "warn",
+        },
+        ...(wbExpenseDetail.rows ?? []),
+      ];
+    }
     return [
       {
         key: "revenue",
@@ -417,15 +477,18 @@ function MoneyPage() {
             },
             {
               label: "Подтверждено финансами WB",
-              value: k?.finance_confirmed_revenue ?? null,
+              value: financeAvailable ? financeConfirmedRevenue : null,
               op: "info",
+              note: financeAvailable ? null : financeStatusLabel(financeStatus),
             },
             {
               label: "Разница финансы WB / операции",
-              value: financeDiffAmount,
+              value: financeAvailable ? financeDiffAmount : null,
               op: "info",
               note:
-                financeDiffPct != null ? formatPercent(financeDiffPct) : null,
+                financeAvailable && financeDiffPct != null
+                  ? formatPercent(financeDiffPct)
+                  : financeRecommendation,
             },
           ],
           sources: ["/money/summary", "/finance/reports"],
@@ -434,18 +497,11 @@ function MoneyPage() {
       {
         key: "wb",
         label: "WB расходы",
-        value: directWbExpenses,
+        value: visibleDirectWbExpenses,
         icon: ReceiptText,
-        tone: "bad" as Tone,
+        tone: financeAvailable ? ("bad" as Tone) : ("warn" as Tone),
         sign: "-",
-        detail: expenseDetailFromGroup(
-          "WB расходы",
-          directWbExpenses,
-          cascadeGroups,
-          breakdownItems,
-          ["wb_direct_expenses", "wb_expenses", "other_wb_expenses"],
-          "/expenses",
-        ),
+        detail: wbExpenseDetail,
       },
       {
         key: "cogs",
@@ -558,9 +614,14 @@ function MoneyPage() {
     k,
     cogs,
     directWbExpenses,
+    visibleDirectWbExpenses,
     sellerOtherExpense,
     supplierCoverage,
     financeOperationalRevenue,
+    financeAvailable,
+    financeConfirmedRevenue,
+    financeStatus,
+    financeRecommendation,
     financeDiffAmount,
     financeDiffPct,
     financialFinal,
@@ -721,18 +782,21 @@ function MoneyPage() {
         activeId={activeId}
         rightSlot={
           <MoneyTrustChipStrip
-            hasConfirmedFinance={k?.finance_confirmed_revenue != null}
+            hasConfirmedFinance={financeAvailable}
             hasProvisional={
               k?.revenue != null || k?.net_profit_after_ads != null
             }
             hasEstimate={k?.stock_value != null || k?.overstock_value != null}
             hasMissing={
-              k?.finance_confirmed_revenue == null ||
+              !financeAvailable ||
               k?.stock_value == null ||
-              k?.cash_on_wb == null
+              k?.cash_on_wb == null ||
+              (finalProfitBlockers ?? 0) > 0
             }
-            hasOpportunity={financeBlockers.length > 0}
-            hasTestOnly={false}
+            hasOpportunity={
+              financeBlockers.length > 0 || (finalProfitBlockers ?? 0) > 0
+            }
+            hasTestOnly={normalizeTrust(s).trustState === "test_only"}
           />
         }
       />
@@ -762,19 +826,42 @@ function MoneyPage() {
             financialFinal={financialFinal}
             financeStatus={financeStatus}
             financeDiffPct={financeDiffPct}
+            financeDiffAmount={financeDiffAmount}
+            financeConfirmedRevenue={financeConfirmedRevenue}
+            financeAvailable={financeAvailable}
+            financeRecommendation={financeRecommendation}
             supplierCoverage={supplierCoverage}
             finalProfitBlockers={finalProfitBlockers}
             openIssues={openIssues}
             onOpen={setDetail}
           />
 
+          <MoneyDataReadinessNotice
+            readiness={readinessQ.data}
+            blockersData={blockersQ.data}
+            financialFinal={financialFinal}
+            financeAvailable={financeAvailable}
+            financeStatus={financeStatus}
+            financeRecommendation={financeRecommendation}
+            finalProfitBlockers={finalProfitBlockers}
+            openIssues={openIssues}
+            onRefresh={() => {
+              readinessQ.refetch();
+              blockersQ.refetch();
+              sumQ.refetch();
+            }}
+          />
+
           <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_400px] 2xl:grid-cols-[minmax(0,1fr)_420px]">
             <div className="min-w-0 space-y-3">
               <ProfitFlowPanel
                 revenue={k?.revenue ?? null}
-                financeConfirmedRevenue={k?.finance_confirmed_revenue ?? null}
+                financeConfirmedRevenue={financeConfirmedRevenue}
                 financeDiffAmount={financeDiffAmount}
                 financeDiffPct={financeDiffPct}
+                financeStatus={financeStatus}
+                financeAvailable={financeAvailable}
+                financeRecommendation={financeRecommendation}
                 netProfit={netProfitValue}
                 ownerProfit={ownerProfit}
                 ownerMargin={ownerMargin}
@@ -828,6 +915,9 @@ function MoneyPage() {
                     onOpen={setDetail}
                     dateFrom={range.from}
                     dateTo={range.to}
+                    financeAvailable={financeAvailable}
+                    financeStatus={financeStatus}
+                    financeRecommendation={financeRecommendation}
                   />
                 </TabsContent>
                 <TabsContent value="positions" className="mt-0">
@@ -874,6 +964,9 @@ function MoneyPage() {
                 summary={
                   breakdownQ.data ?? (s as any)?.expense_breakdown ?? null
                 }
+                financeAvailable={financeAvailable}
+                financeStatus={financeStatus}
+                financeRecommendation={financeRecommendation}
                 onOpen={setDetail}
               />
             </div>
@@ -979,10 +1072,151 @@ function MoneyDeskHeader({
   );
 }
 
+function MoneyDataReadinessNotice({
+  readiness,
+  blockersData,
+  financialFinal,
+  financeAvailable,
+  financeStatus,
+  financeRecommendation,
+  finalProfitBlockers,
+  openIssues,
+  onRefresh,
+}: {
+  readiness?: PortalDataReadinessRead | null;
+  blockersData?: any;
+  financialFinal: boolean | null;
+  financeAvailable: boolean;
+  financeStatus: string | null;
+  financeRecommendation: string | null;
+  finalProfitBlockers: number | null;
+  openIssues: number | null;
+  onRefresh: () => void;
+}) {
+  const problemSources = readinessProblemSources(readiness);
+  const readinessWarnings = Array.isArray(readiness?.warnings)
+    ? readiness.warnings
+    : [];
+  const blockers = Array.isArray(readiness?.blockers)
+    ? readiness.blockers
+    : Array.isArray(blockersData?.blockers)
+      ? blockersData.blockers
+      : [];
+  const hasBlockers =
+    (finalProfitBlockers ?? 0) > 0 ||
+    blockersData?.overall_state === "data_blocked" ||
+    blockers.length > 0;
+  const shouldShow =
+    financialFinal === false ||
+    !financeAvailable ||
+    hasBlockers ||
+    problemSources.length > 0 ||
+    readinessWarnings.length > 0;
+
+  if (!shouldShow) return null;
+
+  const criticalSource = problemSources.find((source: any) =>
+    ["error", "missing", "failed"].includes(
+      String(source?.status ?? "").toLowerCase(),
+    ),
+  );
+  const tone: Tone =
+    hasBlockers || criticalSource || !financeAvailable ? "bad" : "warn";
+  const title =
+    readString(readiness?.final_profit_status?.title) ||
+    readString(blockersData?.overall_message) ||
+    (!financeAvailable
+      ? "Финансовый отчёт WB не подтверждает выбранный период"
+      : "Финальный результат ещё не закрыт");
+  const message =
+    readString(readiness?.final_profit_status?.message) ||
+    financeRecommendation ||
+    readString(blockersData?.data_quality_summary?.message) ||
+    "Показываем операционные деньги, но финальная прибыль требует проверки источников.";
+  const firstTarget =
+    readString(blockers?.[0]?.next_screen_path) ||
+    readString(blockers?.[0]?.target_href) ||
+    readString(problemSources?.[0]?.target_href) ||
+    "/data-fix";
+
+  return (
+    <section
+      className={cn(
+        "rounded-lg border px-3 py-3 sm:px-4",
+        tone === "bad"
+          ? "border-rose-500/35 bg-rose-500/5"
+          : "border-amber-500/35 bg-amber-500/5",
+      )}
+    >
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 gap-3">
+          <span
+            className={cn(
+              "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
+              toneSoft(tone),
+            )}
+          >
+            <AlertTriangle className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">{title}</div>
+            <div className="mt-1 max-w-4xl text-xs leading-relaxed text-muted-foreground">
+              {message}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {!financeAvailable ? (
+                <Badge
+                  variant="outline"
+                  className="border-amber-500/40 text-amber-700"
+                >
+                  WB финансы: {financeStatusLabel(financeStatus)}
+                </Badge>
+              ) : null}
+              {(finalProfitBlockers ?? 0) > 0 ? (
+                <Badge variant="outline">
+                  блокеров финала: {finalProfitBlockers}
+                </Badge>
+              ) : null}
+              {(openIssues ?? 0) > 0 ? (
+                <Badge variant="outline">data issues: {openIssues}</Badge>
+              ) : null}
+              {problemSources.slice(0, 4).map((source: any) => (
+                <Badge
+                  key={`${source.source_code ?? source.title}`}
+                  variant="outline"
+                  className={readinessSourceTone(source?.status)}
+                >
+                  {readinessSourceLabel(source)}:{" "}
+                  {readinessSourceStatusLabel(source?.status)}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button size="sm" variant="outline" onClick={onRefresh}>
+            <RefreshCw className="h-3.5 w-3.5" />
+            Обновить
+          </Button>
+          <Button asChild size="sm">
+            <Link to={firstTarget as any}>
+              Исправить данные <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ReliabilityStrip({
   financialFinal,
   financeStatus,
   financeDiffPct,
+  financeDiffAmount,
+  financeConfirmedRevenue,
+  financeAvailable,
+  financeRecommendation,
   supplierCoverage,
   finalProfitBlockers,
   openIssues,
@@ -991,11 +1225,25 @@ function ReliabilityStrip({
   financialFinal: boolean | null;
   financeStatus: string | null;
   financeDiffPct: number | null;
+  financeDiffAmount: number | null;
+  financeConfirmedRevenue: number | null;
+  financeAvailable: boolean;
+  financeRecommendation: string | null;
   supplierCoverage: number | null;
   finalProfitBlockers: number | null;
   openIssues: number | null;
   onOpen: (d: Drilldown) => void;
 }) {
+  const financeDisplay = financeAvailable
+    ? financeDiffPct == null
+      ? "—"
+      : formatPercent(financeDiffPct)
+    : financeStatusLabel(financeStatus);
+  const financeTone: Tone = !financeAvailable
+    ? "warn"
+    : financeStatus === "critical_mismatch" || Math.abs(financeDiffPct ?? 0) > 3
+      ? "bad"
+      : "good";
   const items = [
     {
       label: "Финал",
@@ -1023,26 +1271,48 @@ function ReliabilityStrip({
     },
     {
       label: "Сверка WB",
-      value: financeDiffPct == null ? "—" : formatPercent(financeDiffPct),
-      tone:
-        financeStatus === "critical_mismatch" ||
-        Math.abs(financeDiffPct ?? 0) > 3
-          ? "bad"
-          : "good",
+      value: financeDisplay,
+      tone: financeTone,
       icon: FileText,
       detail: {
         title: "Сверка с финансовым отчетом WB",
-        value:
-          financeDiffPct == null ? null : `${formatPercent(financeDiffPct)}`,
+        value: financeAvailable
+          ? financeDiffPct == null
+            ? null
+            : `${formatPercent(financeDiffPct)}`
+          : (financeStatus ?? "not_available"),
+        tone: financeTone,
         rows: [
-          { label: "Статус", value: financeStatus ?? "—", op: "info" },
           {
-            label: "Расхождение",
-            value:
-              financeDiffPct == null
-                ? null
-                : `${formatPercent(financeDiffPct)}`,
+            label: "Статус",
+            value: financeStatus ?? "not_available",
             op: "info",
+            tone: financeTone,
+          },
+          {
+            label: "Подтверждено WB",
+            value: financeAvailable ? financeConfirmedRevenue : null,
+            op: "info",
+            note: financeAvailable ? null : "нет закрытого отчёта",
+            tone: financeAvailable ? "neutral" : "warn",
+          },
+          {
+            label: "Разница",
+            value: financeAvailable ? financeDiffAmount : null,
+            op: "info",
+            note:
+              financeAvailable && financeDiffPct != null
+                ? formatPercent(financeDiffPct)
+                : financeRecommendation,
+            tone: financeTone,
+          },
+          {
+            value:
+              financeRecommendation ??
+              "Сравнение станет полным после закрытия отчёта WB.",
+            label: "Рекомендация",
+            op: "info",
+            tone: !financeAvailable ? "warn" : "neutral",
           },
         ],
         cta: { label: "Открыть финансы", to: "/finance" },
@@ -1146,6 +1416,9 @@ function ProfitFlowPanel({
   financeConfirmedRevenue,
   financeDiffAmount,
   financeDiffPct,
+  financeStatus,
+  financeAvailable,
+  financeRecommendation,
   netProfit,
   ownerProfit,
   ownerMargin,
@@ -1159,6 +1432,9 @@ function ProfitFlowPanel({
   financeConfirmedRevenue: number | null;
   financeDiffAmount: number | null;
   financeDiffPct: number | null;
+  financeStatus: string | null;
+  financeAvailable: boolean;
+  financeRecommendation: string | null;
   netProfit: number | null;
   ownerProfit: number | null;
   ownerMargin: number | null;
@@ -1173,9 +1449,16 @@ function ProfitFlowPanel({
     .reduce((sum, r) => sum + positive(r.value), 0);
   const base = Math.max(positive(revenue), expenseTotal, 1);
   const resultTone: Tone =
-    ownerProfit == null ? "neutral" : ownerProfit >= 0 ? "good" : "bad";
-  const reconciliationTone: Tone =
-    financeDiffPct == null
+    ownerProfit == null
+      ? "neutral"
+      : ownerProfit < 0
+        ? "bad"
+        : isProvisional
+          ? "warn"
+          : "good";
+  const reconciliationTone: Tone = !financeAvailable
+    ? "warn"
+    : financeDiffPct == null
       ? "neutral"
       : Math.abs(financeDiffPct) > 3
         ? "bad"
@@ -1188,9 +1471,12 @@ function ProfitFlowPanel({
   const controlRows = [
     {
       label: "Сверка WB",
-      value: formatPercent(financeDiffPct),
-      note:
-        financeDiffAmount == null
+      value: financeAvailable
+        ? formatPercent(financeDiffPct)
+        : financeStatusLabel(financeStatus),
+      note: !financeAvailable
+        ? (financeRecommendation ?? "финансовый отчёт WB не закрыт")
+        : financeDiffAmount == null
           ? "нет данных"
           : `разница ${moneyCompactAbs(financeDiffAmount)}`,
       tone: reconciliationTone,
@@ -1215,16 +1501,16 @@ function ProfitFlowPanel({
   return (
     <Card className="overflow-hidden">
       <CardContent className="p-0">
-        <div className="grid items-start gap-0 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="grid items-start gap-0 2xl:grid-cols-[minmax(0,1fr)_340px]">
           <div className="p-4 sm:p-5">
-            <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-start">
-              <div>
+            <div className="mb-4 flex flex-col gap-3 2xl:flex-row 2xl:items-start 2xl:justify-between">
+              <div className="min-w-0">
                 <h2 className="text-base font-semibold">P&L за период</h2>
                 <div className="text-xs text-muted-foreground">
                   Формула по строкам, каждая сумма открывается.
                 </div>
               </div>
-              <div className="rounded-md border bg-background/80 px-3 py-2">
+              <div className="w-full rounded-md border bg-background/80 px-3 py-2 2xl:w-[260px] 2xl:shrink-0">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-muted-foreground">
                     Итог владельца
@@ -1271,7 +1557,7 @@ function ProfitFlowPanel({
                     key={row.key}
                     type="button"
                     onClick={() => onOpen(row.detail)}
-                    className="group grid w-full grid-cols-[minmax(120px,210px)_minmax(90px,1fr)_auto] items-center gap-3 rounded-md px-2 py-1.5 text-left transition hover:bg-accent/45"
+                    className="group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 rounded-md px-2 py-2 text-left transition hover:bg-accent/45 sm:grid-cols-[minmax(120px,210px)_minmax(90px,1fr)_auto] sm:py-1.5"
                   >
                     <div className="flex min-w-0 items-center gap-2">
                       <span
@@ -1286,7 +1572,7 @@ function ProfitFlowPanel({
                         {row.label}
                       </span>
                     </div>
-                    <div className="min-w-[80px]">
+                    <div className="col-span-2 min-w-0 sm:col-span-1 sm:min-w-[80px]">
                       <div className="h-2 overflow-hidden rounded-full bg-muted">
                         <div
                           className={cn(
@@ -1303,7 +1589,7 @@ function ProfitFlowPanel({
                     </div>
                     <div
                       className={cn(
-                        "flex items-center gap-1 text-right text-sm font-semibold tabular-nums",
+                        "flex shrink-0 items-center justify-end gap-1 text-right text-sm font-semibold tabular-nums",
                         row.sign === "-" && value != null
                           ? "text-rose-600"
                           : row.sign === "+" && value != null
@@ -1326,7 +1612,7 @@ function ProfitFlowPanel({
 
           <div
             className={cn(
-              "border-t p-4 sm:p-5 xl:border-l xl:border-t-0",
+              "border-t p-4 sm:p-5 2xl:border-l 2xl:border-t-0",
               tonePanel(resultTone),
             )}
           >
@@ -1442,7 +1728,7 @@ function AccountingMetric({
         {value}
       </div>
       {note && note !== "—" ? (
-        <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+        <div className="mt-0.5 break-words text-[11px] leading-tight text-muted-foreground">
           {note}
         </div>
       ) : null}
@@ -1532,20 +1818,38 @@ function MoneyLocationsPanel({
 
 function WbControlPanel({
   summary,
+  financeAvailable,
+  financeStatus,
+  financeRecommendation,
   onOpen,
 }: {
   summary: any;
+  financeAvailable: boolean;
+  financeStatus: string | null;
+  financeRecommendation: string | null;
   onOpen: (d: Drilldown) => void;
 }) {
   const wbExpenses = pickNum(summary, "total_wb_expenses");
   const logistics = pickNum(summary, "logistics_total");
   const logisticsShare = pickNum(summary, "logistics_share_percent");
   const netAfterExpenses = pickNum(summary, "net_profit_after_all_expenses");
-  const highLogistics = (logisticsShare ?? 0) >= 70;
+  const wbExpensesMissing = !financeAvailable && positive(wbExpenses) === 0;
+  const visibleWbExpenses = wbExpensesMissing ? null : wbExpenses;
+  const visibleLogistics = wbExpensesMissing ? null : logistics;
+  const visibleLogisticsShare = wbExpensesMissing ? null : logisticsShare;
+  const highLogistics = financeAvailable && (logisticsShare ?? 0) >= 70;
+  const statusTone: Tone = wbExpensesMissing
+    ? "warn"
+    : highLogistics
+      ? "warn"
+      : "good";
 
   return (
     <Card
-      className={cn("overflow-hidden", highLogistics && "border-amber-500/45")}
+      className={cn(
+        "overflow-hidden",
+        statusTone === "warn" && "border-amber-500/45",
+      )}
     >
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-3">
@@ -1559,12 +1863,16 @@ function WbControlPanel({
             variant="outline"
             className={cn(
               "shrink-0 text-[11px]",
-              highLogistics
+              statusTone === "warn"
                 ? "border-amber-500/40 text-amber-700"
                 : "border-emerald-500/40 text-emerald-700",
             )}
           >
-            {highLogistics ? "проверить" : "норма"}
+            {wbExpensesMissing
+              ? "нет отчёта"
+              : highLogistics
+                ? "проверить"
+                : "норма"}
           </Badge>
         </div>
 
@@ -1573,26 +1881,43 @@ function WbControlPanel({
           onClick={() =>
             onOpen({
               title: "Контроль WB расходов",
-              value: wbExpenses,
-              subtitle: "точные суммы по WB расходам",
+              value: visibleWbExpenses,
+              tone: statusTone,
+              subtitle: wbExpensesMissing
+                ? "финансовый отчёт WB пока не подтверждён"
+                : "точные суммы по WB расходам",
               formula:
-                "WB расходы включают комиссии, логистику, хранение, удержания и другие статьи.",
+                "WB расходы включают комиссии, логистику, хранение, удержания и другие статьи. Если отчёт WB не загружен, ноль не считается подтверждением отсутствия расходов.",
               rows: [
-                { label: "WB расходы", value: wbExpenses, op: "-" },
+                {
+                  label: "Статус финансового отчёта",
+                  value: financeStatus ?? "not_available",
+                  op: "info",
+                  tone: wbExpensesMissing ? "warn" : "neutral",
+                },
+                {
+                  label: "WB расходы",
+                  value: visibleWbExpenses,
+                  op: "-",
+                  note: wbExpensesMissing
+                    ? (financeRecommendation ?? "отчёт WB не закрыт")
+                    : null,
+                  tone: wbExpensesMissing ? "warn" : "neutral",
+                },
                 {
                   label: "Логистика",
-                  value: logistics,
+                  value: visibleLogistics,
                   op: "-",
-                  tone: highLogistics ? "warn" : "neutral",
+                  tone: highLogistics || wbExpensesMissing ? "warn" : "neutral",
                 },
                 {
                   label: "Доля логистики",
                   value:
-                    logisticsShare == null
+                    visibleLogisticsShare == null
                       ? null
-                      : formatPercent(logisticsShare),
+                      : formatPercent(visibleLogisticsShare),
                   op: "info",
-                  tone: highLogistics ? "warn" : "neutral",
+                  tone: highLogistics || wbExpensesMissing ? "warn" : "neutral",
                 },
                 {
                   label: "Итог после расходов",
@@ -1615,14 +1940,22 @@ function WbControlPanel({
             <div>
               <div className="text-xs text-muted-foreground">WB расходы</div>
               <div className="mt-0.5 text-xl font-semibold tabular-nums">
-                {moneyCompact(wbExpenses)}
+                {moneyCompact(visibleWbExpenses)}
               </div>
             </div>
             <ChevronRight className="h-4 w-4 text-muted-foreground" />
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
-            <Badge variant="outline" className="text-[11px]">
-              логистика {formatPercent(logisticsShare)}
+            <Badge
+              variant="outline"
+              className={cn(
+                "text-[11px]",
+                wbExpensesMissing && "border-amber-500/40 text-amber-700",
+              )}
+            >
+              {wbExpensesMissing
+                ? "WB отчёт не закрыт"
+                : `логистика ${formatPercent(logisticsShare)}`}
             </Badge>
             <Badge variant="outline" className="text-[11px]">
               итог {moneyCompact(netAfterExpenses)}
@@ -1648,6 +1981,9 @@ function ExpensesWorkspace({
   onOpen,
   dateFrom,
   dateTo,
+  financeAvailable,
+  financeStatus,
+  financeRecommendation,
 }: {
   groups: any[];
   items: any[];
@@ -1656,6 +1992,9 @@ function ExpensesWorkspace({
   onOpen: (d: Drilldown) => void;
   dateFrom: string;
   dateTo: string;
+  financeAvailable: boolean;
+  financeStatus: string | null;
+  financeRecommendation: string | null;
 }) {
   const total =
     pickNum(summary, "total_expenses", "total_wb_expenses") ??
@@ -1680,6 +2019,21 @@ function ExpensesWorkspace({
             </Badge>
           </div>
 
+          {!financeAvailable ? (
+            <div className="mb-3 flex gap-2 rounded-md border border-amber-500/35 bg-amber-500/5 px-3 py-2 text-xs text-amber-800">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="min-w-0">
+                <div className="font-medium">
+                  WB-расходы не финальные: {financeStatusLabel(financeStatus)}.
+                </div>
+                <div className="mt-0.5 text-amber-700">
+                  {financeRecommendation ??
+                    "Пока отчёт WB не закрыт, нули по комиссиям, логистике и удержаниям нельзя читать как норму."}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {isLoading && !sourceRows.length ? (
             <div className="space-y-2">
               {Array.from({ length: 6 }).map((_, i) => (
@@ -1697,12 +2051,26 @@ function ExpensesWorkspace({
                 const amount = positive(group.amount);
                 const share = total ? Math.min(100, (amount / total) * 100) : 0;
                 const childCount = group.children?.length ?? 0;
+                const wbGroupMissing =
+                  !financeAvailable &&
+                  isWbExpenseGroup(group.code) &&
+                  amount === 0;
                 return (
                   <button
                     key={group.code}
                     type="button"
                     onClick={() =>
-                      onOpen(expenseGroupDetail(group, dateFrom, dateTo))
+                      onOpen(
+                        wbGroupMissing
+                          ? missingWbExpenseDetail(
+                              group,
+                              financeStatus,
+                              financeRecommendation,
+                              dateFrom,
+                              dateTo,
+                            )
+                          : expenseGroupDetail(group, dateFrom, dateTo),
+                      )
                     }
                     className="grid w-full grid-cols-[minmax(140px,1fr)_120px_auto] items-center gap-3 rounded-md px-2 py-2 text-left transition hover:bg-accent/45"
                   >
@@ -1725,13 +2093,21 @@ function ExpensesWorkspace({
                     <div
                       className={cn(
                         "text-right text-sm font-semibold tabular-nums",
-                        group.sign === "income"
-                          ? "text-emerald-700"
-                          : "text-rose-600",
+                        wbGroupMissing
+                          ? "text-amber-700"
+                          : group.sign === "income"
+                            ? "text-emerald-700"
+                            : "text-rose-600",
                       )}
                     >
-                      {group.sign === "income" ? "+" : "−"}
-                      {moneyCompactAbs(amount)}
+                      {wbGroupMissing ? (
+                        "нет отчёта"
+                      ) : (
+                        <>
+                          {group.sign === "income" ? "+" : "−"}
+                          {moneyCompactAbs(amount)}
+                        </>
+                      )}
                     </div>
                     <Badge
                       variant="outline"
@@ -2557,6 +2933,56 @@ function expenseGroupDetail(
   };
 }
 
+function missingWbExpenseDetail(
+  group: any,
+  financeStatus: string | null,
+  financeRecommendation: string | null,
+  dateFrom: string,
+  dateTo: string,
+): Drilldown {
+  const rows = (group.children?.length ? group.children : [group]).map(
+    (it: any) => ({
+      label: it.label || categoryLabel(it.code),
+      value: null,
+      op: "info",
+      note:
+        [
+          it.share_percent != null ? formatPercent(it.share_percent) : null,
+          humanizeMoneySource(it.source),
+        ]
+          .filter(Boolean)
+          .join(" · ") || null,
+      href: it.code ? reportRowsHref(it.code, dateFrom, dateTo) : null,
+      tone: "warn",
+    }),
+  );
+  return {
+    title: group.label || "WB расходы",
+    value: null,
+    tone: "warn",
+    subtitle: "финансовый отчёт WB пока не подтверждён",
+    formula:
+      "Нулевые WB-статьи здесь означают отсутствие подтверждённого отчёта за период, а не гарантированное отсутствие расходов.",
+    rows: [
+      {
+        label: "Статус финансового отчёта",
+        value: financeStatus ?? "not_available",
+        op: "info",
+        tone: "warn",
+      },
+      {
+        label: "Что сделать",
+        value: financeRecommendation ?? "дождаться или загрузить отчёт WB",
+        op: "info",
+        tone: "warn",
+      },
+      ...rows,
+    ],
+    sources: ["/finance/reports", "/money/expenses/breakdown"],
+    cta: { label: "Открыть расходы", to: "/expenses" },
+  };
+}
+
 function reportRowsHref(category: string, from?: string, to?: string) {
   const q = new URLSearchParams();
   q.set("category", category);
@@ -2573,6 +2999,133 @@ function isSystemHandledAction(action: any): boolean {
     type === "RECONCILIATION_REVIEW" ||
     category === "finance_reconcile"
   );
+}
+
+function readString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+const FINANCE_UNAVAILABLE_STATUSES = new Set([
+  "not_available",
+  "missing",
+  "unavailable",
+  "no_data",
+  "error",
+  "failed",
+  "source_missing",
+  "report_not_loaded",
+]);
+
+function isFinanceReportAvailable(
+  status: string | null,
+  confirmedRevenue: number | null,
+  reconciliation: any,
+): boolean {
+  const normalized = String(status ?? "")
+    .trim()
+    .toLowerCase();
+  if (FINANCE_UNAVAILABLE_STATUSES.has(normalized)) return false;
+  if (reconciliation?.is_final === true) return true;
+  if (["matched", "mismatch", "critical_mismatch"].includes(normalized)) {
+    return true;
+  }
+  return positive(confirmedRevenue) > 0;
+}
+
+function financeStatusLabel(value: string | null | undefined): string {
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  switch (raw) {
+    case "matched":
+      return "сверено";
+    case "mismatch":
+      return "есть разница";
+    case "critical_mismatch":
+      return "критичная разница";
+    case "not_available":
+    case "missing":
+    case "unavailable":
+    case "no_data":
+    case "source_missing":
+    case "report_not_loaded":
+      return "нет отчёта";
+    case "error":
+    case "failed":
+      return "ошибка загрузки";
+    default:
+      return raw ? (humanizeDetailText(raw) ?? raw) : "нет данных";
+  }
+}
+
+function isWbExpenseGroup(code: unknown): boolean {
+  const raw = String(code ?? "").toLowerCase();
+  return (
+    raw.includes("wb") ||
+    raw.includes("commission") ||
+    raw.includes("logistics") ||
+    raw.includes("storage") ||
+    raw.includes("penalty") ||
+    raw.includes("deduction") ||
+    raw.includes("acceptance")
+  );
+}
+
+function readinessProblemSources(
+  readiness?: PortalDataReadinessRead | null,
+): any[] {
+  const sources = Array.isArray(readiness?.sources) ? readiness?.sources : [];
+  return sources.filter((source: any) => {
+    const status = String(source?.status ?? "").toLowerCase();
+    const blocks = Array.isArray(source?.blocks_calculation)
+      ? source.blocks_calculation
+      : [];
+    return (
+      ["error", "missing", "failed", "stale"].includes(status) ||
+      blocks.length > 0
+    );
+  });
+}
+
+function readinessSourceLabel(source: any): string {
+  const code = readString(source?.source_code);
+  const title = readString(source?.title);
+  if (code === "finance_reports_wb") return "WB финансы";
+  if (code === "expenses") return "WB расходы";
+  if (code === "prices") return "Цены";
+  return title ?? code ?? "Источник";
+}
+
+function readinessSourceStatusLabel(value: unknown): string {
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  switch (raw) {
+    case "fresh":
+      return "свежие";
+    case "stale":
+      return "устарели";
+    case "error":
+    case "failed":
+      return "ошибка";
+    case "missing":
+      return "нет данных";
+    default:
+      return raw || "неизвестно";
+  }
+}
+
+function readinessSourceTone(value: unknown): string {
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (["error", "failed", "missing"].includes(raw)) {
+    return "border-rose-500/40 text-rose-700";
+  }
+  if (raw === "stale") return "border-amber-500/40 text-amber-700";
+  return "border-border text-muted-foreground";
 }
 
 function topBy<T>(

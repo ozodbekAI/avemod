@@ -99,6 +99,11 @@ const PAGE_TITLES: Array<{ prefix: string; title: string; subtitle: string }> =
       title: "Остатки и поставки",
       subtitle: "склады, дефицит и перемещения",
     },
+    {
+      prefix: "/logistics",
+      title: "Логистика",
+      subtitle: "склады, тарифы и отгрузки",
+    },
     { prefix: "/reputation", title: "Отзывы", subtitle: "репутация и ответы" },
     { prefix: "/claims", title: "Претензии", subtitle: "дефекты и разборы" },
     {

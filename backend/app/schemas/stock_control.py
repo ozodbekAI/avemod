@@ -9,9 +9,7 @@ from app.core.redaction import scrub_sensitive_payload
 
 
 StockControlRunType = Literal["return_excess", "ship_from_hand"]
-StockControlRunTypeWithPlanned = Literal[
-    "return_excess", "ship_from_hand", "store_balance"
-]
+StockControlRunTypeWithPlanned = Literal["return_excess", "ship_from_hand", "store_balance"]
 StockControlRunStatus = Literal[
     "queued", "running", "completed", "partial", "failed", "cancelled"
 ]

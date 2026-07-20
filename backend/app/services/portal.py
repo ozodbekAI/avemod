@@ -18,6 +18,7 @@ from sqlalchemy.orm import aliased
 
 from app.core.cache import TTLMemoryCache
 from app.core.config import get_settings
+from app.core.parsing import parse_datetime
 from app.core.wb_connector_inventory import WB_CONNECTOR_INVENTORY
 from app.models.accounts import WBAPIToken, WBAccount
 from app.models.auth import AuthUser, AuthUserAccountAccess
@@ -39,6 +40,7 @@ from app.models.problem_engine import (
 )
 from app.models.product_cards import WBProductCard, WBProductCardCharacteristic
 from app.models.raw import RawWBAPIResponse
+from app.models.response_snapshots import APIResponseSnapshot
 from app.models.sync import WBSyncCursor, WBSyncRun
 from app.schemas.operator import (
     ActionStatus,
@@ -186,7 +188,12 @@ class PortalService:
         "experiments",
     }
     MVP_ACTION_MODULES = {"finance", "data_quality", "costs", "checker", "manual"}
+    ACTIVE_SYNC_STATUSES = {"queued", "running", "in_progress"}
+    SUCCESSFUL_CURSOR_STATUSES = {"completed", "idle", "success", "partial"}
+    FAILED_CURSOR_STATUSES = {"failed", "error"}
     ACTIONS_CACHE_TTL_SECONDS = 30
+    ACTIONS_SOURCE_FETCH_FLOOR = 5000
+    ACTIONS_SOURCE_FETCH_CAP = 5000
     _shared_actions_cache: TTLMemoryCache[PortalActionsPage] = TTLMemoryCache(
         default_ttl_seconds=ACTIONS_CACHE_TTL_SECONDS
     )
@@ -254,7 +261,6 @@ class PortalService:
         "postponed",
         "ignored",
         "blocked",
-        "done",
         "reopened",
     }
     HIDDEN_ACTION_CENTER_CODES = {"finance_reconciliation_mismatch"}
@@ -337,6 +343,7 @@ class PortalService:
         "supplies": timedelta(days=3),
         "tariffs": timedelta(days=14),
         "documents": timedelta(days=7),
+        "promotions": timedelta(hours=24),
         "reputation": timedelta(hours=24),
     }
     DATA_SYNC_REQUIRED_FOR: dict[str, list[str]] = {
@@ -351,8 +358,53 @@ class PortalService:
         "supplies": ["Supply discrepancies", "Claims"],
         "tariffs": ["Logistics/tariff context"],
         "documents": ["Accounting documents"],
+        "promotions": ["Promotion planning", "Action Center"],
         "reputation": ["Feedbacks and questions"],
     }
+    DATA_SYNC_DEFAULT_DOMAINS: tuple[str, ...] = (
+        "product_cards",
+        "sales",
+        "orders",
+        "finance",
+        "stocks",
+        "ads",
+        "prices",
+        "promotions",
+        "analytics",
+        "tariffs",
+        "supplies",
+        "documents",
+        "reputation",
+    )
+    DATA_SYNC_ALIGNMENT_RULES: tuple[dict[str, Any], ...] = (
+        {
+            "label": "Sales / orders",
+            "domains": ("sales", "orders"),
+            "max_delta": timedelta(hours=2),
+        },
+        {
+            "label": "Money sources",
+            "domains": ("sales", "orders", "finance"),
+            "max_delta": timedelta(hours=36),
+        },
+        {
+            "label": "Stock / sales",
+            "domains": ("stocks", "sales"),
+            "max_delta": timedelta(hours=12),
+        },
+        {
+            "label": "Ads / sales",
+            "domains": ("ads", "sales"),
+            "max_delta": timedelta(hours=24),
+        },
+    )
+    CALCULATION_SNAPSHOT_NAMESPACES: tuple[str, ...] = (
+        "money",
+        "dashboard",
+        "data_quality",
+        "control_tower",
+        "marts",
+    )
     RAW_ENDPOINT_PREFIXES: dict[str, tuple[str, ...]] = {
         "product_cards": ("/content/v2/get/cards/list", "/content/v2/tags"),
         "prices": (
@@ -378,6 +430,7 @@ class PortalService:
             "/api/v1/acceptance/options",
             "/api/v1/supplies",
         ),
+        "promotions": ("/api/v1/calendar/promotions",),
         "reputation": ("/api/v1/feedbacks", "/api/v1/questions"),
     }
     DATA_READINESS_SOURCE_CATALOG: tuple[dict[str, Any], ...] = (
@@ -553,6 +606,19 @@ class PortalService:
         self._data_sync_status_cache.clear()
         self._data_readiness_cache.clear()
 
+    @classmethod
+    def invalidate_shared_runtime_caches(cls) -> None:
+        cls._shared_actions_cache.clear()
+        cls._shared_product360_cache.clear()
+        cls._shared_products_cache.clear()
+        cls._shared_dashboard_overview_cache.clear()
+        cls._shared_overview_cache.clear()
+        cls._shared_data_sync_status_cache.clear()
+        cls._shared_data_readiness_cache.clear()
+
+    def invalidate_runtime_caches(self) -> None:
+        type(self).invalidate_shared_runtime_caches()
+
     @staticmethod
     def _actions_cache_date_key(value: date | None) -> str:
         return value.isoformat() if value is not None else ""
@@ -650,7 +716,7 @@ class PortalService:
         fetch_limit: int,
     ) -> tuple[object, ...]:
         return (
-            "portal_products_v1",
+            "portal_products_v2",
             int(account_id),
             self._actions_cache_date_key(date_from),
             self._actions_cache_date_key(date_to),
@@ -674,6 +740,66 @@ class PortalService:
             items=page_items,
             unavailable_sources=list(page.unavailable_sources or []),
         )
+
+    @staticmethod
+    def _products_requires_full_materialization(
+        *, card_quality_status: str | None, sort_by: str
+    ) -> bool:
+        normalized_sort = str(sort_by or "priority_score").strip().lower()
+        return bool(str(card_quality_status or "").strip()) or normalized_sort in {
+            "margin",
+            "quality_score",
+            "quality_issues",
+        }
+
+    @staticmethod
+    def _products_money_sort(sort_by: str) -> str:
+        normalized = str(sort_by or "priority_score").strip().lower()
+        return (
+            normalized
+            if normalized in {"priority_score", "revenue", "profit"}
+            else "priority_score"
+        )
+
+    def _products_summary(
+        self,
+        *,
+        article_summary: Any,
+        rows: list[PortalProductRead],
+        full_rows_available: bool,
+    ) -> dict[str, Any]:
+        summary = self._dump(article_summary)
+        row_revenue = sum(float(row.revenue or 0) for row in rows)
+        row_profit = sum(
+            float((row.profit if row.profit is not None else row.estimated_profit) or 0)
+            for row in rows
+        )
+        row_quality_issues = sum(int(row.card_quality_issue_count or 0) for row in rows)
+        row_open_actions = sum(int(row.open_actions_count or 0) for row in rows)
+        if full_rows_available:
+            summary.update(
+                {
+                    "revenue_total": row_revenue,
+                    "profit_total": row_profit,
+                    "quality_issues_count": row_quality_issues,
+                    "open_actions_count": row_open_actions,
+                    "row_count": len(rows),
+                    "summary_scope": "all_filtered_rows",
+                }
+            )
+        else:
+            summary.setdefault("revenue_total", row_revenue)
+            summary.setdefault("profit_total", row_profit)
+            summary.update(
+                {
+                    "loaded_revenue": row_revenue,
+                    "loaded_profit": row_profit,
+                    "loaded_quality_issues_count": row_quality_issues,
+                    "loaded_open_actions_count": row_open_actions,
+                    "summary_scope": "money_totals_loaded_quality",
+                }
+            )
+        return summary
 
     def _dashboard_overview_cache_key(
         self,
@@ -735,6 +861,22 @@ class PortalService:
             offset=offset,
             items=page_items,
             unavailable_sources=list(page.unavailable_sources or []),
+        )
+
+    @classmethod
+    def _actions_source_fetch_limit(cls, *, limit: int, offset: int) -> int:
+        try:
+            requested_limit = int(limit or 0)
+        except (TypeError, ValueError):
+            requested_limit = 0
+        try:
+            requested_offset = int(offset or 0)
+        except (TypeError, ValueError):
+            requested_offset = 0
+        page_end = max(requested_limit + requested_offset, requested_limit, 1)
+        return min(
+            max(page_end, cls.ACTIONS_SOURCE_FETCH_FLOOR),
+            cls.ACTIONS_SOURCE_FETCH_CAP,
         )
 
     def _dynamic_problem_engine_enabled(self, account_id: int | None) -> bool:
@@ -896,20 +1038,7 @@ class PortalService:
             if entry.status != "active":
                 continue
             inventory_by_domain.setdefault(entry.domain, []).append(entry)
-        domains = [
-            "product_cards",
-            "sales",
-            "orders",
-            "finance",
-            "stocks",
-            "ads",
-            "prices",
-            "analytics",
-            "tariffs",
-            "supplies",
-            "documents",
-            "reputation",
-        ]
+        domains = list(self.DATA_SYNC_DEFAULT_DOMAINS)
         if isinstance(session, AsyncSession):
             latest_run_by_domain = await self._latest_sync_runs_by_domain(
                 session,
@@ -919,7 +1048,7 @@ class PortalService:
             latest_success_by_domain = await self._latest_sync_runs_by_domain(
                 session,
                 account_id=account_id,
-                statuses={"completed"},
+                statuses={"completed", "partial"},
             )
             latest_failed_by_domain = await self._latest_sync_runs_by_domain(
                 session,
@@ -972,7 +1101,7 @@ class PortalService:
                     existing_latest.status == "skipped" and run.status != "skipped"
                 ):
                     latest_run_by_domain[domain] = run
-                if run.status == "completed":
+                if run.status in {"completed", "partial"}:
                     latest_success_by_domain.setdefault(domain, run)
                 elif run.status == "failed":
                     latest_failed_by_domain.setdefault(domain, run)
@@ -1004,19 +1133,69 @@ class PortalService:
             session, account_id=account_id
         )
         cursor_by_domain: dict[str, WBSyncCursor] = {}
-        for cursor in cursors:
-            existing = cursor_by_domain.get(str(cursor.domain))
-            if existing is None:
-                cursor_by_domain[str(cursor.domain)] = cursor
-                continue
+        successful_cursor_by_domain: dict[str, WBSyncCursor] = {}
+        active_cursor_by_domain: dict[str, WBSyncCursor] = {}
+        stale_active_cursor_by_domain: dict[str, WBSyncCursor] = {}
+        stale_active_cursor_hours = max(
+            int(get_settings().sync_running_cursor_stale_hours), 1
+        )
+        stale_active_cursor_after = timedelta(hours=stale_active_cursor_hours)
+
+        def newer_cursor(
+            current: WBSyncCursor | None,
+            candidate: WBSyncCursor,
+            *,
+            activity: bool = True,
+        ) -> WBSyncCursor:
+            if current is None:
+                return candidate
             current_at = (
-                existing.last_synced_at or existing.updated_at or existing.created_at
+                self._cursor_activity_at(current)
+                if activity
+                else getattr(current, "last_synced_at", None)
             )
             candidate_at = (
-                cursor.last_synced_at or cursor.updated_at or cursor.created_at
+                self._cursor_activity_at(candidate)
+                if activity
+                else getattr(candidate, "last_synced_at", None)
             )
-            if candidate_at and (current_at is None or candidate_at > current_at):
-                cursor_by_domain[str(cursor.domain)] = cursor
+            if candidate_at:
+                if current_at is None:
+                    return candidate
+                try:
+                    if candidate_at > current_at:
+                        return candidate
+                except TypeError:
+                    if candidate_at.replace(tzinfo=None) > current_at.replace(
+                        tzinfo=None
+                    ):
+                        return candidate
+            return current
+
+        for cursor in cursors:
+            domain_key = str(cursor.domain)
+            cursor_by_domain[domain_key] = newer_cursor(
+                cursor_by_domain.get(domain_key), cursor
+            )
+            if self._is_successful_cursor_status(
+                getattr(cursor, "status", None)
+            ) and getattr(cursor, "last_synced_at", None):
+                successful_cursor_by_domain[domain_key] = newer_cursor(
+                    successful_cursor_by_domain.get(domain_key),
+                    cursor,
+                    activity=False,
+                )
+            if self._is_active_sync_status(getattr(cursor, "status", None)):
+                if self._is_stale_active_cursor(
+                    cursor, stale_after=stale_active_cursor_after
+                ):
+                    stale_active_cursor_by_domain[domain_key] = newer_cursor(
+                        stale_active_cursor_by_domain.get(domain_key), cursor
+                    )
+                else:
+                    active_cursor_by_domain[domain_key] = newer_cursor(
+                        active_cursor_by_domain.get(domain_key), cursor
+                    )
         domain_names = sorted(
             {*domains, *latest_run_by_domain.keys(), *cursor_by_domain.keys()}
         )
@@ -1037,29 +1216,89 @@ class PortalService:
             success_run = latest_success_by_domain.get(domain)
             failed_run = latest_failed_by_domain.get(domain)
             cursor = cursor_by_domain.get(domain)
-            raw_status = str(
-                getattr(run, "status", None)
-                or getattr(cursor, "status", None)
-                or "not_started"
+            success_cursor = successful_cursor_by_domain.get(domain)
+            active_cursor = active_cursor_by_domain.get(domain)
+            stale_active_cursor = stale_active_cursor_by_domain.get(domain)
+            run_status = str(getattr(run, "status", "") or "").lower()
+            run_age = self._age_from_now(
+                getattr(run, "finished_at", None) or getattr(run, "started_at", None)
             )
-            status = (
-                raw_status
-                if raw_status in {"completed", "failed", "running", "queued", "skipped"}
-                else "not_started"
+            stale_active_run = bool(
+                run is not None
+                and self._is_active_sync_status(run_status)
+                and (run_age is None or run_age > stale_active_cursor_after)
             )
-            error_text = getattr(run, "error_text", None) or (
-                (cursor.cursor_value or {}).get("lastErrorText") if cursor else None
+            if stale_active_run or stale_active_cursor is not None:
+                raw_status = "failed"
+            elif run is not None and self._is_active_sync_status(run_status):
+                raw_status = run_status
+            elif active_cursor is not None:
+                raw_status = str(getattr(active_cursor, "status", "") or "running")
+            else:
+                raw_status = str(
+                    getattr(run, "status", None)
+                    or getattr(cursor, "status", None)
+                    or "not_started"
+                ).lower()
+            if raw_status in {
+                "completed",
+                "failed",
+                "running",
+                "queued",
+                "partial",
+                "skipped",
+            }:
+                status = raw_status
+            elif raw_status in {"success", "idle"}:
+                status = "completed"
+            else:
+                status = "not_started"
+            stale_running_error = None
+            if stale_active_run:
+                stale_running_error = (
+                    f"Синхронизация зависла: запуск #{getattr(run, 'id', 0)} "
+                    f"в статусе `{run_status}` дольше {stale_active_cursor_hours} ч."
+                )
+            elif stale_active_cursor is not None:
+                stale_running_error = (
+                    "Синхронизация зависла: курсор "
+                    f"`{getattr(stale_active_cursor, 'cursor_key', 'default')}` "
+                    f"в статусе `{getattr(stale_active_cursor, 'status', 'running')}` "
+                    f"дольше {stale_active_cursor_hours} ч."
+                )
+            error_text = (
+                stale_running_error
+                or getattr(run, "error_text", None)
+                or (
+                    (cursor.cursor_value or {}).get("lastErrorText") if cursor else None
+                )
             )
             last_successful_sync_at = (
                 getattr(success_run, "finished_at", None)
-                or getattr(cursor, "last_synced_at", None)
+                or getattr(success_cursor, "last_synced_at", None)
                 or (
-                    getattr(run, "finished_at", None) if status == "completed" else None
+                    getattr(run, "finished_at", None)
+                    if status in {"completed", "partial"}
+                    else None
                 )
             )
             last_failed_sync_at = getattr(failed_run, "finished_at", None)
-            last_activity_at = getattr(run, "finished_at", None) or getattr(
-                run, "started_at", None
+            if stale_running_error:
+                last_failed_sync_at = (
+                    getattr(run, "started_at", None)
+                    if stale_active_run
+                    else self._cursor_activity_at(stale_active_cursor)
+                ) or last_failed_sync_at
+            last_activity_at = (
+                getattr(run, "finished_at", None)
+                or getattr(run, "started_at", None)
+                or self._cursor_activity_at(active_cursor)
+                or self._cursor_activity_at(stale_active_cursor)
+                or self._cursor_activity_at(cursor)
+            )
+            data_watermark_at = self._sync_data_watermark(
+                cursor=success_cursor or cursor,
+                run=success_run or run,
             )
             raw_response_count = int(raw_counts.get(domain, 0))
             rows_loaded = self._rows_loaded_from_details(
@@ -1078,11 +1317,21 @@ class PortalService:
                 last_failed_sync_at=last_failed_sync_at,
                 permission_status=permission_status,
             )
-            next_action = "wait" if status == "running" else "sync"
+            if status == "partial" and freshness_status == "fresh":
+                freshness_status = "stale"
+            if stale_running_error and permission_status != "missing":
+                freshness_status = "failed"
+            next_action = "wait" if self._is_active_sync_status(status) else "sync"
             if permission_status == "missing":
                 next_action = "fix_token"
                 warnings.append(
                     f"{domain}: нужен токен WB категории `{token_category}`"
+                )
+            elif stale_running_error:
+                warnings.append(f"{domain}: {stale_running_error}")
+            elif self._is_active_sync_status(status):
+                warnings.append(
+                    f"{domain}: синхронизация выполняется, расчёты обновятся после завершения"
                 )
             elif status == "failed":
                 warnings.append(f"{domain}: последняя загрузка завершилась ошибкой")
@@ -1142,6 +1391,7 @@ class PortalService:
                     last_synced_at=last_successful_sync_at or last_activity_at,
                     last_successful_sync_at=last_successful_sync_at,
                     last_failed_sync_at=last_failed_sync_at,
+                    data_watermark_at=data_watermark_at,
                     last_error_text=error_text,
                     last_error_human_message=human_error,
                     rows_loaded=rows_loaded,
@@ -1175,11 +1425,31 @@ class PortalService:
                     required_for=self.DATA_SYNC_REQUIRED_FOR.get(domain, []),
                 )
             )
-        current_sync_runs = [self._sync_run_summary(run) for run in current_runs]
+        (
+            data_alignment_status,
+            data_alignment_warnings,
+            data_alignment_domains,
+        ) = self._data_sync_alignment(domain_statuses)
+        warnings.extend(data_alignment_warnings)
+        fresh_current_runs = [
+            run
+            for run in current_runs
+            if not self._is_stale_active_run(run, stale_after=stale_active_cursor_after)
+        ]
+        current_sync_runs = [self._sync_run_summary(run) for run in fresh_current_runs]
+        current_run_domains = {item.domain for item in current_sync_runs}
+        cursor_sync_runs = [
+            self._sync_cursor_summary(cursor)
+            for domain, cursor in sorted(active_cursor_by_domain.items())
+            if domain not in current_run_domains
+        ]
+        current_sync_runs.extend(cursor_sync_runs)
         failed_syncs = [self._sync_run_summary(run) for run in failed_runs]
         queued_syncs = [item for item in current_sync_runs if item.status == "queued"]
         active_sync_progress = [
-            item for item in current_sync_runs if item.status == "running"
+            item
+            for item in current_sync_runs
+            if item.status in {"running", "in_progress"}
         ]
         local_source_counts = await self._portal_local_source_counts(
             session, account_id=account_id
@@ -1188,19 +1458,73 @@ class PortalService:
             domain_statuses=domain_statuses,
             local_counts=local_source_counts,
         )
+        if isinstance(session, AsyncSession):
+            (
+                last_calculated_at,
+                calculation_cache_status,
+            ) = await self._last_calculation_status(session, account_id=account_id)
+        else:
+            last_calculated_at = None
+            calculation_cache_status = "missing"
+        has_active_sync = bool(queued_syncs or active_sync_progress)
+        has_stale_running_sync = bool(stale_active_cursor_by_domain) or any(
+            self._is_stale_active_run(run, stale_after=stale_active_cursor_after)
+            for run in current_runs
+        )
         if any(item.permission_status == "missing" for item in domain_statuses):
             overall_state = "failed"
         elif any(item.freshness_status == "failed" for item in domain_statuses):
             overall_state = "warning"
         elif any(
-            item.status == "running" or item.freshness_status in {"stale", "missing"}
+            self._is_active_sync_status(item.status)
+            or item.freshness_status in {"stale", "missing"}
             for item in domain_statuses
         ):
+            overall_state = "warning"
+        elif data_alignment_status in {"new_account", "misaligned"}:
             overall_state = "warning"
         elif any(item.freshness_status == "fresh" for item in domain_statuses):
             overall_state = "ok"
         else:
             overall_state = "unknown"
+        if has_active_sync:
+            calculation_refresh_status = "pending"
+            calculation_refresh_message = (
+                "Синхронизация идёт. Расчёты обновятся после завершения."
+            )
+        elif has_stale_running_sync:
+            calculation_refresh_status = "blocked"
+            calculation_refresh_message = "Есть зависшая синхронизация. Перезапустите источник, чтобы обновить расчёты."
+        elif overall_state == "ok" and calculation_cache_status == "fresh":
+            calculation_refresh_status = "ready"
+            calculation_refresh_message = "Ежедневный расчёт построен на свежих данных."
+        elif overall_state == "ok" and calculation_cache_status == "missing":
+            calculation_refresh_status = "stale"
+            calculation_refresh_message = (
+                "Данные синхронизированы, но ежедневный расчёт ещё не выполнен."
+            )
+        elif overall_state == "ok" and calculation_cache_status == "stale":
+            calculation_refresh_status = "stale"
+            calculation_refresh_message = (
+                "Данные синхронизированы, но последний ежедневный расчёт устарел."
+            )
+        elif overall_state != "failed" and data_alignment_status == "misaligned":
+            calculation_refresh_status = "stale"
+            calculation_refresh_message = (
+                "Источники WB загружены, но даты данных расходятся. "
+                "Перезапустите отстающий источник."
+            )
+        elif overall_state != "failed" and data_alignment_status == "new_account":
+            calculation_refresh_status = "stale"
+            calculation_refresh_message = (
+                "Аккаунт подключён, но первая загрузка WB данных ещё не выполнена."
+            )
+        elif overall_state in {"warning", "failed"}:
+            calculation_refresh_status = "stale"
+            calculation_refresh_message = "Часть источников устарела или завершилась ошибкой. Расчёты могут отставать."
+        else:
+            calculation_refresh_status = "unknown"
+            calculation_refresh_message = None
         user_facing_status = self._overall_user_facing_sync_status(
             domain_statuses=domain_statuses,
             current_sync_runs=current_sync_runs,
@@ -1209,6 +1533,15 @@ class PortalService:
             account_id=account_id,
             overall_state=overall_state,  # type: ignore[arg-type]
             user_facing_status=user_facing_status,
+            has_active_sync=has_active_sync,
+            has_stale_running_sync=has_stale_running_sync,
+            data_alignment_status=data_alignment_status,  # type: ignore[arg-type]
+            data_alignment_warnings=data_alignment_warnings,
+            data_alignment_domains=data_alignment_domains,
+            last_calculated_at=last_calculated_at,
+            calculation_cache_status=calculation_cache_status,  # type: ignore[arg-type]
+            calculation_refresh_status=calculation_refresh_status,  # type: ignore[arg-type]
+            calculation_refresh_message=calculation_refresh_message,
             domains=domain_statuses,
             sources=readiness_sources,
             current_sync_runs=current_sync_runs,
@@ -1235,6 +1568,59 @@ class PortalService:
         if use_data_sync_cache:
             self._data_sync_status_cache.set(data_sync_cache_key, result)
         return result
+
+    @staticmethod
+    def _snapshot_expired_at(value: datetime | None, *, now: datetime) -> bool:
+        if value is None:
+            return True
+        try:
+            return value <= now
+        except TypeError:
+            return value.replace(tzinfo=None) <= now.replace(tzinfo=None)
+
+    @staticmethod
+    def _snapshot_computed_stale(
+        value: datetime | None, *, now: datetime, max_age: timedelta
+    ) -> bool:
+        if value is None:
+            return True
+        try:
+            return value + max_age < now
+        except TypeError:
+            return value.replace(tzinfo=None) + max_age < now.replace(tzinfo=None)
+
+    async def _last_calculation_status(
+        self, session: AsyncSession, *, account_id: int
+    ) -> tuple[datetime | None, str]:
+        row = (
+            await session.execute(
+                select(
+                    func.max(APIResponseSnapshot.computed_at).label("computed_at"),
+                    func.max(APIResponseSnapshot.expires_at).label("expires_at"),
+                    func.count(APIResponseSnapshot.id).label("snapshot_count"),
+                ).where(
+                    APIResponseSnapshot.account_id == account_id,
+                    APIResponseSnapshot.namespace.in_(
+                        self.CALCULATION_SNAPSHOT_NAMESPACES
+                    ),
+                    APIResponseSnapshot.snapshot_status == "ready",
+                )
+            )
+        ).one()
+        last_calculated_at = row.computed_at
+        if int(row.snapshot_count or 0) <= 0 or last_calculated_at is None:
+            return None, "missing"
+        now = utcnow()
+        max_age = timedelta(
+            minutes=max(
+                int(get_settings().money_response_snapshot_max_stale_minutes), 1
+            )
+        )
+        if self._snapshot_computed_stale(
+            last_calculated_at, now=now, max_age=max_age
+        ) or self._snapshot_expired_at(row.expires_at, now=now):
+            return last_calculated_at, "stale"
+        return last_calculated_at, "fresh"
 
     async def _raw_response_counts_by_domain(
         self, session: AsyncSession, *, account_id: int
@@ -1277,6 +1663,7 @@ class PortalService:
             "analytics": "analytics",
             "finance": "finance",
             "ads": "promotion",
+            "promotions": "promotion",
             "tariffs": "tariffs",
             "supplies": "supplies",
             "documents": "documents",
@@ -1347,6 +1734,178 @@ class PortalService:
         return "unknown"
 
     @classmethod
+    def _is_active_sync_status(cls, status: Any) -> bool:
+        return str(status or "").lower() in cls.ACTIVE_SYNC_STATUSES
+
+    @classmethod
+    def _is_successful_cursor_status(cls, status: Any) -> bool:
+        return str(status or "").lower() in cls.SUCCESSFUL_CURSOR_STATUSES
+
+    @classmethod
+    def _is_failed_cursor_status(cls, status: Any) -> bool:
+        return str(status or "").lower() in cls.FAILED_CURSOR_STATUSES
+
+    @staticmethod
+    def _cursor_activity_at(cursor: WBSyncCursor | Any | None) -> datetime | None:
+        if cursor is None:
+            return None
+        return (
+            getattr(cursor, "updated_at", None)
+            or getattr(cursor, "last_synced_at", None)
+            or getattr(cursor, "created_at", None)
+        )
+
+    @staticmethod
+    def _age_from_now(value: datetime | None) -> timedelta | None:
+        if value is None:
+            return None
+        now = utcnow()
+        try:
+            return now - value
+        except TypeError:
+            return now.replace(tzinfo=None) - value.replace(tzinfo=None)
+
+    @staticmethod
+    def _normalize_sync_datetime(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
+
+    @classmethod
+    def _parse_sync_datetime(cls, value: Any) -> datetime | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, datetime):
+            return cls._normalize_sync_datetime(value)
+        try:
+            return cls._normalize_sync_datetime(parse_datetime(value))
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _sync_data_watermark(
+        cls,
+        *,
+        cursor: WBSyncCursor | Any | None,
+        run: WBSyncRun | Any | None,
+    ) -> datetime | None:
+        cursor_value = getattr(cursor, "cursor_value", None)
+        if isinstance(cursor_value, dict):
+            for key in (
+                "lastChangeDate",
+                "snapshotAt",
+                "completedAt",
+                "dateTo",
+                "endTime",
+                "endDate",
+                "lastRunAt",
+                "syncedAt",
+                "collectedAt",
+                "updatedAt",
+            ):
+                parsed = cls._parse_sync_datetime(cursor_value.get(key))
+                if parsed is not None:
+                    return parsed
+        details = getattr(run, "details", None)
+        if isinstance(details, dict):
+            for key in (
+                "lastChangeDate",
+                "snapshotAt",
+                "completedAt",
+                "dateTo",
+                "endTime",
+                "endDate",
+                "lastRunAt",
+                "syncedAt",
+                "finishedAt",
+            ):
+                parsed = cls._parse_sync_datetime(details.get(key))
+                if parsed is not None:
+                    return parsed
+        return None
+
+    @classmethod
+    def _data_sync_alignment(
+        cls, domain_statuses: list[PortalDataSyncDomainStatus]
+    ) -> tuple[str, list[str], list[str]]:
+        by_domain = {item.domain: item for item in domain_statuses}
+        configured = [
+            item
+            for item in domain_statuses
+            if item.domain in cls.DATA_SYNC_DEFAULT_DOMAINS
+            and item.domain != "reputation"
+            and item.token_configured
+        ]
+        if configured and not any(
+            item.data_watermark_at
+            or item.raw_response_count > 0
+            or item.rows_loaded > 0
+            for item in configured
+        ):
+            return (
+                "new_account",
+                ["Аккаунт подключён, но первая загрузка WB данных ещё не выполнена."],
+                list(dict.fromkeys(item.domain for item in configured)),
+            )
+
+        warnings: list[str] = []
+        lagging_domains: list[str] = []
+        comparable_domain_count = 0
+        for rule in cls.DATA_SYNC_ALIGNMENT_RULES:
+            available: list[tuple[str, datetime]] = []
+            for domain in rule["domains"]:
+                item = by_domain.get(str(domain))
+                if item is None or not item.token_configured:
+                    continue
+                watermark = cls._normalize_sync_datetime(item.data_watermark_at)
+                if watermark is None:
+                    continue
+                available.append((item.domain, watermark))
+            if len(available) < 2:
+                continue
+            comparable_domain_count += len(available)
+            newest_domain, newest_at = max(available, key=lambda item: item[1])
+            oldest_domain, oldest_at = min(available, key=lambda item: item[1])
+            delta = newest_at - oldest_at
+            max_delta = rule["max_delta"]
+            if delta > max_delta:
+                warnings.append(
+                    f"{rule['label']}: даты источников расходятся на "
+                    f"{round(delta.total_seconds() / 3600, 1)} ч. "
+                    f"`{oldest_domain}` отстаёт от `{newest_domain}`."
+                )
+                lagging_domains.append(oldest_domain)
+        if warnings:
+            return "misaligned", warnings, list(dict.fromkeys(lagging_domains))
+        if comparable_domain_count < 2:
+            return "insufficient_data", [], []
+        return "aligned", [], []
+
+    @classmethod
+    def _is_stale_active_cursor(
+        cls, cursor: WBSyncCursor | Any | None, *, stale_after: timedelta
+    ) -> bool:
+        if cursor is None or not cls._is_active_sync_status(
+            getattr(cursor, "status", None)
+        ):
+            return False
+        age = cls._age_from_now(cls._cursor_activity_at(cursor))
+        return age is None or age > stale_after
+
+    @classmethod
+    def _is_stale_active_run(
+        cls, run: WBSyncRun | Any | None, *, stale_after: timedelta
+    ) -> bool:
+        if run is None or not cls._is_active_sync_status(getattr(run, "status", None)):
+            return False
+        age = cls._age_from_now(
+            getattr(run, "finished_at", None) or getattr(run, "started_at", None)
+        )
+        return age is None or age > stale_after
+
+    @classmethod
     def _freshness_status(
         cls,
         *,
@@ -1394,7 +1953,7 @@ class PortalService:
     ) -> str:
         if permission_status == "missing":
             return f"Добавить или проверить WB токен категории `{token_category}`."
-        if status == "running":
+        if status in {"queued", "running", "in_progress"}:
             return "Дождаться завершения текущей синхронизации."
         if freshness_status == "failed":
             return (
@@ -1434,7 +1993,7 @@ class PortalService:
 
     @staticmethod
     def _user_facing_sync_status(*, source_status: str, run_status: str) -> str:
-        if run_status == "running":
+        if run_status in {"queued", "running", "in_progress"}:
             return "Синхронизация идёт"
         if source_status == "fresh":
             return "Данные свежие"
@@ -1451,8 +2010,11 @@ class PortalService:
         domain_statuses: list[PortalDataSyncDomainStatus],
         current_sync_runs: list[PortalDataSyncRunSummary],
     ) -> str:
-        if any(item.status == "running" for item in current_sync_runs):
-            return "Синхронизация идёт"
+        if any(
+            item.status in {"queued", "running", "in_progress"}
+            for item in current_sync_runs
+        ):
+            return "Синхронизация идёт, расчёты обновятся после завершения"
         if any(item.source_status == "error" for item in domain_statuses):
             return "Ошибка синхронизации"
         if any(item.source_status == "not_configured" for item in domain_statuses):
@@ -1504,7 +2066,7 @@ class PortalService:
         token_category: str | None,
         target_href: str | None,
     ) -> tuple[str, str, str | None]:
-        if run_status == "running":
+        if run_status in {"queued", "running", "in_progress"}:
             return "wait_sync", "Дождаться синхронизации", target_href or "/settings"
         if source_status == "not_configured":
             label = (
@@ -1556,6 +2118,37 @@ class PortalService:
             error_text=getattr(run, "error_text", None),
             user_facing_status=cls._user_facing_sync_status(
                 source_status=source_status, run_status=status
+            ),
+        )
+
+    @classmethod
+    def _sync_cursor_summary(
+        cls, cursor: WBSyncCursor | Any
+    ) -> PortalDataSyncRunSummary:
+        status = str(getattr(cursor, "status", "") or "running").lower()
+        if status not in {"queued", "running", "in_progress"}:
+            status = "running"
+        cursor_id = int(getattr(cursor, "id", 0) or 0)
+        cursor_value = getattr(cursor, "cursor_value", None)
+        error_text = (
+            (cursor_value or {}).get("lastErrorText")
+            if isinstance(cursor_value, dict)
+            else None
+        )
+        return PortalDataSyncRunSummary(
+            id=cursor_id,
+            source_code=str(getattr(cursor, "domain", "") or ""),
+            domain=str(getattr(cursor, "domain", "") or ""),
+            status=status,
+            trigger=f"cursor:{getattr(cursor, 'cursor_key', 'default') or 'default'}",
+            started_at=cls._cursor_activity_at(cursor),
+            finished_at=None,
+            is_backfill=False,
+            progress_percent=10.0 if status == "queued" else 25.0,
+            rows_loaded=0,
+            error_text=error_text,
+            user_facing_status=cls._user_facing_sync_status(
+                source_status="missing", run_status=status
             ),
         )
 
@@ -3456,7 +4049,7 @@ class PortalService:
 
         dynamic_enabled = self._dynamic_problem_engine_enabled(account.id)
         show_legacy_problem_cards = self._show_legacy_problem_cards()
-        fetch_limit = min(max(limit + offset, limit), 200)
+        fetch_limit = self._actions_source_fetch_limit(limit=limit, offset=offset)
         use_actions_cache = isinstance(session, AsyncSession)
         actions_cache_key = self._actions_cache_key(
             account_id=account.id,
@@ -3548,6 +4141,9 @@ class PortalService:
                     account_id=account.id,
                     nm_id=nm_id,
                     limit=fetch_limit,
+                    include_resolved=self._should_include_closed_problem_instances(
+                        status
+                    ),
                     include_finance_windows=False,
                 ),
             )
@@ -5788,7 +6384,59 @@ class PortalService:
 
         account_id_value = int(account.id)
         actual_from, actual_to = self.money._normalize_window(date_from, date_to)
-        fetch_limit = min(max(int(limit or 50) + int(offset or 0), int(limit or 50)), 200)
+        normalized_sort = str(sort_by or "priority_score").strip().lower()
+        full_materialization = self._products_requires_full_materialization(
+            card_quality_status=card_quality_status, sort_by=normalized_sort
+        )
+
+        if not full_materialization:
+            articles = await self._safe_source(
+                "money_articles",
+                unavailable,
+                self.money.articles(
+                    session,
+                    account_id=account_id_value,
+                    date_from=actual_from,
+                    date_to=actual_to,
+                    search=search,
+                    status=None,
+                    trust_state=None,
+                    subject_name=None,
+                    brand=None,
+                    sort_by=self._products_money_sort(normalized_sort),
+                    sort_dir=sort_dir,
+                    limit=limit,
+                    offset=offset,
+                ),
+            )
+            if articles is None:
+                return PortalProductsPage(
+                    total=0,
+                    limit=limit,
+                    offset=offset,
+                    items=[],
+                    unavailable_sources=unavailable,
+                )
+            rows = [self._product_row(item) for item in getattr(articles, "items", [])]
+            rows = await self._enrich_product_rows_with_card_photos(
+                session, account_id=account_id_value, rows=rows
+            )
+            rows = await self._enrich_product_rows_with_card_quality(
+                session, account_id=account_id_value, rows=rows
+            )
+            return PortalProductsPage(
+                total=int(getattr(articles, "total", 0)),
+                limit=limit,
+                offset=offset,
+                summary=self._products_summary(
+                    article_summary=getattr(articles, "summary", {}),
+                    rows=rows,
+                    full_rows_available=False,
+                ),
+                items=rows,
+                unavailable_sources=unavailable,
+            )
+
         use_products_cache = isinstance(session, AsyncSession)
         products_cache_key = self._products_cache_key(
             account_id=account_id_value,
@@ -5796,9 +6444,9 @@ class PortalService:
             date_to=actual_to,
             search=search,
             card_quality_status=card_quality_status,
-            sort_by=sort_by,
+            sort_by=normalized_sort,
             sort_dir=sort_dir,
-            fetch_limit=fetch_limit,
+            fetch_limit=0,
         )
         if use_products_cache:
             cached_products = self._products_cache.get(products_cache_key)
@@ -5807,34 +6455,55 @@ class PortalService:
                     cached_products, limit=limit, offset=offset
                 )
 
-        articles = await self._safe_source(
-            "money_articles",
-            unavailable,
-            self.money.articles(
-                session,
-                account_id=account_id_value,
-                date_from=actual_from,
-                date_to=actual_to,
-                search=search,
-                status=None,
-                trust_state=None,
-                subject_name=None,
-                brand=None,
-                sort_by="priority_score",
-                sort_dir="desc",
-                limit=fetch_limit,
-                offset=0,
-            ),
-        )
-        if articles is None:
+        all_items: list[Any] = []
+        article_summary: Any = {}
+        article_total = 0
+        page_limit = 200
+        article_offset = 0
+        while True:
+            articles_page = await self._safe_source(
+                "money_articles",
+                unavailable,
+                self.money.articles(
+                    session,
+                    account_id=account_id_value,
+                    date_from=actual_from,
+                    date_to=actual_to,
+                    search=search,
+                    status=None,
+                    trust_state=None,
+                    subject_name=None,
+                    brand=None,
+                    sort_by=self._products_money_sort(normalized_sort),
+                    sort_dir=sort_dir,
+                    limit=page_limit,
+                    offset=article_offset,
+                ),
+            )
+            if articles_page is None:
+                break
+            if not article_summary:
+                article_summary = getattr(articles_page, "summary", {})
+            page_items = list(getattr(articles_page, "items", []) or [])
+            article_total = int(getattr(articles_page, "total", 0) or 0)
+            all_items.extend(page_items)
+            if not page_items or len(all_items) >= article_total:
+                break
+            article_offset += len(page_items)
+            if article_offset >= 5000:
+                unavailable.append("products_result_truncated")
+                break
+
+        if not all_items and article_total == 0:
             return PortalProductsPage(
                 total=0,
                 limit=limit,
                 offset=offset,
                 items=[],
                 unavailable_sources=unavailable,
-        )
-        rows = [self._product_row(item) for item in getattr(articles, "items", [])]
+            )
+
+        rows = [self._product_row(item) for item in all_items]
         rows = await self._enrich_product_rows_with_card_photos(
             session, account_id=account_id_value, rows=rows
         )
@@ -5844,16 +6513,18 @@ class PortalService:
         rows = self._filter_sort_product_rows_by_card_quality(
             rows,
             status=card_quality_status,
-            sort_by=sort_by,
+            sort_by=normalized_sort,
             sort_dir=sort_dir,
         )
         result = PortalProductsPage(
-            total=len(rows)
-            if card_quality_status
-            else int(getattr(articles, "total", 0)),
-            limit=fetch_limit,
+            total=len(rows),
+            limit=len(rows),
             offset=0,
-            summary=self._dump(getattr(articles, "summary", {})),
+            summary=self._products_summary(
+                article_summary=article_summary,
+                rows=rows,
+                full_rows_available=True,
+            ),
             items=rows,
             unavailable_sources=unavailable,
         )
@@ -6080,6 +6751,11 @@ class PortalService:
                 key=lambda row: row.profit if row.profit is not None else 0,
                 reverse=reverse,
             )
+        elif sort_by == "margin":
+            filtered.sort(
+                key=lambda row: row.margin if row.margin is not None else -10_000,
+                reverse=reverse,
+            )
         return filtered
 
     async def _fast_product_money_detail(
@@ -6204,7 +6880,7 @@ class PortalService:
             await self._safe_source(
                 "article_audit",
                 unavailable,
-                self.money.money.dashboard.article_audit(
+                self.operator_snapshots.article_audit(
                     session,
                     account_id=account_id_value,
                     nm_id=nm_id,
@@ -6750,12 +7426,7 @@ class PortalService:
             local_quality = await self.card_quality.product_quality(
                 session, account_id=account.id, nm_id=nm_id
             )
-            if local_quality.status not in {
-                "unavailable",
-                "not_configured",
-                "empty",
-                "not_analyzed",
-            }:
+            if local_quality.status not in {"unavailable", "not_configured", "empty", "not_analyzed"}:
                 return local_quality
         except Exception:
             local_quality = None
@@ -9353,7 +10024,7 @@ class PortalService:
                 ProblemInstance.last_seen_at.desc(),
                 ProblemInstance.id.desc(),
             )
-            .limit(max(1, min(int(limit or 50), 200)))
+            .limit(max(1, min(int(limit or 50), self.ACTIONS_SOURCE_FETCH_CAP)))
         )
         if nm_id is not None:
             stmt = stmt.where(ProblemInstance.nm_id == nm_id)
@@ -9689,8 +10360,9 @@ class PortalService:
             else None
         )
         status_history = self._problem_instance_status_history(row, history_rows or [])
-        solve_map = build_action_center_solve_map(
-            problem_code=row.problem_code,
+        solve_map_template = snapshot.get("solve_map_template")
+        solve_map = build_action_center_solve_map_from_template(
+            template=solve_map_template if isinstance(solve_map_template, dict) else None,
             allowed_actions=allowed_actions,
             nm_id=row.nm_id,
             problem_instance_id=row.id,
@@ -9698,11 +10370,8 @@ class PortalService:
             price_safety=price_safety,
         )
         if solve_map is None:
-            solve_map_template = snapshot.get("solve_map_template")
-            solve_map = build_action_center_solve_map_from_template(
-                template=solve_map_template
-                if isinstance(solve_map_template, dict)
-                else None,
+            solve_map = build_action_center_solve_map(
+                problem_code=row.problem_code,
                 allowed_actions=allowed_actions,
                 nm_id=row.nm_id,
                 problem_instance_id=row.id,
@@ -10995,7 +11664,25 @@ class PortalService:
         code = str(payload.get("problem_code") or action.action_type or "").lower()
         impact = str(action.impact_type or payload.get("impact_type") or "").lower()
         text = f"{source_module} {category} {code} {impact}"
-        if "checker" in text or "card_quality" in text or "content_quality" in text:
+        if (
+            "reputation" in text
+            or "review" in text
+            or "rating" in text
+            or "question" in text
+            or "feedback" in text
+            or "отзыв" in text
+            or "вопрос" in text
+            or "рейтинг" in text
+        ):
+            return "reputation"
+        if (
+            "checker" in text
+            or "card_quality" in text
+            or "content_quality" in text
+            or "conversion" in text
+            or "views" in text
+            or "return_rate" in text
+        ):
             return "card_quality"
         if (
             "reconciliation" in text
@@ -11006,7 +11693,13 @@ class PortalService:
             return "system_checks"
         if "data" in text or "missing_cost" in text or "blocker" in text:
             return "data_blockers"
-        if "stock" in text or "overstock" in text or "depletion" in text:
+        if (
+            "stock" in text
+            or "overstock" in text
+            or "depletion" in text
+            or "storage" in text
+            or "logistics" in text
+        ):
             return "stock"
         if "price" in text or "margin" in text:
             return "price"
@@ -11016,7 +11709,22 @@ class PortalService:
 
     def _problem_category_from_code(self, problem_code: str | None) -> str:
         code = str(problem_code or "").lower()
-        if "checker" in code or "card_quality" in code or "content_quality" in code:
+        if (
+            "reputation" in code
+            or "review" in code
+            or "rating" in code
+            or "question" in code
+            or "feedback" in code
+        ):
+            return "reputation"
+        if (
+            "checker" in code
+            or "card_quality" in code
+            or "content_quality" in code
+            or "conversion" in code
+            or "views" in code
+            or "return_rate" in code
+        ):
             return "card_quality"
         if (
             "reconciliation" in code
@@ -11024,7 +11732,12 @@ class PortalService:
             or "finance_without_sale" in code
         ):
             return "system_checks"
-        if "stock" in code or "depletion" in code:
+        if (
+            "stock" in code
+            or "depletion" in code
+            or "storage" in code
+            or "logistics" in code
+        ):
             return "stock"
         if "price" in code or "margin" in code:
             return "price"
@@ -12846,10 +13559,17 @@ class PortalService:
         return normalized if normalized in {"high", "medium", "low"} else "medium"
 
     def _finance_status_filter(self, status: str | None) -> str | None:
-        if not self._normalize_filter_values(status):
+        statuses = self._normalize_filter_values(status)
+        if not statuses:
             return None
-        normalized = self._normalize_status(status) if status else None
+        if len(statuses) != 1:
+            return None
+        normalized = self._normalize_status(next(iter(statuses)))
         return None if normalized == "new" and status is None else normalized
+
+    def _should_include_closed_problem_instances(self, status: str | None) -> bool:
+        statuses = self._normalize_filter_values(status)
+        return bool(statuses & {"done", "resolved", "closed", "ignored", "dismissed"})
 
     def _normalize_filter_values(self, values: str | list[str] | None) -> set[str]:
         if values is None:

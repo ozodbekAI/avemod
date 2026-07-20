@@ -90,9 +90,22 @@ def _current_loop() -> asyncio.AbstractEventLoop:
 
 
 def _create_engine() -> AsyncEngine:
+    connect_args = {}
+    if settings.database_url.startswith("postgresql+asyncpg"):
+        connect_args = {
+            "server_settings": {
+                "application_name": "finance-backend",
+                "statement_timeout": str(settings.database_statement_timeout_ms),
+                "lock_timeout": str(settings.database_lock_timeout_ms),
+                "idle_in_transaction_session_timeout": str(
+                    settings.database_idle_in_transaction_timeout_ms
+                ),
+            }
+        }
     return create_async_engine(
         settings.database_url,
         echo=settings.debug,
+        connect_args=connect_args,
         pool_pre_ping=True,
         pool_size=settings.database_pool_size,
         max_overflow=settings.database_max_overflow,

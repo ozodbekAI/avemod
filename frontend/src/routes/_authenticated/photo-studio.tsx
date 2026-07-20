@@ -1,5 +1,11 @@
 // @ts-nocheck
-import { createFileRoute, Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  Link,
+  Outlet,
+  useLocation,
+  useNavigate,
+} from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useAccounts } from "@/lib/account-context";
@@ -45,7 +51,9 @@ import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/photo-studio")({
   component: PhotoStudioRoute,
-  errorComponent: ({ error, reset }) => <EndpointError error={error} reset={reset} />,
+  errorComponent: ({ error, reset }) => (
+    <EndpointError error={error} reset={reset} />
+  ),
 });
 
 function PhotoStudioRoute() {
@@ -84,9 +92,16 @@ function PhotoStudioProjectsPage() {
     placeholderData: (previous) => previous,
   });
 
-  const projects = useMemo(() => extractProjects(projectsQuery.data), [projectsQuery.data]);
+  const projects = useMemo(
+    () => extractProjects(projectsQuery.data),
+    [projectsQuery.data],
+  );
   const productRows = useMemo(
-    () => locallyFilterProducts(extractProducts(productsQuery.data), debouncedSearch),
+    () =>
+      locallyFilterProducts(
+        extractProducts(productsQuery.data),
+        debouncedSearch,
+      ),
     [productsQuery.data, debouncedSearch],
   );
   const projectByNm = useMemo(() => {
@@ -110,7 +125,9 @@ function PhotoStudioProjectsPage() {
     onSuccess: async (project) => {
       setPickerOpen(false);
       setSearch("");
-      await queryClient.invalidateQueries({ queryKey: ["photo", "projects", activeId] });
+      await queryClient.invalidateQueries({
+        queryKey: ["photo", "projects", activeId],
+      });
       toast.success("Проект открыт");
       navigate({
         to: "/photo-studio/projects/$projectId",
@@ -144,7 +161,9 @@ function PhotoStudioProjectsPage() {
               onClick={() => projectsQuery.refetch()}
               disabled={!activeId || projectsQuery.isFetching}
             >
-              <RefreshCw className={`h-4 w-4 mr-2 ${projectsQuery.isFetching ? "animate-spin" : ""}`} />
+              <RefreshCw
+                className={`h-4 w-4 mr-2 ${projectsQuery.isFetching ? "animate-spin" : ""}`}
+              />
               Обновить
             </Button>
             <Button onClick={() => setPickerOpen(true)} disabled={!activeId}>
@@ -162,7 +181,9 @@ function PhotoStudioProjectsPage() {
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>Не удалось загрузить проекты фотостудии</AlertTitle>
           <AlertDescription>
-            {projectsQuery.error instanceof Error ? projectsQuery.error.message : "Проверьте соединение с backend."}
+            {projectsQuery.error instanceof Error
+              ? projectsQuery.error.message
+              : "Проверьте соединение с сервером."}
           </AlertDescription>
         </Alert>
       ) : projectsQuery.isLoading ? (
@@ -170,7 +191,11 @@ function PhotoStudioProjectsPage() {
       ) : projectCount ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {projects.map((project) => (
-            <ProjectCard key={String(project.id)} project={project} accountId={activeId} />
+            <ProjectCard
+              key={String(project.id)}
+              project={project}
+              accountId={activeId}
+            />
           ))}
         </div>
       ) : (
@@ -182,7 +207,9 @@ function PhotoStudioProjectsPage() {
           <DialogHeader>
             <DialogTitle>Выберите карточку WB</DialogTitle>
             <DialogDescription>
-              Введите nm_id товара или найдите карточку WB. nm_id для проекта обязателен, для выбранного артикула будет открыт отдельный проект фотостудии со своей историей, фото и чатом.
+              Введите nm_id товара или найдите карточку WB. nm_id для проекта
+              обязателен, для выбранного артикула будет открыт отдельный проект
+              фотостудии со своей историей, фото и чатом.
             </DialogDescription>
           </DialogHeader>
 
@@ -206,14 +233,18 @@ function PhotoStudioProjectsPage() {
                   <AlertTriangle className="h-4 w-4" />
                   <AlertTitle>Не удалось загрузить карточки</AlertTitle>
                   <AlertDescription>
-                    {productsQuery.error instanceof Error ? productsQuery.error.message : "Backend не вернул список карточек."}
+                    {productsQuery.error instanceof Error
+                      ? productsQuery.error.message
+                      : "Backend не вернул список карточек."}
                   </AlertDescription>
                 </Alert>
               </div>
             ) : productRows.length ? (
               <div className="divide-y">
                 {productRows.map((product) => {
-                  const existingProject = projectByNm.get(String(product.nm_id));
+                  const existingProject = projectByNm.get(
+                    String(product.nm_id),
+                  );
                   const disabled = createProjectMutation.isPending;
                   return (
                     <button
@@ -225,10 +256,14 @@ function PhotoStudioProjectsPage() {
                     >
                       <ProductThumb product={product} />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium">{productTitle(product)}</div>
+                        <div className="truncate text-sm font-medium">
+                          {productTitle(product)}
+                        </div>
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                           <span>nmID {product.nm_id}</span>
-                          {product.vendor_code ? <span>Артикул {product.vendor_code}</span> : null}
+                          {product.vendor_code ? (
+                            <span>Артикул {product.vendor_code}</span>
+                          ) : null}
                           {existingProject ? (
                             <Badge variant="outline" className="text-[10px]">
                               Проект уже есть
@@ -258,9 +293,20 @@ function PhotoStudioProjectsPage() {
   );
 }
 
-function ProjectCard({ project, accountId }: { project: PhotoProject; accountId: number | null | undefined }) {
+function ProjectCard({
+  project,
+  accountId,
+}: {
+  project: PhotoProject;
+  accountId: number | null | undefined;
+}) {
   const queryClient = useQueryClient();
-  const cachedDetail = queryClient.getQueryData(["photo", "project", String(project.id), accountId]);
+  const cachedDetail = queryClient.getQueryData([
+    "photo",
+    "project",
+    String(project.id),
+    accountId,
+  ]);
   const initialImage = projectImage(project) ?? projectImage(cachedDetail);
   const fallbackImagesQ = useQuery({
     queryKey: ["photo", "project-card-image", accountId, project.nm_id],
@@ -283,7 +329,11 @@ function ProjectCard({ project, accountId }: { project: PhotoProject; accountId:
           <div className="flex gap-4 p-4">
             <div className="h-24 w-24 shrink-0 overflow-hidden rounded-md border bg-muted">
               {image ? (
-                <SafePhotoImg src={image} alt={title} className="h-full w-full object-cover" />
+                <SafePhotoImg
+                  src={image}
+                  alt={title}
+                  className="h-full w-full object-cover"
+                />
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-muted-foreground">
                   <ImageOff className="h-6 w-6" />
@@ -296,7 +346,9 @@ function ProjectCard({ project, accountId }: { project: PhotoProject; accountId:
                 <div className="min-w-0">
                   <div className="truncate font-medium">{title}</div>
                   <div className="mt-1 text-xs text-muted-foreground">
-                    {project.nm_id != null ? `nmID ${project.nm_id}` : "Без nmID"}
+                    {project.nm_id != null
+                      ? `nmID ${project.nm_id}`
+                      : "Без nmID"}
                     {project.vendor_code ? ` · ${project.vendor_code}` : ""}
                   </div>
                 </div>
@@ -341,7 +393,8 @@ function EmptyProjects({ onCreate }: { onCreate: () => void }) {
         <div>
           <div className="text-lg font-semibold">Проектов пока нет</div>
           <div className="mt-1 max-w-md text-sm text-muted-foreground">
-            Создайте проект из карточки WB. У каждого артикула будет отдельная история, изображения и рабочий чат.
+            Создайте проект из карточки WB. У каждого артикула будет отдельная
+            история, изображения и рабочий чат.
           </div>
         </div>
         <Button onClick={onCreate}>
@@ -395,7 +448,11 @@ function ProductThumb({ product }: { product: PortalProductRow }) {
   return (
     <div className="h-14 w-14 shrink-0 overflow-hidden rounded-md border bg-muted">
       {image ? (
-        <SafePhotoImg src={image} alt={title} className="h-full w-full object-cover" />
+        <SafePhotoImg
+          src={image}
+          alt={title}
+          className="h-full w-full object-cover"
+        />
       ) : (
         <div className="flex h-full w-full items-center justify-center text-muted-foreground">
           <ImageOff className="h-4 w-4" />
@@ -405,16 +462,37 @@ function ProductThumb({ product }: { product: PortalProductRow }) {
   );
 }
 
-function SafePhotoImg({ src, alt, className }: { src: string; alt: string; className?: string }) {
+function SafePhotoImg({
+  src,
+  alt,
+  className,
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+}) {
   const displaySrc = photoDisplayUrl(src);
+  const [failed, setFailed] = useState(!displaySrc);
+  if (!displaySrc || failed) {
+    return (
+      <div
+        className={`${className ?? ""} flex items-center justify-center bg-muted text-muted-foreground`}
+        aria-label={alt}
+      >
+        <ImageOff className="h-5 w-5" />
+      </div>
+    );
+  }
   return (
     <img
       src={displaySrc}
-      alt={alt}
+      alt=""
+      aria-label={alt}
       className={className}
       loading="lazy"
       referrerPolicy="no-referrer"
       crossOrigin="anonymous"
+      onError={() => setFailed(true)}
     />
   );
 }
@@ -423,19 +501,26 @@ function extractProjects(data: unknown): PhotoProject[] {
   if (!data) return [];
   if (Array.isArray(data)) return data.filter(isRecordLike) as PhotoProject[];
   const value = data as any;
-  if (Array.isArray(value.items)) return value.items.filter(isRecordLike) as PhotoProject[];
-  if (Array.isArray(value.projects)) return value.projects.filter(isRecordLike) as PhotoProject[];
-  if (Array.isArray(value.data)) return value.data.filter(isRecordLike) as PhotoProject[];
+  if (Array.isArray(value.items))
+    return value.items.filter(isRecordLike) as PhotoProject[];
+  if (Array.isArray(value.projects))
+    return value.projects.filter(isRecordLike) as PhotoProject[];
+  if (Array.isArray(value.data))
+    return value.data.filter(isRecordLike) as PhotoProject[];
   return [];
 }
 
 function extractProducts(data: unknown): PortalProductRow[] {
   if (!data) return [];
-  if (Array.isArray(data)) return data.filter(isRecordLike) as PortalProductRow[];
+  if (Array.isArray(data))
+    return data.filter(isRecordLike) as PortalProductRow[];
   const value = data as any;
-  if (Array.isArray(value.items)) return value.items.filter(isRecordLike) as PortalProductRow[];
-  if (Array.isArray(value.products)) return value.products.filter(isRecordLike) as PortalProductRow[];
-  if (Array.isArray(value.data)) return value.data.filter(isRecordLike) as PortalProductRow[];
+  if (Array.isArray(value.items))
+    return value.items.filter(isRecordLike) as PortalProductRow[];
+  if (Array.isArray(value.products))
+    return value.products.filter(isRecordLike) as PortalProductRow[];
+  if (Array.isArray(value.data))
+    return value.data.filter(isRecordLike) as PortalProductRow[];
   return [];
 }
 
@@ -443,7 +528,10 @@ function isRecordLike(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
 
-function locallyFilterProducts(rows: PortalProductRow[], search: string): PortalProductRow[] {
+function locallyFilterProducts(
+  rows: PortalProductRow[],
+  search: string,
+): PortalProductRow[] {
   if (!search) return rows;
   const query = search.toLowerCase();
   return rows.filter((row) => {
@@ -457,23 +545,31 @@ function locallyFilterProducts(rows: PortalProductRow[], search: string): Portal
 }
 
 function projectTitle(project: PhotoProject | null | undefined): string {
-  return (
+  return cleanPhotoTitle(
     project?.product_name ||
-    (project as any)?.title ||
-    (project as any)?.name ||
-    project?.vendor_code ||
-    (project?.nm_id != null ? `Товар ${project.nm_id}` : `Проект ${project?.id ?? "без ID"}`)
+      (project as any)?.title ||
+      (project as any)?.name ||
+      project?.vendor_code ||
+      (project?.nm_id != null
+        ? `Товар ${project.nm_id}`
+        : `Проект ${project?.id ?? "без ID"}`),
   );
 }
 
 function productTitle(product: PortalProductRow | null | undefined): string {
-  return (
+  return cleanPhotoTitle(
     product?.name ||
-    (product as any)?.title ||
-    (product as any)?.product_name ||
-    product?.vendor_code ||
-    `Товар ${product?.nm_id ?? "без nmID"}`
+      (product as any)?.title ||
+      (product as any)?.product_name ||
+      product?.vendor_code ||
+      `Товар ${product?.nm_id ?? "без nmID"}`,
   );
+}
+
+function cleanPhotoTitle(value: string): string {
+  return value.trim().toLowerCase() === "photo studio chat"
+    ? "Проект фотостудии"
+    : value;
 }
 
 function projectImage(project: unknown): string | null {
@@ -490,7 +586,9 @@ function projectImage(project: unknown): string | null {
   );
 }
 
-function productImage(product: PortalProductRow | null | undefined): string | null {
+function productImage(
+  product: PortalProductRow | null | undefined,
+): string | null {
   if (!isRecordLike(product)) return null;
   return firstString(
     (product as any).thumbnail,
@@ -539,9 +637,12 @@ function firstString(...values: Array<unknown>): string | null {
 
 function statusClass(status: string): string {
   const normalized = status.toLowerCase();
-  if (["approved", "completed", "done"].includes(normalized)) return "bg-success/10 text-success border-success/30";
-  if (["rejected", "failed"].includes(normalized)) return "bg-destructive/10 text-destructive border-destructive/30";
-  if (["in_progress", "running", "queued", "draft"].includes(normalized)) return "bg-primary/10 text-primary border-primary/30";
+  if (["approved", "completed", "done"].includes(normalized))
+    return "bg-success/10 text-success border-success/30";
+  if (["rejected", "failed"].includes(normalized))
+    return "bg-destructive/10 text-destructive border-destructive/30";
+  if (["in_progress", "running", "queued", "draft"].includes(normalized))
+    return "bg-primary/10 text-primary border-primary/30";
   return "bg-muted text-muted-foreground border-border";
 }
 

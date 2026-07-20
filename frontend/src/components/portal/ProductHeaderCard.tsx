@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatMoney } from "@/lib/format";
+import { proxyWbImageUrl } from "@/lib/wb-images";
 
 /** WB basket hosts for image CDN fallback (nmId → basket). */
 function wbBasketHost(vol: number): string {
@@ -68,9 +69,10 @@ function ProductHeroImage({
 }) {
   const candidates = useMemo(
     () =>
-      [src, ...wbImageCandidates(nmId)].filter(
-        (v): v is string => typeof v === "string" && v.length > 0,
-      ),
+      [src, ...wbImageCandidates(nmId)]
+        .filter((v): v is string => typeof v === "string" && v.length > 0)
+        .map((value) => proxyWbImageUrl(value))
+        .filter((v): v is string => typeof v === "string" && v.length > 0),
     [src, nmId],
   );
   const [idx, setIdx] = useState(0);
@@ -123,7 +125,12 @@ function formatDate(v: unknown): string | null {
   });
 }
 
-type HealthState = "critical" | "missing_data" | "waiting_recheck" | "ok" | "unknown";
+type HealthState =
+  | "critical"
+  | "missing_data"
+  | "waiting_recheck"
+  | "ok"
+  | "unknown";
 
 export interface ProductHeaderCardProps {
   nmId: string | number;
@@ -140,8 +147,10 @@ export interface ProductHeaderCardProps {
 
 const STATUS_STYLE: Record<HealthState, string> = {
   critical: "border-destructive/40 bg-destructive/10 text-destructive",
-  missing_data: "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200",
-  waiting_recheck: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  missing_data:
+    "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+  waiting_recheck:
+    "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
   ok: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   unknown: "border-border bg-muted text-muted-foreground",
 };
@@ -159,12 +168,19 @@ function computeHealthState(business: any, dataQuality: any): HealthState {
   const summary = bi?.summary ?? {};
   const openCount = Number(summary?.open_count ?? bi?.open?.length ?? 0);
   const confirmed = Number(summary?.money_impact?.confirmed_loss_amount ?? 0);
-  const dqStatus = txt(dataQuality?.status ?? dataQuality?.data?.status).toLowerCase();
-  const dqBlocked = dqStatus === "blocked" || Number(dataQuality?.data?.missing_count ?? 0) > 0;
+  const dqStatus = txt(
+    dataQuality?.status ?? dataQuality?.data?.status,
+  ).toLowerCase();
+  const dqBlocked =
+    dqStatus === "blocked" || Number(dataQuality?.data?.missing_count ?? 0) > 0;
   if (confirmed > 0 || openCount > 3) return "critical";
   if (dqBlocked) return "missing_data";
   const recheckPending = Array.isArray(bi?.open)
-    ? bi.open.some((it: any) => txt(it?.status).toLowerCase() === "in_progress" || txt(it?.status).toLowerCase() === "waiting_recheck")
+    ? bi.open.some(
+        (it: any) =>
+          txt(it?.status).toLowerCase() === "in_progress" ||
+          txt(it?.status).toLowerCase() === "waiting_recheck",
+      )
     : false;
   if (recheckPending) return "waiting_recheck";
   if (openCount === 0 && !dqBlocked) return "ok";
@@ -185,20 +201,37 @@ export function ProductHeaderCard({
 }: ProductHeaderCardProps) {
   const id = identity?.data ?? identity ?? {};
   const name = pick<string>(id, ["title", "name"]) ?? `Артикул ${nmId}`;
-  const vendorCode = pick<string>(id, ["vendor_code", "article", "supplier_article"]);
+  const vendorCode = pick<string>(id, [
+    "vendor_code",
+    "article",
+    "supplier_article",
+  ]);
   const brand = pick<string>(id, ["brand"]);
   const subject = pick<string>(id, ["subject_name", "subject", "category"]);
   const barcode = pick<string>(id, ["barcode", "barcodes", "sku_barcode"]);
-  const wbUrl = pick<string>(id, ["wb_url", "external_url", "url", "wildberries_url"]);
+  const wbUrl = pick<string>(id, [
+    "wb_url",
+    "external_url",
+    "url",
+    "wildberries_url",
+  ]);
 
   const priceData = price?.data ?? price ?? {};
-  const currentPrice = pick<number | string>(
-    { ...id, ...priceData },
-    ["current_price", "price", "price_final", "price_after_discount"],
-  );
+  const currentPrice = pick<number | string>({ ...id, ...priceData }, [
+    "current_price",
+    "price",
+    "price_final",
+    "price_after_discount",
+  ]);
 
   const stockData = stock?.data ?? stock ?? {};
-  const stockQty = pick<number>(stockData, ["quantity", "qty", "stock_qty", "available", "total_available"]);
+  const stockQty = pick<number>(stockData, [
+    "quantity",
+    "qty",
+    "stock_qty",
+    "available",
+    "total_available",
+  ]);
 
   const lastSync = pick<string>(
     { ...id, ...(dataQuality?.data ?? dataQuality ?? {}) },
@@ -211,12 +244,16 @@ export function ProductHeaderCard({
 
   const state = computeHealthState(business, dataQuality);
 
-  const barcodeText = Array.isArray(barcode) ? String(barcode[0] ?? "") : txt(barcode);
+  const barcodeText = Array.isArray(barcode)
+    ? String(barcode[0] ?? "")
+    : txt(barcode);
   const priceText =
     currentPrice != null && currentPrice !== ""
       ? formatMoney(Number(currentPrice))
       : null;
-  const stockText = Number.isFinite(Number(stockQty)) ? `${stockQty} шт.` : null;
+  const stockText = Number.isFinite(Number(stockQty))
+    ? `${stockQty} шт.`
+    : null;
   const syncText = formatDate(lastSync);
 
   const openResultsHref = `/results?nm_id=${nmId}`;
@@ -231,13 +268,19 @@ export function ProductHeaderCard({
         <div className="grid grid-cols-[80px_minmax(0,1fr)] gap-3 sm:grid-cols-[112px_minmax(0,1fr)_auto] sm:gap-4">
           {/* Изображение — с фолбэком на WB CDN, затем на заглушку. */}
           <div className="h-20 w-20 sm:h-28 sm:w-28 shrink-0 overflow-hidden rounded-lg border bg-muted">
-            <ProductHeroImage src={image ?? null} nmId={nmId} alt={String(name)} />
+            <ProductHeroImage
+              src={image ?? null}
+              nmId={nmId}
+              alt={String(name)}
+            />
           </div>
 
           {/* Идентичность и метрики */}
           <div className="min-w-0 space-y-2">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="truncate text-base sm:text-lg font-semibold">{String(name)}</h2>
+              <h2 className="truncate text-base sm:text-lg font-semibold">
+                {String(name)}
+              </h2>
               <Badge
                 variant="outline"
                 className={cn("text-[10px]", STATUS_STYLE[state])}
@@ -249,8 +292,12 @@ export function ProductHeaderCard({
 
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
               <span className="font-mono">nmID {nmId}</span>
-              {vendorCode ? <span className="font-mono">арт. {vendorCode}</span> : null}
-              {barcodeText ? <span className="font-mono">штрихкод {barcodeText}</span> : null}
+              {vendorCode ? (
+                <span className="font-mono">арт. {vendorCode}</span>
+              ) : null}
+              {barcodeText ? (
+                <span className="font-mono">штрихкод {barcodeText}</span>
+              ) : null}
               {brand ? <span>Бренд: {brand}</span> : null}
               {subject ? <span>Категория: {subject}</span> : null}
             </div>
@@ -282,7 +329,12 @@ export function ProductHeaderCard({
           {/* Действия — desktop справа, mobile снизу */}
           <div className="col-span-2 flex flex-wrap items-center gap-1.5 sm:col-span-1 sm:justify-end">
             {wbUrl ? (
-              <Button asChild size="sm" variant="outline" className="h-8 text-xs">
+              <Button
+                asChild
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs"
+              >
                 <a href={String(wbUrl)} target="_blank" rel="noreferrer">
                   <ExternalLink className="mr-1 h-3.5 w-3.5" /> Открыть в WB
                 </a>
@@ -303,17 +355,19 @@ export function ProductHeaderCard({
                 <ShieldCheck className="mr-1 h-3.5 w-3.5" /> Проверить карточку
               </Link>
             </Button>
-            <Button asChild size="sm" variant="outline" className="h-8 text-xs" data-testid="product-header-open-results">
+            <Button
+              asChild
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs"
+              data-testid="product-header-open-results"
+            >
               <Link to={openResultsHref}>
                 <ListChecks className="mr-1 h-3.5 w-3.5" /> Все результаты
               </Link>
             </Button>
             {onCreateTask ? (
-              <Button
-                size="sm"
-                className="h-8 text-xs"
-                onClick={onCreateTask}
-              >
+              <Button size="sm" className="h-8 text-xs" onClick={onCreateTask}>
                 Оформить задачу
               </Button>
             ) : null}

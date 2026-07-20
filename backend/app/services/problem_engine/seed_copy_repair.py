@@ -61,6 +61,14 @@ OLD_SEEDED_RULE_COPY: dict[str, dict[str, Any]] = {
         "formula": "ad_spend_7d > 500 AND unit_profit_after_ads < 0; probable_loss = abs(unit_profit_after_ads) * units_sold_7d",
         "evidence_recheck": "Re-run after ads spend, bid, price, or profit changes.",
     },
+    "ads_spend_no_orders": {
+        "recheck": "Re-run after bid, budget, cluster, price, card, or ad stats updates.",
+        "formula": "ad_spend_7d > 1000 AND orders_7d = 0; probable_loss = ad_spend_7d",
+        "evidence_recheck": "Re-run after campaign, card, price, or ad stats updates.",
+        "trust_notes": [
+            "This rule opens an ads review instead of automatically stopping campaigns."
+        ],
+    },
     "promo_not_profitable": {
         "recheck": "Re-run after promo spend, price, cost, or margin data changes.",
         "formula": "cost_price exists AND promo_spend_30d > 0 AND (unit_profit < 0 OR margin_pct < 10)",
@@ -75,6 +83,96 @@ OLD_SEEDED_RULE_COPY: dict[str, dict[str, Any]] = {
         "evidence_recheck": "Re-run after price, cost, fee, or margin changes.",
         "trust_notes": [
             "Target price is calculated from cost plus commission, logistics, acquiring, and storage."
+        ],
+    },
+    "low_conversion_card": {
+        "recheck": "Re-run after card, price, ad traffic, or analytics updates.",
+        "formula": "views_30d > 1000 AND conversion_rate < 1; opportunity = revenue_30d for prioritization",
+        "evidence_recheck": "Re-run after card, price, ad traffic, or analytics updates.",
+        "trust_notes": [
+            "Revenue is used for prioritization only; this is an opportunity, not a confirmed loss."
+        ],
+    },
+    "high_return_rate": {
+        "recheck": "Re-run after card, sizing, photo, description, sales, or returns updates.",
+        "formula": "sales_30d >= 5 AND return_rate > 30; probable_loss = revenue_30d * return_rate / 100",
+        "evidence_recheck": "Re-run after card, sizing, description, sales, or returns updates.",
+    },
+    "high_ad_drr": {
+        "recheck": "Re-run after bids, budget, price, card, ad stats, or sales updates.",
+        "formula": "ad_spend_7d > 1000 AND revenue_7d > 0 AND ad_spend_7d / revenue_7d * 100 > 25",
+        "evidence_recheck": "Re-run after ads, price, card, or sales updates.",
+    },
+    "high_ad_cpo": {
+        "recheck": "Re-run after bids, cluster, budget, card, or price updates.",
+        "formula": "ad_spend_7d > 1000 AND ad_orders_7d > 0 AND ad_cpo_7d > 500",
+        "evidence_recheck": "Re-run after bids, cluster, card, or price updates.",
+    },
+    "low_ads_ctr": {
+        "recheck": "Re-run after photo, bid, position, cluster, price, or ad stats updates.",
+        "formula": "ad_views_7d > 1000 AND ad_ctr_7d < 0.5",
+        "evidence_recheck": "Re-run after photo, bid, position, cluster, or price updates.",
+        "trust_notes": [
+            "Ad spend is used for prioritization, not as a confirmed loss."
+        ],
+    },
+    "ads_stockout_risk": {
+        "recheck": "Re-run after supply, stock, or ads updates.",
+        "formula": "ad_spend_7d > 500 AND days_of_stock < 3 AND avg_daily_sales_7d > 0",
+        "evidence_recheck": "Re-run after stock, supply, or ads updates.",
+    },
+    "stockout_now_with_recent_orders": {
+        "recheck": "Re-run after stock refresh or supply creation.",
+        "formula": "stock_qty <= 0 AND orders_7d > 0",
+        "evidence_recheck": "Re-run after stock refresh or supply creation.",
+    },
+    "stockout_risk_14d": {
+        "recheck": "Re-run after stock, supply, or sales velocity updates.",
+        "formula": "7 <= days_of_stock < 14 AND avg_daily_sales_14d > 1",
+        "evidence_recheck": "Re-run after stock, supply, or sales velocity updates.",
+    },
+    "storage_cost_pressure": {
+        "recheck": "Re-run after stock, storage, sales, or liquidation updates.",
+        "formula": "stock_qty > 50 AND days_of_stock > 60 AND storage_fee_per_unit > 5",
+        "evidence_recheck": "Re-run after stock, storage, sales, or safe liquidation updates.",
+    },
+    "no_sales_with_views": {
+        "recheck": "Re-run after card, price, ads, or analytics updates.",
+        "formula": "views_30d > 1000 AND orders_30d = 0",
+        "evidence_recheck": "Re-run after card, price, ads, or analytics updates.",
+    },
+    "price_offer_blocks_conversion": {
+        "recheck": "Re-run after price, card, ads, or analytics updates.",
+        "formula": "views_30d > 1000 AND conversion_rate < 1 AND margin_pct > 30",
+        "evidence_recheck": "Re-run after price, card, ads, or analytics updates.",
+        "trust_notes": [
+            "This is a price review hypothesis, not an automatic price decrease."
+        ],
+    },
+    "raise_price_possible_high_demand": {
+        "recheck": "Re-run after price, promo, ads, supply, or stock updates.",
+        "formula": "orders_7d > 20 AND days_of_stock < 7 AND margin_pct < 30 AND price_after_discount > 0",
+        "evidence_recheck": "Re-run after price, promo, ads, supply, or stock updates.",
+    },
+    "negative_reviews_need_reply": {
+        "recheck": "Re-run after review replies or reputation updates.",
+        "formula": "negative_reviews_30d > 0 AND unanswered_negative_reviews_30d > 0",
+        "evidence_recheck": "Re-run after review replies or reputation updates.",
+        "trust_notes": [
+            "Revenue is used for prioritization, not as a confirmed loss."
+        ],
+    },
+    "questions_need_reply": {
+        "recheck": "Re-run after question replies or reputation updates.",
+        "formula": "unanswered_questions_30d > 0",
+        "evidence_recheck": "Re-run after question replies or reputation updates.",
+    },
+    "low_product_rating": {
+        "recheck": "Re-run after review replies, card fixes, quality checks, or reputation updates.",
+        "formula": "avg_rating_30d > 0 AND avg_rating_30d < 4 AND negative_reviews_30d >= 2",
+        "evidence_recheck": "Re-run after review replies, card fixes, quality checks, or reputation updates.",
+        "trust_notes": [
+            "Revenue is used for prioritization; rating root cause requires manual review."
         ],
     },
     "dead_stock": {

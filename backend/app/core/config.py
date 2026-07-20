@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     database_max_overflow: int = 40
     database_pool_timeout_seconds: int = 60
     database_pool_recycle_seconds: int = 1800
+    database_statement_timeout_ms: int = 120_000
+    database_lock_timeout_ms: int = 20_000
+    database_idle_in_transaction_timeout_ms: int = 300_000
 
     jwt_secret_key: str = DEFAULT_ACCESS_SECRET
     jwt_refresh_secret_key: str = DEFAULT_REFRESH_SECRET
@@ -73,8 +76,8 @@ class Settings(BaseSettings):
     default_page_size: int = 50
     max_page_size: int = 200
     heavy_endpoint_cache_ttl_seconds: int = 600
-    money_response_snapshot_refresh_minutes: int = 10
-    money_response_snapshot_max_stale_minutes: int = 30
+    money_response_snapshot_refresh_minutes: int = 1440
+    money_response_snapshot_max_stale_minutes: int = 1440
     money_response_snapshot_active_days: int = 7
     money_response_snapshot_refresh_max_specs_per_account: int = 80
     money_response_snapshot_refresh_min_access_count: int = 2
@@ -213,6 +216,9 @@ class Settings(BaseSettings):
         "database_max_overflow",
         "database_pool_timeout_seconds",
         "database_pool_recycle_seconds",
+        "database_statement_timeout_ms",
+        "database_lock_timeout_ms",
+        "database_idle_in_transaction_timeout_ms",
         "money_response_snapshot_refresh_minutes",
         "money_response_snapshot_max_stale_minutes",
         "money_response_snapshot_active_days",

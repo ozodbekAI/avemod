@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +8,7 @@ from app.core.db import get_db_session
 from app.core.pagination import Page
 from app.models.accounts import WBAccount
 from app.models.auth import AuthUser
+from app.models.sync import WBSyncRun
 from app.schemas.accounts import (
     WBAccountCreate,
     WBAccountRead,
@@ -20,9 +21,82 @@ from app.services.auth import (
     get_current_user,
     list_user_account_access,
 )
+from app.services.sync import SyncOrchestrator
+from app.jobs.sync_jobs import process_queued_wb_sync_run
 
 router = APIRouter(tags=["accounts"])
 service = AccountService()
+
+TOKEN_CATEGORY_INITIAL_SYNC_DOMAINS: dict[str, tuple[str, ...]] = {
+    "content": ("product_cards",),
+    "prices": ("prices",),
+    "statistics": ("orders", "sales"),
+    "analytics": ("stocks", "analytics"),
+    "finance": ("finance",),
+    "promotion": ("ads", "promotions"),
+    "supplies": ("supplies",),
+    "documents": ("documents",),
+    "tariffs": ("tariffs",),
+}
+
+
+async def _latest_sync_status_for_domain(
+    session: AsyncSession,
+    *,
+    account_id: int,
+    domain: str,
+) -> str | None:
+    return (
+        await session.execute(
+            select(WBSyncRun.status)
+            .where(
+                WBSyncRun.account_id == account_id,
+                WBSyncRun.domain == domain,
+            )
+            .order_by(WBSyncRun.started_at.desc(), WBSyncRun.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def _enqueue_initial_sync_for_token(
+    session: AsyncSession,
+    *,
+    account_id: int,
+    category: str,
+) -> list[int]:
+    domains = TOKEN_CATEGORY_INITIAL_SYNC_DOMAINS.get(str(category), ())
+    if not domains:
+        return []
+    orchestrator = SyncOrchestrator(session)
+    run_ids: list[int] = []
+    for domain in domains:
+        active_run_id = (
+            await session.execute(
+                select(WBSyncRun.id)
+                .where(
+                    WBSyncRun.account_id == account_id,
+                    WBSyncRun.domain == domain,
+                    WBSyncRun.status.in_(("queued", "running", "in_progress")),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if active_run_id is not None:
+            continue
+        latest_status = await _latest_sync_status_for_domain(
+            session, account_id=account_id, domain=domain
+        )
+        if latest_status not in {None, "failed", "partial", "skipped"}:
+            continue
+        run = await orchestrator.enqueue(
+            account_id=account_id,
+            domain=domain,
+            trigger="token_configured",
+            force_full=True,
+        )
+        run_ids.append(int(run.id))
+    return run_ids
 
 
 @router.get("/accounts", response_model=Page[WBAccountRead])
@@ -89,10 +163,20 @@ async def list_tokens(
 async def upsert_token(
     account_id: int,
     payload: WBTokenUpsert,
+    background_tasks: BackgroundTasks,
     _: AuthUser = Depends(get_current_superuser),
     session: AsyncSession = Depends(get_db_session),
 ) -> WBTokenRead:
     token = await service.upsert_token(session, account_id, payload)
+    run_ids = (
+        await _enqueue_initial_sync_for_token(
+            session, account_id=account_id, category=payload.category
+        )
+        if payload.is_active
+        else []
+    )
     await session.commit()
     await session.refresh(token)
+    for run_id in run_ids:
+        background_tasks.add_task(process_queued_wb_sync_run, run_id)
     return token

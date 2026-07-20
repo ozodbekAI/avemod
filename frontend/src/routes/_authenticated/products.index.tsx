@@ -43,6 +43,7 @@ import {
 import { formatMoney } from "@/lib/format";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { cn } from "@/lib/utils";
+import { proxyWbImageUrl } from "@/lib/wb-images";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/products/")({
@@ -54,59 +55,35 @@ export const Route = createFileRoute("/_authenticated/products/")({
 
 const STATUS_COLORS: Record<string, string> = {
   ok: "border-success/25 bg-success/10 text-success",
-  healthy:
-    "border-success/25 bg-success/10 text-success",
-  trusted:
-    "border-success/25 bg-success/10 text-success",
-  financial_final:
-    "border-success/25 bg-success/10 text-success",
-  complete:
-    "border-success/25 bg-success/10 text-success",
+  healthy: "border-success/25 bg-success/10 text-success",
+  trusted: "border-success/25 bg-success/10 text-success",
+  financial_final: "border-success/25 bg-success/10 text-success",
+  complete: "border-success/25 bg-success/10 text-success",
   done: "border-success/25 bg-success/10 text-success",
-  resolved:
-    "border-success/25 bg-success/10 text-success",
+  resolved: "border-success/25 bg-success/10 text-success",
 
-  warning:
-    "border-warning/30 bg-warning/10 text-warning",
+  warning: "border-warning/30 bg-warning/10 text-warning",
   risk: "border-warning/30 bg-warning/10 text-warning",
-  degraded:
-    "border-warning/30 bg-warning/10 text-warning",
-  running:
-    "border-warning/30 bg-warning/10 text-warning",
-  stale:
-    "border-warning/30 bg-warning/10 text-warning",
-  syncing:
-    "border-warning/30 bg-warning/10 text-warning",
-  provisional:
-    "border-warning/30 bg-warning/10 text-warning",
-  operational_provisional:
-    "border-warning/30 bg-warning/10 text-warning",
-  test_only:
-    "border-warning/30 bg-warning/10 text-warning",
-  low_stock:
-    "border-warning/30 bg-warning/10 text-warning",
-  overstock:
-    "border-warning/30 bg-warning/10 text-warning",
-  partial:
-    "border-warning/30 bg-warning/10 text-warning",
-  in_progress:
-    "border-warning/30 bg-warning/10 text-warning",
-  postponed:
-    "border-warning/30 bg-warning/10 text-warning",
+  degraded: "border-warning/30 bg-warning/10 text-warning",
+  running: "border-warning/30 bg-warning/10 text-warning",
+  stale: "border-warning/30 bg-warning/10 text-warning",
+  syncing: "border-warning/30 bg-warning/10 text-warning",
+  provisional: "border-warning/30 bg-warning/10 text-warning",
+  operational_provisional: "border-warning/30 bg-warning/10 text-warning",
+  test_only: "border-warning/30 bg-warning/10 text-warning",
+  low_stock: "border-warning/30 bg-warning/10 text-warning",
+  overstock: "border-warning/30 bg-warning/10 text-warning",
+  partial: "border-warning/30 bg-warning/10 text-warning",
+  in_progress: "border-warning/30 bg-warning/10 text-warning",
+  postponed: "border-warning/30 bg-warning/10 text-warning",
 
-  critical:
-    "border-destructive/30 bg-destructive/10 text-destructive",
+  critical: "border-destructive/30 bg-destructive/10 text-destructive",
   bad: "border-destructive/30 bg-destructive/10 text-destructive",
-  blocked:
-    "border-destructive/30 bg-destructive/10 text-destructive",
-  data_blocked:
-    "border-destructive/30 bg-destructive/10 text-destructive",
-  error:
-    "border-destructive/30 bg-destructive/10 text-destructive",
-  failed:
-    "border-destructive/30 bg-destructive/10 text-destructive",
-  missing:
-    "border-destructive/30 bg-destructive/10 text-destructive",
+  blocked: "border-destructive/30 bg-destructive/10 text-destructive",
+  data_blocked: "border-destructive/30 bg-destructive/10 text-destructive",
+  error: "border-destructive/30 bg-destructive/10 text-destructive",
+  failed: "border-destructive/30 bg-destructive/10 text-destructive",
+  missing: "border-destructive/30 bg-destructive/10 text-destructive",
 
   not_analyzed: "border-border bg-muted text-muted-foreground",
   not_configured: "border-border bg-muted text-muted-foreground",
@@ -175,7 +152,9 @@ function extractRows(data: PortalProductsPage | undefined): PortalProductRow[] {
 }
 
 function normalizeKey(value?: string | null) {
-  return String(value ?? "").trim().toLowerCase();
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
 }
 
 function statusLabel(value?: string | null) {
@@ -186,11 +165,16 @@ function statusLabel(value?: string | null) {
 
 function statusBadge(value?: string | null, className?: string) {
   const key = normalizeKey(value) || "unknown";
-  const cls = STATUS_COLORS[key] ?? "border-border bg-muted text-muted-foreground";
+  const cls =
+    STATUS_COLORS[key] ?? "border-border bg-muted text-muted-foreground";
   return (
     <Badge
       variant="outline"
-      className={cn("h-5 max-w-full truncate px-1.5 text-[10px] font-medium leading-none", cls, className)}
+      className={cn(
+        "h-5 max-w-full truncate px-1.5 text-[10px] font-medium leading-none",
+        cls,
+        className,
+      )}
     >
       {statusLabel(key)}
     </Badge>
@@ -240,14 +224,7 @@ function wbImageCandidates(nmId: string | number): string[] {
   const vol = Math.floor(n / 100000);
   const part = Math.floor(n / 1000);
   const host = wbBasketHost(vol);
-  return [
-    `https://${host}/vol${vol}/part${part}/${n}/images/c246x328/1.webp`,
-  ];
-}
-
-function proxyWbImageUrl(src: string | null): string | null {
-  if (!src) return null;
-  return src;
+  return [`https://${host}/vol${vol}/part${part}/${n}/images/c246x328/1.webp`];
 }
 
 function firstString(...values: unknown[]): string | null {
@@ -300,16 +277,11 @@ function productImage(row: PortalProductRow): string | null {
   );
 }
 
-function ProductImage({
-  row,
-  alt,
-}: {
-  row: PortalProductRow;
-  alt: string;
-}) {
-  const primary = productImage(row) ?? wbImageCandidates(row.nm_id)[0] ?? null;
-  const displayUrl = proxyWbImageUrl(primary);
-  const candidates = displayUrl ? [displayUrl] : [];
+function ProductImage({ row, alt }: { row: PortalProductRow; alt: string }) {
+  const candidates = [productImage(row), ...wbImageCandidates(row.nm_id)]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => proxyWbImageUrl(value))
+    .filter((value): value is string => Boolean(value));
   const [idx, setIdx] = useState(0);
 
   if (!candidates.length || idx >= candidates.length) {
@@ -437,7 +409,9 @@ function CompactMetric({
 }) {
   return (
     <div className="min-w-0">
-      <div className="truncate text-[11px] leading-4 text-muted-foreground">{label}</div>
+      <div className="truncate text-[11px] leading-4 text-muted-foreground">
+        {label}
+      </div>
       <div
         className={cn(
           "truncate text-sm font-semibold leading-5 tabular-nums text-foreground",
@@ -496,14 +470,28 @@ function ProductCard({ row }: { row: PortalProductRow }) {
               <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden text-xs leading-5 text-muted-foreground">
                 <CopyToken label="nm ID" value={nmId} />
                 <CopyToken label="Артикул" value={row.vendor_code} />
-                {row.brand ? <span className="shrink-0 truncate">{row.brand}</span> : null}
-                {row.subject_name ? <span className="hidden shrink truncate lg:inline">{row.subject_name}</span> : null}
+                {row.brand ? (
+                  <span className="shrink-0 truncate">{row.brand}</span>
+                ) : null}
+                {row.subject_name ? (
+                  <span className="hidden shrink truncate lg:inline">
+                    {row.subject_name}
+                  </span>
+                ) : null}
               </div>
               <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden">
                 {statusBadge(row.card_quality_state, "shrink-0")}
-                {row.stock_state ? statusBadge(row.stock_state, "hidden shrink-0 md:inline-flex") : null}
+                {row.stock_state
+                  ? statusBadge(
+                      row.stock_state,
+                      "hidden shrink-0 md:inline-flex",
+                    )
+                  : null}
                 {row.trust_state || row.data_trust_state
-                  ? statusBadge(row.trust_state || row.data_trust_state, "hidden shrink-0 xl:inline-flex")
+                  ? statusBadge(
+                      row.trust_state || row.data_trust_state,
+                      "hidden shrink-0 xl:inline-flex",
+                    )
                   : null}
               </div>
             </div>
@@ -644,9 +632,7 @@ function ProductsPage() {
           offset: pageParam,
           ...(debounced ? { search: debounced } : {}),
           ...(qualityStatus ? { card_quality_status: qualityStatus } : {}),
-          ...(sortKey && sortKey !== "margin"
-            ? { sort_by: sortKey, sort_dir: sortDir }
-            : {}),
+          ...(sortKey ? { sort_by: sortKey, sort_dir: sortDir } : {}),
         },
         { dateFrom, dateTo },
       ),
@@ -662,6 +648,7 @@ function ProductsPage() {
 
   const pages = data?.pages ?? [];
   const rows = pages.flatMap(extractRows);
+  const summary = (pages[0]?.summary ?? {}) as Record<string, unknown>;
   const total = pages[0]?.total ?? rows.length;
   const loadedCount = rows.length;
 
@@ -690,7 +677,7 @@ function ProductsPage() {
       key === "revenue"
         ? row.revenue
         : key === "profit"
-          ? row.profit ?? row.estimated_profit
+          ? (row.profit ?? row.estimated_profit)
           : key === "margin"
             ? row.margin
             : key === "quality_score"
@@ -721,7 +708,10 @@ function ProductsPage() {
     }
   };
 
-  const pageRevenue = filtered.reduce((sum, row) => sum + (row.revenue ?? 0), 0);
+  const pageRevenue = filtered.reduce(
+    (sum, row) => sum + (row.revenue ?? 0),
+    0,
+  );
   const pageProfit = filtered.reduce(
     (sum, row) => sum + (row.profit ?? row.estimated_profit ?? 0),
     0,
@@ -734,6 +724,26 @@ function ProductsPage() {
     (sum, row) => sum + (row.open_actions_count ?? 0),
     0,
   );
+  const summaryRevenue = numberOrNull(
+    summary.revenue_total ?? summary.total_revenue,
+  );
+  const summaryProfit = numberOrNull(
+    summary.profit_total ?? summary.total_profit,
+  );
+  const summaryIssues = numberOrNull(
+    summary.quality_issues_count ?? summary.total_quality_issues,
+  );
+  const summaryActions = numberOrNull(
+    summary.open_actions_count ?? summary.total_open_actions,
+  );
+  const revenueScope = summaryRevenue != null ? "всего" : "загр.";
+  const profitScope = summaryProfit != null ? "всего" : "загр.";
+  const issuesScope =
+    summaryIssues != null && summaryActions != null ? "всего" : "загр.";
+  const displayedRevenue = summaryRevenue ?? pageRevenue;
+  const displayedProfit = summaryProfit ?? pageProfit;
+  const displayedIssues = summaryIssues ?? issueCount;
+  const displayedActions = summaryActions ?? actionCount;
 
   useEffect(() => {
     const target = loadMoreRef.current;
@@ -787,22 +797,40 @@ function ProductsPage() {
         {activeId ? (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-4 text-muted-foreground">
             <span>
-              Загружено <span className="font-semibold text-foreground">{loadedCount.toLocaleString("ru-RU")}</span>
+              Загружено{" "}
+              <span className="font-semibold text-foreground">
+                {loadedCount.toLocaleString("ru-RU")}
+              </span>
+              {total > loadedCount
+                ? ` из ${total.toLocaleString("ru-RU")}`
+                : ""}
             </span>
             <span>
-              Выручка <span className="font-semibold text-foreground">{formatMoney(pageRevenue)}</span>
+              Выручка{" "}
+              <span className="font-semibold text-foreground">
+                {formatMoney(displayedRevenue)}
+              </span>{" "}
+              <span className="text-muted-foreground/80">{revenueScope}</span>
             </span>
             <span>
               Прибыль{" "}
-              <span className={cn("font-semibold text-foreground", pageProfit < 0 && "text-destructive")}>
-                {formatMoney(pageProfit)}
-              </span>
+              <span
+                className={cn(
+                  "font-semibold text-foreground",
+                  displayedProfit < 0 && "text-destructive",
+                )}
+              >
+                {formatMoney(displayedProfit)}
+              </span>{" "}
+              <span className="text-muted-foreground/80">{profitScope}</span>
             </span>
             <span>
               Проблемы/действия{" "}
               <span className="font-semibold text-foreground">
-                {issueCount.toLocaleString("ru-RU")} / {actionCount.toLocaleString("ru-RU")}
-              </span>
+                {displayedIssues.toLocaleString("ru-RU")} /{" "}
+                {displayedActions.toLocaleString("ru-RU")}
+              </span>{" "}
+              <span className="text-muted-foreground/80">{issuesScope}</span>
             </span>
           </div>
         ) : null}
@@ -935,7 +963,10 @@ function ProductsPage() {
       )}
 
       {activeId && !isLoading && !error && filtered.length > 0 && (
-        <div ref={loadMoreRef} className="flex justify-center py-3 text-xs text-muted-foreground">
+        <div
+          ref={loadMoreRef}
+          className="flex justify-center py-3 text-xs text-muted-foreground"
+        >
           {isFetchingNextPage
             ? "Загружаем еще товары..."
             : hasNextPage

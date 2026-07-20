@@ -161,7 +161,23 @@ function BusinessTab() {
       {!q.isLoading && activeId && (
         <Card>
           <CardContent className="p-0">
-            <div className="overflow-x-auto">
+            <div className="md:hidden">
+              <div className="divide-y">
+                {filtered.slice(0, 200).map((c, index) => (
+                  <CatalogMobileCard
+                    key={catalogRowKey(c, index)}
+                    item={c}
+                  />
+                ))}
+              </div>
+              {filtered.length === 0 && (
+                <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  Нет карточек в этом фильтре.
+                </div>
+              )}
+            </div>
+
+            <div className="hidden overflow-x-auto md:block">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -179,7 +195,7 @@ function BusinessTab() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.slice(0, 200).map((c) => {
+                  {filtered.slice(0, 200).map((c, index) => {
                     const profit = c.money?.profit?.after_ads ?? 0;
                     const margin = c.money?.profit?.margin_after_ads_percent;
                     const dos = c.stock?.days_of_stock;
@@ -193,7 +209,7 @@ function BusinessTab() {
                     const cancelTone = cancelRate != null && cancelRate > 50 ? "text-destructive" : cancelRate != null && cancelRate > 20 ? "text-warning" : "";
                     const returnTone = returnRate != null && returnRate > 20 ? "text-destructive" : returnRate != null && returnRate > 10 ? "text-warning" : "";
                     return (
-                      <TableRow key={c.sku_id} className="hover:bg-accent/40">
+                      <TableRow key={catalogRowKey(c, index)} className="hover:bg-accent/40">
                         <TableCell className="max-w-[280px]">
                           <div className="text-sm font-medium truncate">{c.title || c.vendor_code || "—"}</div>
                           <div className="text-[11px] text-muted-foreground font-mono truncate">
@@ -244,6 +260,128 @@ function BusinessTab() {
           </CardContent>
         </Card>
       )}
+    </div>
+  );
+}
+
+function catalogRowKey(item: MCardItem, index: number): string {
+  return [
+    "catalog",
+    item.sku_id,
+    item.nm_id,
+    item.barcode,
+    item.vendor_code,
+    index,
+  ]
+    .filter((part) => part !== null && part !== undefined && part !== "")
+    .join(":");
+}
+
+function CatalogMobileCard({ item }: { item: MCardItem }) {
+  const profit = item.money?.profit?.after_ads ?? 0;
+  const margin = item.money?.profit?.margin_after_ads_percent;
+  const daysOfStock = item.stock?.days_of_stock;
+  const cancelRate = (item as any).operations?.cancel_rate_percent as
+    | number
+    | null
+    | undefined;
+  const returnRate = (item as any).operations?.return_rate_percent as
+    | number
+    | null
+    | undefined;
+
+  return (
+    <div className="space-y-3 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="line-clamp-2 text-sm font-semibold leading-snug">
+            {item.title || item.vendor_code || "Товар"}
+          </div>
+          <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+            <span>{item.vendor_code ?? "без артикула"}</span>
+            {item.nm_id ? <span>nm {item.nm_id}</span> : null}
+          </div>
+        </div>
+        <BusinessVerdictBadge
+          status={item.business_verdict?.status ?? "unknown"}
+        />
+      </div>
+
+      {item.business_verdict?.short_text ? (
+        <div className="rounded-md bg-muted/35 px-2.5 py-2 text-xs text-muted-foreground">
+          {item.business_verdict.short_text}
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-2 gap-2">
+        <CatalogMetric label="Выручка" value={formatMoney(item.money?.revenue ?? 0)} />
+        <CatalogMetric
+          label="Прибыль"
+          value={formatMoney(profit)}
+          tone={profit < 0 ? "danger" : profit > 0 ? "success" : undefined}
+        />
+        <CatalogMetric
+          label="Маржа"
+          value={margin != null ? `${margin.toFixed(1)}%` : "—"}
+        />
+        <CatalogMetric
+          label="Остаток"
+          value={item.stock?.stock_value ? formatMoney(item.stock.stock_value) : "—"}
+          sub={daysOfStock != null ? `${fmtNum(daysOfStock)} дн. стока` : undefined}
+        />
+        <CatalogMetric
+          label="Отмены"
+          value={cancelRate != null ? `${cancelRate.toFixed(1)}%` : "—"}
+          tone={cancelRate != null && cancelRate > 20 ? "warning" : undefined}
+        />
+        <CatalogMetric
+          label="Возвраты"
+          value={returnRate != null ? `${returnRate.toFixed(1)}%` : "—"}
+          tone={returnRate != null && returnRate > 10 ? "warning" : undefined}
+        />
+      </div>
+
+      <div className="flex justify-end">
+        <Button asChild variant="outline" size="sm" className="h-8 text-xs">
+          <Link to={`/sku/${item.sku_id}` as any}>Открыть карточку</Link>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function CatalogMetric({
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "success" | "warning" | "danger";
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "text-destructive"
+      : tone === "success"
+        ? "text-success"
+        : tone === "warning"
+          ? "text-warning"
+          : "text-foreground";
+  return (
+    <div className="min-w-0 rounded-md border bg-card px-2.5 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-0.5 truncate text-sm font-semibold tabular-nums ${toneClass}`}>
+        {value}
+      </div>
+      {sub ? (
+        <div className="mt-1 truncate text-[10px] text-muted-foreground">
+          {sub}
+        </div>
+      ) : null}
     </div>
   );
 }

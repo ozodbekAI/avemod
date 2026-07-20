@@ -427,7 +427,19 @@ function PurchasePlanPage() {
               )}
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="md:hidden">
+              <div className="divide-y">
+                {filtered.map((item: any) => (
+                  <MobilePurchaseCard
+                    key={rowKey(item)}
+                    item={item}
+                    onOpen={() => setSelected(item)}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="hidden overflow-x-auto md:block">
               <div className="min-w-[1180px]">
                 <PurchaseListHeader sortKey={sortKey} onSort={setSortKey} />
                 <div className="divide-y">
@@ -465,6 +477,116 @@ function PurchasePlanPage() {
 
       <ProductDetailSheet item={selected} open={!!selected} onOpenChange={(open) => !open && setSelected(null)} />
     </PageShell>
+  );
+}
+
+function MobilePurchaseCard({ item, onOpen }: { item: any; onOpen: () => void }) {
+  const meta = statusMeta(item.status);
+  const Icon = meta.icon;
+  const trend = trendMeta(item);
+  const coverage = coveragePercent(item);
+  const recommended = recommendText(item);
+  const unitProfit = num(item.net_profit_per_unit);
+  const unitProfitTone =
+    item.net_profit_per_unit == null
+      ? "neutral"
+      : unitProfit >= 0
+        ? "success"
+        : "danger";
+  const stockValue = num(item.stock_value ?? item.frozen_cash);
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="relative w-full bg-background p-3 text-left transition hover:bg-muted/30"
+    >
+      <span className={`absolute inset-y-3 left-0 w-0.5 ${meta.accent}`} />
+      <div className="flex gap-3">
+        <ProductImage item={item} className="h-[72px] w-[58px] shrink-0" />
+        <div className="min-w-0 flex-1">
+          <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+            <span
+              className={`inline-flex h-5 max-w-full items-center gap-1 rounded px-1.5 text-[10px] font-medium ${meta.tone}`}
+            >
+              <Icon className="h-3 w-3 shrink-0" />
+              <span className="truncate">{meta.short}</span>
+            </span>
+            {item.financial_final === false ? (
+              <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                расчет
+              </span>
+            ) : null}
+          </div>
+          <div className="line-clamp-2 text-sm font-semibold leading-snug">
+            {item.title ?? item.name ?? item.vendor_code ?? "Товар"}
+          </div>
+          <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+            <span>nm {item.nm_id ?? "—"}</span>
+            <span className="truncate">
+              {item.vendor_code ?? item.barcode ?? "без артикула"}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <MobileMetric label="Остаток" value={formatNumber(num(item.available_stock))} />
+        <MobileMetric
+          label="Продажи 30д"
+          value={formatNumber(num(item.sales_30d))}
+          sub={`${formatDecimal(num(item.sales_velocity_daily), 1)} шт/день`}
+        />
+        <MobileMetric label="Динамика" value={trend.label} sub={trend.sub} tone={trend.tone} />
+        <MobileMetric label="В остатке" value={formatMoney(stockValue)} />
+        <MobileMetric label="Закупка" value={recommended} sub={coverage.label} progress={coverage.value} />
+        <MobileMetric
+          label="1 шт."
+          value={formatSignedMoney(item.net_profit_per_unit)}
+          sub={profitabilityText(item)}
+          tone={unitProfitTone}
+        />
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-3 rounded-md bg-muted/35 px-2.5 py-2">
+        <div className="min-w-0 text-xs text-muted-foreground">
+          {item.next_step || meta.label}
+        </div>
+        <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary">
+          Открыть
+          <ArrowRight className="h-3.5 w-3.5" />
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function MobileMetric({ label, value, sub, tone, progress }: any) {
+  const toneClass =
+    tone === "danger"
+      ? "text-rose-700"
+      : tone === "success"
+        ? "text-emerald-700"
+        : tone === "warning"
+          ? "text-amber-700"
+          : "text-foreground";
+  return (
+    <div className="min-w-0 rounded-md border bg-card px-2.5 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-0.5 truncate text-sm font-semibold tabular-nums ${toneClass}`}>
+        {value}
+      </div>
+      {progress != null ? (
+        <Progress value={progress} className="mt-1.5 h-1" />
+      ) : null}
+      {sub ? (
+        <div className="mt-1 truncate text-[10px] leading-3 text-muted-foreground">
+          {sub}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1071,7 +1193,8 @@ function CompactKpi({ label, value, tone }: any) {
 
 function ProductImage({ item, className }: { item: any; className?: string }) {
   const src = imageUrl(item);
-  if (!src) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
     return (
       <div className={`flex shrink-0 items-center justify-center rounded-md border bg-muted/30 text-muted-foreground ${className}`}>
         <ImageOff className="h-6 w-6" />
@@ -1080,7 +1203,13 @@ function ProductImage({ item, className }: { item: any; className?: string }) {
   }
   return (
     <div className={`shrink-0 overflow-hidden rounded-md border bg-muted ${className}`}>
-      <img src={src} alt={item.title ?? item.vendor_code ?? "Товар"} className="h-full w-full object-cover" loading="lazy" />
+      <img
+        src={src}
+        alt=""
+        className="h-full w-full object-cover"
+        loading="lazy"
+        onError={() => setFailed(true)}
+      />
     </div>
   );
 }

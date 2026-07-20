@@ -16,7 +16,7 @@ from app.models.marts import MartSKUDaily, MartStockDaily
 from app.models.problem_engine import MetricCatalog, ProblemDefinition, ProblemInstance, ProblemInstanceHistory, ProblemRuleVersion
 from app.schemas.problem_engine import MetricSourceReference, ProductMetricResolution, ResolvedMetricValue
 from app.services.problem_engine import DynamicProblemSeedCopyRepairService, DynamicProblemSeedService, MetricCatalogService, ProblemEvaluatorService
-from app.services.problem_engine.problem_seeds import OLD_SEEDED_DEFINITION_TEMPLATES
+from app.services.problem_engine.problem_seeds import INITIAL_PROBLEM_RULE_SEEDS, OLD_SEEDED_DEFINITION_TEMPLATES
 from app.services.problem_engine.seed_copy_repair import OLD_SEEDED_RULE_COPY
 
 
@@ -217,7 +217,7 @@ async def test_initial_problem_rules_seed_active_catalog_rows() -> None:
     assert SEEDED_PROBLEM_CODES.issubset(codes)
     assert all(definition.status == "active" for definition in definitions)
     assert all(definition.is_system_seeded for definition in definitions)
-    assert len(rules) == 9
+    assert len(rules) == len(INITIAL_PROBLEM_RULE_SEEDS)
     assert all(rule.status == "active" and rule.version == 1 for rule in rules)
     assert all(rule.is_system_seeded for rule in rules)
     for code in SEEDED_PROBLEM_CODES:

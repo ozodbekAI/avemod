@@ -1272,6 +1272,7 @@ export function DataFixWorkbench({
       toast.success(result.message || "Действие исправления данных сохранено");
       qc.invalidateQueries({ queryKey: ["dq-resolution-context", issueId] });
       qc.invalidateQueries({ queryKey: ["dq-issues-for-data-fix"] });
+      qc.invalidateQueries({ queryKey: ["dq-issues-for-data-fix-codes"] });
       qc.invalidateQueries({ queryKey: ["money-data-blockers"] });
       qc.invalidateQueries({ queryKey: ["dash-data-blockers"] });
       qc.invalidateQueries({ queryKey: ["dashboard-data-health"] });

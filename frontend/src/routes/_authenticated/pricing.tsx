@@ -24,19 +24,8 @@ import {
   SlidersHorizontal,
   Tag,
   TrendingUp,
-  XCircle,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { toast } from "sonner";
 
 import { EndpointError } from "@/components/EndpointError";
@@ -49,7 +38,6 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -62,6 +50,14 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Tooltip,
@@ -278,11 +274,11 @@ const VIEW_META: Record<
 };
 
 const PRICE_SOURCE_LABELS: Record<string, string> = {
-  current_sku: "core SKU",
-  wb_price_snapshot: "WB prices",
-  article_price: "mart fallback",
-  average_sale: "avg sale",
-  missing: "нет цены",
+  current_sku: "карточка SKU",
+  wb_price_snapshot: "цены WB",
+  article_price: "цена товара",
+  average_sale: "средняя продажа",
+  missing: "цены нет",
 };
 
 const REASON_LABELS: Record<string, string> = {
@@ -291,6 +287,25 @@ const REASON_LABELS: Record<string, string> = {
   not_enough_units: "нет продаж",
   revenue_not_available: "нет выручки",
   formula_not_computable: "формула недоступна",
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  blocked: "заблокировано",
+  computed: "рассчитано",
+  estimated: "оценка",
+  final: "финально",
+  high: "высокая уверенность",
+  low: "низкая уверенность",
+  mapped: "связано",
+  medium: "средняя уверенность",
+  missing: "нет данных",
+  not_computable: "нет расчёта",
+  partial: "частично",
+  provisional: "предварительно",
+  ready: "готово",
+  synced: "синхронизировано",
+  unknown: "статус не указан",
+  unmapped: "не связано",
 };
 
 function normalizeRouteNmId(value: unknown): string | undefined {
@@ -309,6 +324,7 @@ function PricingPage() {
   const [search, setSearch] = useState(routeSearchTerm);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [sheetItem, setSheetItem] = useState<PriceRow | null>(null);
+  const [autoOpenedNmId, setAutoOpenedNmId] = useState<string | null>(null);
   const debouncedSearch = useDebouncedValue(search.trim(), 250);
 
   useEffect(() => {
@@ -389,16 +405,27 @@ function PricingPage() {
       setSelectedKey(rowKey(selectedItem));
   }, [selectedItem, selectedKey]);
 
+  useEffect(() => {
+    const nmId = routeSearch.nm_id ?? null;
+    if (!nmId) {
+      setAutoOpenedNmId(null);
+      return;
+    }
+    if (!selectedItem || autoOpenedNmId === nmId) return;
+    if (String(selectedItem.nm_id ?? "") !== nmId) return;
+    setSheetItem(selectedItem);
+    setAutoOpenedNmId(nmId);
+  }, [autoOpenedNmId, routeSearch.nm_id, selectedItem]);
+
   const trustInputs = moneyQ.data ? trustInputsFromSummary(moneyQ.data) : null;
   const normTrust = normalizeTrust(moneyQ.data);
   const isLoading = overviewQ.isLoading || listQ.isLoading;
   const isFetching = overviewQ.isFetching || listQ.isFetching;
-  const targetOnly = Math.max(0, stats.belowTargetMargin - stats.belowBE);
 
   return (
     <PageShell>
       <PageHeader
-        title="Pricing Control"
+        title="Цены и акции"
         description={`${dateFrom} - ${dateTo}`}
         actions={
           <Button
@@ -458,7 +485,7 @@ function PricingPage() {
 
       {overviewQ.isError || listQ.isError ? (
         <Alert variant="destructive">
-          <AlertTitle>Ошибка загрузки pricing</AlertTitle>
+          <AlertTitle>Ошибка загрузки цен</AlertTitle>
           <AlertDescription>
             <Button
               size="sm"
@@ -476,54 +503,17 @@ function PricingPage() {
 
       {overview && !isLoading ? (
         <>
-          <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <MetricTile
-              label="Ниже break-even"
-              value={stats.belowBE}
-              detail={stats.belowBE ? "цена ниже нуля" : "критичных нет"}
-              tone={stats.belowBE ? "danger" : "success"}
-              active={view === "risk"}
-              icon={stats.belowBE ? ShieldAlert : ShieldCheck}
-              onClick={() => setView(view === "risk" ? "all" : "risk")}
-            />
-            <MetricTile
-              label="Маржа ниже цели"
-              value={targetOnly || stats.belowTargetMargin}
-              detail="сравнение с target margin"
-              tone={
-                targetOnly || stats.belowTargetMargin ? "warning" : "success"
-              }
-              active={view === "margin_watch"}
-              icon={TrendingUp}
-              onClick={() =>
-                setView(view === "margin_watch" ? "all" : "margin_watch")
-              }
-            />
-            <MetricTile
-              label="Нет расчёта"
-              value={stats.notComputable}
-              detail={`${percent(stats.notComputable, stats.total)} от очереди`}
-              tone={stats.notComputable ? "info" : "success"}
-              active={view === "not_computable"}
-              icon={Database}
-              onClick={() =>
-                setView(view === "not_computable" ? "all" : "not_computable")
-              }
-            />
-            <CoverageTile
-              label="Cost coverage"
-              value={overview.trusted_revenue_cost_coverage_percent ?? 0}
-              blockers={overview.financial_final_blockers_total ?? 0}
-              final={overview.financial_final === true}
-            />
-          </section>
-
-          <OperationalStrip stats={stats} />
+          <PricingOverview
+            stats={stats}
+            overview={overview}
+            view={view}
+            onViewChange={setView}
+          />
 
           {stats.notComputable > 0 ? (
             <Alert className="border-warning/35 bg-warning/10">
               <AlertTriangle className="h-4 w-4 text-warning" />
-              <AlertTitle>Pricing queue не полный</AlertTitle>
+              <AlertTitle>Очередь расчёта не полная</AlertTitle>
               <AlertDescription>
                 {stats.notComputable} SKU без расчёта. Главный источник
                 блокировки — себестоимость.{" "}
@@ -531,93 +521,32 @@ function PricingPage() {
                   to="/costs"
                   className="font-medium underline underline-offset-2"
                 >
-                  Открыть costs
+                  Открыть себестоимость
                 </Link>
               </AlertDescription>
             </Alert>
           ) : null}
 
-          <section className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_430px]">
-            <Card className="min-w-0 overflow-hidden">
-              <CardHeader className="border-b pb-3">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div>
-                    <CardTitle className="flex items-center gap-2 text-base">
-                      <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
-                      Очередь решений
-                    </CardTitle>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {listQ.data?.total ?? 0} SKU в текущем срезе
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="relative w-full min-w-[230px] sm:w-[280px]">
-                      <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        value={search}
-                        onChange={(event) => setSearch(event.target.value)}
-                        placeholder="nm_id, SKU, vendor_code"
-                        className="h-9 pl-8 text-xs"
-                      />
-                    </div>
-                  </div>
-                </div>
-                <ViewSwitcher value={view} onChange={setView} stats={stats} />
-              </CardHeader>
-              <CardContent className="p-0">
-                {items.length ? (
-                  <div className="divide-y">
-                    {items.map((item) => (
-                      <QueueRow
-                        key={rowKey(item)}
-                        item={item}
-                        active={rowKey(item) === rowKey(selectedItem)}
-                        onSelect={() => setSelectedKey(rowKey(item))}
-                        onOpen={() => setSheetItem(item)}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <EmptyQueue search={debouncedSearch} />
-                )}
-                <div className="flex items-center justify-between border-t px-3 py-2 text-xs text-muted-foreground">
-                  <span>
-                    Стр. {page + 1} · показано {items.length}
-                  </span>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8 px-2"
-                      disabled={page === 0 || listQ.isFetching}
-                      onClick={() =>
-                        setPage((current) => Math.max(0, current - 1))
-                      }
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8 px-2"
-                      disabled={items.length < PAGE_SIZE || listQ.isFetching}
-                      onClick={() => setPage((current) => current + 1)}
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <DecisionPanel
-              item={selectedItem}
-              accountId={activeId}
-              dateFrom={dateFrom}
-              dateTo={dateTo}
-              onOpen={() => selectedItem && setSheetItem(selectedItem)}
-            />
-          </section>
+          <PricingQueueWorkbench
+            items={items}
+            total={listQ.data?.total ?? items.length}
+            page={page}
+            search={search}
+            debouncedSearch={debouncedSearch}
+            view={view}
+            stats={stats}
+            isFetching={listQ.isFetching}
+            onSearchChange={setSearch}
+            onViewChange={setView}
+            onPrevPage={() => setPage((current) => Math.max(0, current - 1))}
+            onNextPage={() => setPage((current) => current + 1)}
+            onOpenItem={(item) => {
+              setSelectedKey(rowKey(item));
+              setSheetItem(item);
+            }}
+            canPrevPage={page > 0}
+            canNextPage={items.length >= PAGE_SIZE}
+          />
         </>
       ) : null}
 
@@ -730,6 +659,14 @@ function sourceLabel(source: unknown): string {
   return PRICE_SOURCE_LABELS[key] ?? key;
 }
 
+function statusLabel(status: unknown): string {
+  const key = String(status ?? "unknown")
+    .trim()
+    .toLowerCase();
+  if (!key) return STATUS_LABELS.unknown;
+  return STATUS_LABELS[key] ?? key.replace(/_/g, " ").replace(/\s+/g, " ");
+}
+
 function percentValue(value: unknown): string {
   const parsed = num(value);
   return parsed == null ? "—" : `${Math.round(parsed)}%`;
@@ -761,7 +698,7 @@ function promotionNameDetail(item: PriceRow | null | undefined): string {
   if (item?.promotion_nearest_starts_at) {
     return `старт ${formatDate(item.promotion_nearest_starts_at)}`;
   }
-  return "по Promotion Calendar";
+  return "по календарю акций";
 }
 
 function promotionSignalValue(item: PriceRow | null | undefined): string {
@@ -773,7 +710,7 @@ function promotionSignalValue(item: PriceRow | null | undefined): string {
 
 function promotionSignalDetail(item: PriceRow | null | undefined): string {
   if (!item?.promotion_calendar_synced) {
-    return "Promotion Calendar не загружен";
+    return "календарь акций не загружен";
   }
   if ((item.promotion_active_count ?? 0) > 0) {
     return promotionNameDetail(item);
@@ -897,7 +834,7 @@ function promotionDateRange(item: PromotionDetail): string {
 
 function promotionStatsLine(item: PromotionDetail): string {
   const parts = [
-    item.promo_type ? `type ${item.promo_type}` : null,
+    item.promo_type ? `тип ${item.promo_type}` : null,
     item.participation_percentage != null
       ? `участие ${item.participation_percentage}%`
       : null,
@@ -933,184 +870,698 @@ function hasWbAttention(item: PriceRow | null | undefined): boolean {
   );
 }
 
-function MetricTile({
+function PricingOverview({
+  stats,
+  overview,
+  view,
+  onViewChange,
+}: {
+  stats: ReturnType<typeof normalizeStats>;
+  overview: PricePage;
+  view: ViewKey;
+  onViewChange: (value: ViewKey) => void;
+}) {
+  const targetOnly =
+    Math.max(0, stats.belowTargetMargin - stats.belowBE) ||
+    stats.belowTargetMargin;
+  const promoRisk = stats.promotionPlanBelowBE + stats.promotionPlanBelowTarget;
+  const coverage = Math.max(
+    0,
+    Math.min(100, overview.trusted_revenue_cost_coverage_percent ?? 0),
+  );
+  const final = overview.financial_final === true;
+
+  return (
+    <section className="overflow-hidden rounded-lg border bg-card shadow-sm">
+      <div className="flex flex-col gap-3 border-b px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <BarChart3 className="h-4 w-4 text-primary" />
+            Рабочий контур цен
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            Сначала риски маржи, затем скидки, акции и качество данных.
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline" className="gap-1.5">
+            <Database className="h-3.5 w-3.5 text-primary" />
+            цены · акции · продажи · финансы
+          </Badge>
+          <Badge
+            variant="outline"
+            className={
+              final
+                ? "border-success/30 bg-success/5 text-success"
+                : "border-warning/35 bg-warning/10 text-warning"
+            }
+          >
+            {final ? "финальные данные" : "предварительные данные"}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="grid gap-px bg-border md:grid-cols-2 xl:grid-cols-5">
+        <OverviewMetric
+          label="Ниже нуля"
+          value={stats.belowBE}
+          detail={stats.belowBE ? "срочно поднять цену" : "критичных нет"}
+          icon={stats.belowBE ? ShieldAlert : ShieldCheck}
+          tone={stats.belowBE ? "danger" : "success"}
+          active={view === "risk"}
+          onClick={() => onViewChange(view === "risk" ? "all" : "risk")}
+        />
+        <OverviewMetric
+          label="Ниже цели"
+          value={targetOnly}
+          detail="не добирает маржу"
+          icon={TrendingUp}
+          tone={targetOnly ? "warning" : "success"}
+          active={view === "margin_watch"}
+          onClick={() =>
+            onViewChange(view === "margin_watch" ? "all" : "margin_watch")
+          }
+        />
+        <OverviewMetric
+          label="Нет расчёта"
+          value={stats.notComputable}
+          detail={`${percent(stats.notComputable, stats.total)} очереди`}
+          icon={Database}
+          tone={stats.notComputable ? "info" : "success"}
+          active={view === "not_computable"}
+          onClick={() =>
+            onViewChange(view === "not_computable" ? "all" : "not_computable")
+          }
+        />
+        <OverviewMetric
+          label="Риск акции"
+          value={promoRisk}
+          detail={
+            stats.promotionPlanBelowBE
+              ? `${stats.promotionPlanBelowBE} ниже нуля`
+              : promoRisk
+                ? `${stats.promotionPlanBelowTarget} ниже цели`
+                : `${stats.promotionAvailable} доступно`
+          }
+          icon={CalendarDays}
+          tone={
+            stats.promotionPlanBelowBE
+              ? "danger"
+              : promoRisk
+                ? "warning"
+                : "success"
+          }
+        />
+        <OverviewCoverage
+          value={coverage}
+          blockers={overview.financial_final_blockers_total ?? 0}
+          final={final}
+        />
+      </div>
+
+      <div className="grid gap-px bg-border md:grid-cols-3 xl:grid-cols-6">
+        <OverviewSignal
+          label="Размерные цены"
+          value={stats.editableSizePrice}
+          detail="индивидуальные цены"
+          icon={SlidersHorizontal}
+        />
+        <OverviewSignal
+          label="Низкая оборач."
+          value={stats.badTurnover}
+          detail="флаг WB"
+          icon={AlertTriangle}
+          tone={stats.badTurnover ? "warning" : "muted"}
+        />
+        <OverviewSignal
+          label="Карантин"
+          value={stats.quarantine}
+          detail="цена заблокирована"
+          icon={ShieldAlert}
+          tone={stats.quarantine ? "danger" : "muted"}
+        />
+        <OverviewSignal
+          label="B2B уровни"
+          value={stats.wholesaleDiscount}
+          detail="оптовые скидки"
+          icon={Tag}
+        />
+        <OverviewSignal
+          label="Участвует"
+          value={stats.promotionActive}
+          detail="активные акции"
+          icon={CalendarDays}
+        />
+        <OverviewSignal
+          label="Безопасный план"
+          value={stats.promotionPlanSafe}
+          detail="акция не режет маржу"
+          icon={Calculator}
+          tone={stats.promotionPlanSafe ? "success" : "muted"}
+        />
+      </div>
+    </section>
+  );
+}
+
+function OverviewMetric({
   label,
   value,
   detail,
+  icon: Icon,
   tone,
   active,
-  icon: Icon,
   onClick,
 }: {
   label: string;
   value: number;
   detail: string;
+  icon: typeof AlertTriangle;
   tone: "danger" | "warning" | "info" | "success";
   active?: boolean;
-  icon: typeof AlertTriangle;
   onClick?: () => void;
 }) {
   const toneClass =
     tone === "danger"
-      ? "border-destructive/30 bg-destructive/5 text-destructive"
+      ? "text-destructive"
       : tone === "warning"
-        ? "border-warning/35 bg-warning/10 text-warning"
-        : tone === "success"
-          ? "border-success/30 bg-success/5 text-success"
-          : "border-primary/30 bg-primary/5 text-primary";
+        ? "text-warning"
+        : tone === "info"
+          ? "text-primary"
+          : "text-success";
+  const bgClass =
+    tone === "danger"
+      ? "bg-destructive/5"
+      : tone === "warning"
+        ? "bg-warning/10"
+        : tone === "info"
+          ? "bg-primary/5"
+          : "bg-success/5";
+
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-md border p-3 text-left transition hover:bg-accent ${active ? "ring-2 ring-current ring-offset-1" : ""} ${toneClass}`}
+      className={`group min-h-[104px] bg-card px-4 py-3 text-left transition hover:bg-muted/40 ${
+        active ? "bg-primary/5 ring-1 ring-inset ring-primary/30" : ""
+      }`}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] font-medium uppercase text-muted-foreground">
-          {label}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-[11px] uppercase text-muted-foreground">
+            {label}
+          </div>
+          <div
+            className={`mt-1 text-3xl font-semibold tabular-nums ${toneClass}`}
+          >
+            {value}
+          </div>
+        </div>
+        <span
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${bgClass} ${toneClass}`}
+        >
+          <Icon className="h-4 w-4" />
         </span>
-        <Icon className="h-4 w-4" />
       </div>
-      <div className="mt-2 text-2xl font-semibold tabular-nums">{value}</div>
-      <div className="mt-1 text-xs text-muted-foreground">{detail}</div>
+      <div className="mt-2 truncate text-xs text-muted-foreground">
+        {detail}
+      </div>
     </button>
   );
 }
 
-function CoverageTile({
-  label,
+function OverviewCoverage({
   value,
   blockers,
   final,
 }: {
-  label: string;
   value: number;
   blockers: number;
   final: boolean;
 }) {
-  const normalized = Math.max(0, Math.min(100, value || 0));
   return (
-    <div className="rounded-md border bg-card p-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] font-medium uppercase text-muted-foreground">
-          {label}
-        </span>
+    <div className="min-h-[104px] bg-card px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-[11px] uppercase text-muted-foreground">
+            Себестоимость
+          </div>
+          <div className="mt-1 text-3xl font-semibold tabular-nums">
+            {value.toFixed(1)}%
+          </div>
+        </div>
         <Badge
           variant="outline"
           className={
             final
-              ? "border-success/30 text-success"
-              : "border-warning/35 text-warning"
+              ? "border-success/30 bg-success/5 text-success"
+              : "border-warning/35 bg-warning/10 text-warning"
           }
         >
-          {final ? "final" : "provisional"}
+          {final ? "финально" : "проверка"}
         </Badge>
       </div>
-      <div className="mt-2 flex items-end justify-between gap-2">
-        <div className="text-2xl font-semibold tabular-nums">
-          {normalized.toFixed(1)}%
-        </div>
-        <div className="text-xs text-muted-foreground">{blockers} blockers</div>
+      <Progress value={value} className="mt-3 h-1.5" />
+      <div className="mt-2 truncate text-xs text-muted-foreground">
+        {blockers
+          ? `покрытие затрат · ${blockers} блокеров`
+          : "покрытие затрат · блокеров нет"}
       </div>
-      <Progress value={normalized} className="mt-3 h-1.5" />
     </div>
   );
 }
 
-function OperationalStrip({
-  stats,
+function OverviewSignal({
+  label,
+  value,
+  detail,
+  icon: Icon,
+  tone = "info",
 }: {
-  stats: ReturnType<typeof normalizeStats>;
+  label: string;
+  value: number;
+  detail: string;
+  icon: typeof Tag;
+  tone?: "info" | "success" | "warning" | "danger" | "muted";
 }) {
-  const promoRisk = stats.promotionPlanBelowBE + stats.promotionPlanBelowTarget;
-  const items = [
-    {
-      label: "Цены по размерам",
-      value: stats.editableSizePrice,
-      detail: "индив. размеры",
-      icon: SlidersHorizontal,
-      tone: "text-primary",
-    },
-    {
-      label: "Низкая оборач.",
-      value: stats.badTurnover,
-      detail: "флаг WB",
-      icon: AlertTriangle,
-      tone: stats.badTurnover ? "text-warning" : "text-muted-foreground",
-    },
-    {
-      label: "Карантин цен",
-      value: stats.quarantine,
-      detail: "изменение блок.",
-      icon: ShieldAlert,
-      tone: stats.quarantine ? "text-destructive" : "text-muted-foreground",
-    },
-    {
-      label: "B2B скидки",
-      value: stats.wholesaleDiscount,
-      detail: "оптовые уровни",
-      icon: Tag,
-      tone: "text-primary",
-    },
-    {
-      label: "Акции WB",
-      value: stats.promotionActive,
-      detail: stats.promotionCalendarSynced
-        ? `${stats.promotionAvailable} доступны`
-        : "календарь не загружен",
-      icon: CalendarDays,
-      tone: stats.promotionActive
-        ? "text-primary"
-        : stats.promotionCalendarSynced
-          ? "text-muted-foreground"
-          : "text-warning",
-    },
-    {
-      label: "Промо риск",
-      value: promoRisk,
-      detail: stats.promotionPlanBelowBE
-        ? `${stats.promotionPlanBelowBE} ниже нуля`
-        : stats.promotionPlanBelowTarget
-          ? `${stats.promotionPlanBelowTarget} ниже цели`
-          : stats.promotionPlanSafe
-            ? `${stats.promotionPlanSafe} безопасно`
-            : "планов нет",
-      icon: Calculator,
-      tone: stats.promotionPlanBelowBE
-        ? "text-destructive"
-        : stats.promotionPlanBelowTarget
-          ? "text-warning"
-          : stats.promotionPlanSafe
-            ? "text-primary"
-            : "text-muted-foreground",
-    },
-  ];
+  const toneClass =
+    tone === "danger"
+      ? "text-destructive"
+      : tone === "warning"
+        ? "text-warning"
+        : tone === "success"
+          ? "text-success"
+          : tone === "muted"
+            ? "text-muted-foreground"
+            : "text-primary";
+
   return (
-    <section className="grid gap-2 md:grid-cols-2 xl:grid-cols-6">
-      {items.map((item) => {
-        const Icon = item.icon;
-        return (
-          <div
-            key={item.label}
-            className="flex min-h-[72px] items-center justify-between gap-3 rounded-md border bg-card px-3 py-2"
-          >
-            <div className="min-w-0">
-              <div className="text-[11px] font-medium uppercase text-muted-foreground">
-                {item.label}
-              </div>
-              <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                {item.detail}
-              </div>
+    <div className="flex min-h-[68px] items-center justify-between gap-3 bg-card px-4 py-2.5">
+      <div className="min-w-0">
+        <div className="truncate text-[10px] uppercase text-muted-foreground">
+          {label}
+        </div>
+        <div className="mt-0.5 truncate text-xs text-muted-foreground">
+          {detail}
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <Icon className={`h-4 w-4 ${toneClass}`} />
+        <span className="text-lg font-semibold tabular-nums">{value}</span>
+      </div>
+    </div>
+  );
+}
+
+function PricingQueueWorkbench({
+  items,
+  total,
+  page,
+  search,
+  debouncedSearch,
+  view,
+  stats,
+  isFetching,
+  onSearchChange,
+  onViewChange,
+  onPrevPage,
+  onNextPage,
+  onOpenItem,
+  canPrevPage,
+  canNextPage,
+}: {
+  items: PriceRow[];
+  total: number;
+  page: number;
+  search: string;
+  debouncedSearch: string;
+  view: ViewKey;
+  stats: ReturnType<typeof normalizeStats>;
+  isFetching: boolean;
+  onSearchChange: (value: string) => void;
+  onViewChange: (value: ViewKey) => void;
+  onPrevPage: () => void;
+  onNextPage: () => void;
+  onOpenItem: (item: PriceRow) => void;
+  canPrevPage: boolean;
+  canNextPage: boolean;
+}) {
+  return (
+    <section className="overflow-hidden rounded-lg border bg-card shadow-sm">
+      <div className="border-b px-4 py-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <SlidersHorizontal className="h-4 w-4 text-primary" />
+              Очередь решений
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <Icon className={`h-4 w-4 ${item.tone}`} />
-              <span className="text-lg font-semibold tabular-nums">
-                {item.value}
-              </span>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {total} SKU · строки отсортированы по риску цены и маржи
             </div>
           </div>
-        );
-      })}
+          <div className="relative w-full lg:w-[360px]">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder="Найти nm_id, SKU или артикул"
+              className="h-9 pl-8 text-xs"
+            />
+          </div>
+        </div>
+        <ViewSwitcher value={view} onChange={onViewChange} stats={stats} />
+      </div>
+
+      {items.length ? (
+        <>
+          <div className="hidden lg:block">
+            <Table>
+              <TableHeader className="bg-muted/35">
+                <TableRow className="hover:bg-muted/35">
+                  <TableHead className="w-[118px] pl-4">Решение</TableHead>
+                  <TableHead>Товар</TableHead>
+                  <TableHead className="w-[150px] text-right">Цена</TableHead>
+                  <TableHead className="w-[130px] text-right">Маржа</TableHead>
+                  <TableHead className="w-[180px]">Запас</TableHead>
+                  <TableHead className="w-[190px]">Акции</TableHead>
+                  <TableHead className="w-[104px] pr-4 text-right">
+                    Разбор
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((item) => (
+                  <PricingTableRow
+                    key={rowKey(item)}
+                    item={item}
+                    onOpen={() => onOpenItem(item)}
+                  />
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="divide-y lg:hidden">
+            {items.map((item) => (
+              <PricingMobileRow
+                key={rowKey(item)}
+                item={item}
+                onOpen={() => onOpenItem(item)}
+              />
+            ))}
+          </div>
+        </>
+      ) : (
+        <EmptyQueue search={debouncedSearch} />
+      )}
+
+      <div className="flex items-center justify-between border-t px-4 py-2 text-xs text-muted-foreground">
+        <span>
+          Страница {page + 1} · показано {items.length}
+        </span>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 px-2"
+            disabled={!canPrevPage || isFetching}
+            onClick={onPrevPage}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 px-2"
+            disabled={!canNextPage || isFetching}
+            onClick={onNextPage}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
     </section>
+  );
+}
+
+function PricingTableRow({
+  item,
+  onOpen,
+}: {
+  item: PriceRow;
+  onOpen: () => void;
+}) {
+  const ref = referencePrice(item);
+  const safeGap = num(item.safe_price_gap);
+  const tGap = targetGap(item);
+  const margin =
+    num(item.estimated_margin_at_current_price) ??
+    num(item.estimated_margin_percent);
+  const state = safetyState(item);
+
+  return (
+    <TableRow
+      data-pricing-row="true"
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
+      className="group cursor-pointer"
+    >
+      <TableCell className="pl-4">
+        <StateBadge state={state} />
+      </TableCell>
+      <TableCell>
+        <ProductCell item={item} />
+      </TableCell>
+      <TableCell className="text-right">
+        <div className="font-semibold tabular-nums">{priceRange(ref, ref)}</div>
+        <div className="mt-1 flex justify-end gap-1">
+          <DiscountPills item={item} />
+        </div>
+      </TableCell>
+      <TableCell className="text-right">
+        <div
+          className={`font-semibold tabular-nums ${margin != null && margin < 0 ? "text-destructive" : ""}`}
+        >
+          {formatPercent(margin)}
+        </div>
+        <div className="text-[11px] text-muted-foreground">
+          {statusLabel(item.confidence)}
+        </div>
+      </TableCell>
+      <TableCell>
+        <GapStack safeGap={safeGap} targetGapValue={tGap} />
+      </TableCell>
+      <TableCell>
+        <PromotionCell item={item} />
+      </TableCell>
+      <TableCell className="pr-4 text-right">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpen();
+          }}
+        >
+          <FileSearch className="h-3.5 w-3.5" />
+          Открыть
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function PricingMobileRow({
+  item,
+  onOpen,
+}: {
+  item: PriceRow;
+  onOpen: () => void;
+}) {
+  const ref = referencePrice(item);
+  const safeGap = num(item.safe_price_gap);
+  const tGap = targetGap(item);
+  const margin =
+    num(item.estimated_margin_at_current_price) ??
+    num(item.estimated_margin_percent);
+
+  return (
+    <button
+      type="button"
+      data-pricing-row="true"
+      onClick={onOpen}
+      className="block w-full px-4 py-3 text-left transition hover:bg-muted/40"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <ProductCell item={item} />
+        <StateBadge state={safetyState(item)} />
+      </div>
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <MiniMetric label="Цена" value={priceRange(ref, ref)} />
+        <MiniMetric
+          label="Маржа"
+          value={formatPercent(margin)}
+          danger={margin != null && margin < 0}
+        />
+        <MiniMetric
+          label="До цели"
+          value={formatMoneyCompact(tGap)}
+          danger={(tGap ?? 0) < 0}
+        />
+      </div>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        <DiscountPills item={item} />
+        <PromotionTiny item={item} />
+        {safeGap != null && safeGap < 0 ? (
+          <Badge
+            variant="outline"
+            className="border-destructive/35 bg-destructive/5 text-[10px] text-destructive"
+          >
+            до нуля {formatMoneyCompact(safeGap)}
+          </Badge>
+        ) : null}
+      </div>
+    </button>
+  );
+}
+
+function ProductCell({ item }: { item: PriceRow }) {
+  return (
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="font-mono text-xs font-semibold">
+          {item.nm_id ?? "—"}
+        </span>
+        {item.sku_id ? (
+          <span className="text-[11px] text-muted-foreground">
+            SKU {item.sku_id}
+          </span>
+        ) : null}
+      </div>
+      <div
+        className="mt-0.5 line-clamp-1 text-sm font-medium"
+        title={item.title ?? item.vendor_code ?? ""}
+      >
+        {item.title ?? item.vendor_code ?? "Без названия"}
+      </div>
+      <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+        {item.vendor_code ?? "артикул не указан"}
+      </div>
+    </div>
+  );
+}
+
+function DiscountPills({ item }: { item: PriceRow }) {
+  const discount = positivePercent(item.discount);
+  const clubDiscount = positivePercent(item.club_discount);
+  return (
+    <>
+      {discount ? (
+        <Badge variant="secondary" className="h-5 text-[10px]">
+          скидка {percentValue(discount)}
+        </Badge>
+      ) : null}
+      {clubDiscount ? (
+        <Badge
+          variant="outline"
+          className="h-5 border-primary/25 bg-primary/5 text-[10px] text-primary"
+        >
+          клубная скидка {percentValue(clubDiscount)}
+        </Badge>
+      ) : null}
+    </>
+  );
+}
+
+function GapStack({
+  safeGap,
+  targetGapValue,
+}: {
+  safeGap: number | null;
+  targetGapValue: number | null;
+}) {
+  return (
+    <div className="space-y-1 text-xs">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-muted-foreground">До нуля</span>
+        <span
+          className={`font-semibold tabular-nums ${(safeGap ?? 0) < 0 ? "text-destructive" : "text-success"}`}
+        >
+          {formatMoneyCompact(safeGap)}
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-muted-foreground">До цели</span>
+        <span
+          className={`font-semibold tabular-nums ${(targetGapValue ?? 0) < 0 ? "text-warning" : "text-success"}`}
+        >
+          {formatMoneyCompact(targetGapValue)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function PromotionCell({ item }: { item: PriceRow }) {
+  return (
+    <div className="min-w-0 space-y-1">
+      <PromotionTiny item={item} />
+      <div className="truncate text-xs text-muted-foreground">
+        {promotionPlanDetail(item)}
+      </div>
+    </div>
+  );
+}
+
+function PromotionTiny({ item }: { item: PriceRow }) {
+  const tone = promotionPlanTone(item);
+  const cls =
+    tone === "danger"
+      ? "border-destructive/35 bg-destructive/5 text-destructive"
+      : tone === "warning"
+        ? "border-warning/40 bg-warning/10 text-warning"
+        : tone === "info"
+          ? "border-primary/30 bg-primary/5 text-primary"
+          : "border-border text-muted-foreground";
+  return (
+    <Badge variant="outline" className={`h-5 max-w-full text-[10px] ${cls}`}>
+      <span className="truncate">
+        {promotionSignalValue(item)} · {promotionPlanValue(item)}
+      </span>
+    </Badge>
+  );
+}
+
+function MiniMetric({
+  label,
+  value,
+  danger,
+}: {
+  label: string;
+  value: string;
+  danger?: boolean;
+}) {
+  return (
+    <div className="min-w-0 rounded-md border bg-muted/20 px-2 py-1.5">
+      <div className="truncate text-[10px] uppercase text-muted-foreground">
+        {label}
+      </div>
+      <div
+        className={`mt-0.5 truncate text-xs font-semibold tabular-nums ${
+          danger ? "text-destructive" : ""
+        }`}
+      >
+        {value}
+      </div>
+    </div>
   );
 }
 
@@ -1156,369 +1607,6 @@ function ViewSwitcher({
   );
 }
 
-function QueueRow({
-  item,
-  active,
-  onSelect,
-  onOpen,
-}: {
-  item: PriceRow;
-  active?: boolean;
-  onSelect: () => void;
-  onOpen: () => void;
-}) {
-  const state = safetyState(item);
-  const ref = referencePrice(item);
-  const safeGap = num(item.safe_price_gap);
-  const tGap = targetGap(item);
-  const margin =
-    num(item.estimated_margin_at_current_price) ??
-    num(item.estimated_margin_percent);
-  const discount = positivePercent(item.discount);
-  const clubDiscount = positivePercent(item.club_discount);
-  const computed =
-    String(item.calculation_state ?? "").toLowerCase() === "computed";
-  const stateMeta =
-    state === "risk"
-      ? {
-          label: "ниже нуля",
-          cls: "border-destructive/35 bg-destructive/5 text-destructive",
-          icon: XCircle,
-        }
-      : state === "target"
-        ? {
-            label: "ниже цели",
-            cls: "border-warning/40 bg-warning/10 text-warning",
-            icon: TrendingUp,
-          }
-        : state === "safe"
-          ? {
-              label: "в норме",
-              cls: "border-success/35 bg-success/5 text-success",
-              icon: CheckCircle2,
-            }
-          : {
-              label: "нет расчёта",
-              cls: "border-primary/35 bg-primary/5 text-primary",
-              icon: Database,
-            };
-  const Icon = stateMeta.icon;
-
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelect();
-        }
-      }}
-      className={`grid min-w-0 w-full grid-cols-1 gap-2 border-l-2 border-l-transparent px-3 py-2 text-left transition hover:bg-accent/50 lg:grid-cols-[minmax(240px,1.35fr)_minmax(220px,0.9fr)_88px] lg:items-center ${
-        active ? "border-l-primary bg-primary/5" : ""
-      }`}
-    >
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-xs font-semibold">
-            {item.nm_id ?? "—"}
-          </span>
-          <Badge variant="outline" className={`text-[10px] ${stateMeta.cls}`}>
-            <Icon className="mr-1 h-3 w-3" />
-            {stateMeta.label}
-          </Badge>
-        </div>
-        <div
-          className="mt-0.5 truncate text-sm font-medium leading-5"
-          title={item.title ?? item.vendor_code ?? ""}
-        >
-          {item.title ?? item.vendor_code ?? "Без названия"}
-        </div>
-        <div className="mt-0.5 truncate text-xs text-muted-foreground">
-          {item.vendor_code ?? "vendor_code не указан"}
-        </div>
-        <div className="mt-1 flex flex-wrap gap-1">
-          {discount ? (
-            <Badge variant="secondary" className="h-5 text-[9px]">
-              Скидка WB {percentValue(discount)}
-            </Badge>
-          ) : null}
-          {clubDiscount ? (
-            <Badge
-              variant="outline"
-              className="h-5 border-primary/25 bg-primary/5 text-[9px] text-primary"
-            >
-              WB Club {percentValue(clubDiscount)}
-            </Badge>
-          ) : null}
-          {(item.promotion_active_count ?? 0) > 0 ? (
-            <Badge
-              variant="outline"
-              className="h-5 border-primary/30 bg-primary/5 text-[9px] text-primary"
-            >
-              Акция WB {item.promotion_active_count}
-            </Badge>
-          ) : null}
-          {(item.promotion_active_count ?? 0) <= 0 &&
-          (item.promotion_available_count ?? 0) > 0 ? (
-            <Badge variant="outline" className="h-5 text-[9px]">
-              Доступна акция {item.promotion_available_count}
-            </Badge>
-          ) : null}
-          {hasPromotionPlanRisk(item) ? (
-            <Badge
-              variant="outline"
-              className={`h-5 text-[9px] ${
-                promotionPlanState(item) === "below_break_even"
-                  ? "border-destructive/35 text-destructive"
-                  : "border-warning/40 text-warning"
-              }`}
-            >
-              План акции {promotionPlanValue(item)}
-            </Badge>
-          ) : null}
-          {item.editable_size_price ? (
-            <Badge variant="outline" className="h-5 text-[9px]">
-              цены по размерам
-            </Badge>
-          ) : null}
-          {item.is_bad_turnover ? (
-            <Badge
-              variant="outline"
-              className="h-5 border-warning/35 text-[9px] text-warning"
-            >
-              низкая оборач.
-            </Badge>
-          ) : null}
-          {item.quarantine ? (
-            <Badge
-              variant="outline"
-              className="h-5 border-destructive/35 text-[9px] text-destructive"
-            >
-              карантин цен
-            </Badge>
-          ) : null}
-          {hasWholesale(item) ? (
-            <Badge variant="outline" className="h-5 text-[9px]">
-              B2B уровни
-            </Badge>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="grid min-w-0 self-center grid-cols-3 gap-1.5 text-xs">
-        <QueueMetric
-          label="Цена"
-          value={priceRange(
-            item.min_discounted_price ?? ref,
-            item.max_discounted_price ?? ref,
-          )}
-        />
-        <QueueMetric
-          label="До нуля"
-          value={computed ? formatMoneyCompact(safeGap) : "—"}
-          danger={(safeGap ?? 0) < 0}
-        />
-        <QueueMetric
-          label="До цели"
-          value={computed ? formatMoneyCompact(tGap) : "—"}
-          danger={(tGap ?? 0) < 0}
-        />
-      </div>
-
-      <div className="flex items-center justify-between gap-1.5 self-center lg:justify-end">
-        <div className="text-right">
-          <div
-            className={`text-sm font-semibold tabular-nums ${margin != null && margin < 0 ? "text-destructive" : ""}`}
-          >
-            {formatPercent(margin)}
-          </div>
-          <div className="text-[10px] text-muted-foreground">
-            {sourceLabel(item.price_source)}
-          </div>
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="h-8 px-2"
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpen();
-          }}
-        >
-          <ArrowRight className="h-4 w-4" />
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function QueueMetric({
-  label,
-  value,
-  danger,
-}: {
-  label: string;
-  value: string;
-  danger?: boolean;
-}) {
-  return (
-    <div className="min-w-0 rounded-sm px-1 py-0.5">
-      <div className="text-[9px] uppercase leading-3 text-muted-foreground">
-        {label}
-      </div>
-      <div
-        className={`truncate text-xs font-semibold leading-4 tabular-nums ${danger ? "text-destructive" : ""}`}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function DecisionPanel({
-  item,
-  accountId,
-  dateFrom,
-  dateTo,
-  onOpen,
-}: {
-  item: PriceRow | null;
-  accountId: number | null;
-  dateFrom: string;
-  dateTo: string;
-  onOpen: () => void;
-}) {
-  if (!item) {
-    return (
-      <Card className="min-h-[360px]">
-        <CardContent className="flex h-full min-h-[360px] items-center justify-center">
-          <div className="text-center text-sm text-muted-foreground">
-            <FileSearch className="mx-auto mb-2 h-8 w-8" />
-            SKU не выбран
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-  const state = safetyState(item);
-  const ref = referencePrice(item);
-  const safeGap = num(item.safe_price_gap);
-  const tGap = targetGap(item);
-  const breakEven = num(item.break_even_price);
-  const target = num(item.target_margin_price);
-  const margin =
-    num(item.estimated_margin_at_current_price) ??
-    num(item.estimated_margin_percent);
-  const chartData = [
-    { name: "Цена", value: ref ?? 0 },
-    { name: "Break-even", value: breakEven ?? 0 },
-    { name: "Target", value: target ?? 0 },
-  ];
-  return (
-    <Card className="min-w-0 h-fit xl:sticky xl:top-4">
-      <CardHeader className="border-b pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <CardTitle className="truncate text-base">
-              {item.title ?? item.vendor_code ?? item.nm_id}
-            </CardTitle>
-            <div className="mt-1 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
-              <span className="font-mono">{item.nm_id}</span>
-              <span>{item.vendor_code}</span>
-            </div>
-          </div>
-          <StateBadge state={state} />
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4 p-4">
-        <div className="grid gap-2 sm:grid-cols-2">
-          <PanelValue label="Эффективная цена" value={formatMoney(ref)} />
-          <PanelValue
-            label="Маржа сейчас"
-            value={formatPercent(margin)}
-            tone={margin != null && margin < 0 ? "danger" : undefined}
-          />
-          <PanelValue
-            label="Запас до нуля"
-            value={formatMoney(safeGap)}
-            tone={safeGap != null && safeGap < 0 ? "danger" : "success"}
-          />
-          <PanelValue
-            label="Запас до цели"
-            value={formatMoney(tGap)}
-            tone={tGap != null && tGap < 0 ? "warning" : "success"}
-          />
-        </div>
-
-        <WbSignalGrid item={item} />
-
-        <div className="h-[180px] rounded-md border bg-muted/20 p-2">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={chartData}
-              margin={{ top: 12, right: 8, left: 0, bottom: 0 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis
-                dataKey="name"
-                tickLine={false}
-                axisLine={false}
-                tick={{ fontSize: 11 }}
-              />
-              <YAxis hide domain={[0, "dataMax + 1000"]} />
-              <RechartsTooltip
-                formatter={(value) => formatMoney(Number(value))}
-              />
-              <ReferenceLine y={0} stroke="var(--border)" />
-              <Bar
-                dataKey="value"
-                fill="var(--primary)"
-                radius={[4, 4, 0, 0]}
-              />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        {state === "blocked" ? (
-          <Alert className="border-warning/35 bg-warning/10">
-            <Database className="h-4 w-4 text-warning" />
-            <AlertTitle>Нет полной экономики</AlertTitle>
-            <AlertDescription>
-              {reasonText(item) || "Расчёт заблокирован источниками данных."}
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={onOpen}>
-            <BarChart3 className="mr-1.5 h-4 w-4" />
-            Детали
-          </Button>
-          {item.nm_id ? (
-            <Button asChild size="sm" variant="outline">
-              <Link to="/products/$nmId" params={{ nmId: String(item.nm_id) }}>
-                <ArrowRight className="mr-1.5 h-4 w-4" />
-                Product 360
-              </Link>
-            </Button>
-          ) : null}
-        </div>
-
-        <SimulationInline
-          item={item}
-          accountId={accountId}
-          dateFrom={dateFrom}
-          dateTo={dateTo}
-          compact
-        />
-      </CardContent>
-    </Card>
-  );
-}
-
 function PanelValue({
   label,
   value,
@@ -1548,126 +1636,15 @@ function PanelValue({
   );
 }
 
-function DetailSummaryRail({ item }: { item: PriceRow }) {
-  const ref = referencePrice(item);
-  const safeGap = num(item.safe_price_gap);
-  const tGap = targetGap(item);
-  const margin =
-    num(item.estimated_margin_at_current_price) ??
-    num(item.estimated_margin_percent);
-  const gapTone =
-    safeGap != null && safeGap < 0
-      ? "danger"
-      : tGap != null && tGap < 0
-        ? "warning"
-        : safeGap != null || tGap != null
-          ? "success"
-          : "default";
-  return (
-    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-      <DetailStat
-        icon={Tag}
-        label="Эффективная цена"
-        value={formatMoneyCompact(ref)}
-        detail={sourceLabel(item.price_source)}
-      />
-      <DetailStat
-        icon={TrendingUp}
-        label="Маржа сейчас"
-        value={formatPercent(margin)}
-        detail={item.confidence ?? item.calculation_state ?? "unknown"}
-        tone={margin != null && margin < 0 ? "danger" : "default"}
-      />
-      <DetailStat
-        icon={CalendarDays}
-        label="План WB акции"
-        value={
-          item.promotion_min_plan_price
-            ? formatMoneyCompact(item.promotion_min_plan_price)
-            : "нет"
-        }
-        detail={promotionPlanValue(item)}
-        tone={promotionPlanTone(item)}
-      />
-      <DetailStat
-        icon={ShieldCheck}
-        label="Запас до цели"
-        value={formatMoneyCompact(tGap ?? safeGap)}
-        detail={
-          safeGap != null
-            ? `до нуля ${formatMoneyCompact(safeGap)}`
-            : "экономика неполная"
-        }
-        tone={gapTone}
-      />
-    </div>
-  );
-}
+type SignalTone = "default" | "info" | "warning" | "danger";
 
-function DetailStat({
-  icon: Icon,
-  label,
-  value,
-  detail,
-  tone = "default",
-}: {
+type PriceSignal = {
   icon: typeof Tag;
   label: string;
   value: string;
   detail: string;
-  tone?: "default" | "info" | "warning" | "danger" | "success";
-}) {
-  const wrapCls =
-    tone === "danger"
-      ? "border-destructive/30 bg-destructive/5"
-      : tone === "warning"
-        ? "border-warning/35 bg-warning/10"
-        : tone === "info"
-          ? "border-primary/30 bg-primary/5"
-          : tone === "success"
-            ? "border-success/30 bg-success/5"
-            : "border-border/80 bg-background";
-  const iconCls =
-    tone === "danger"
-      ? "bg-destructive/10 text-destructive"
-      : tone === "warning"
-        ? "bg-warning/15 text-warning"
-        : tone === "info"
-          ? "bg-primary/10 text-primary"
-          : tone === "success"
-            ? "bg-success/10 text-success"
-            : "bg-muted text-muted-foreground";
-  const valueCls =
-    tone === "danger"
-      ? "text-destructive"
-      : tone === "warning"
-        ? "text-warning"
-        : tone === "info"
-          ? "text-primary"
-          : tone === "success"
-            ? "text-success"
-            : "text-foreground";
-  return (
-    <div className={`min-w-0 rounded-md border px-3 py-2 shadow-sm ${wrapCls}`}>
-      <div className="flex min-w-0 items-center gap-2">
-        <span
-          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${iconCls}`}
-        >
-          <Icon className="h-3.5 w-3.5" />
-        </span>
-        <span className="truncate text-[10px] uppercase text-muted-foreground">
-          {label}
-        </span>
-      </div>
-      <div className={`mt-1 truncate text-lg font-semibold ${valueCls}`}>
-        {value}
-      </div>
-      <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-        {detail}
-      </div>
-    </div>
-  );
-}
+  tone: SignalTone;
+};
 
 function WbSignalGrid({ item }: { item: PriceRow }) {
   const discount = positivePercent(item.discount);
@@ -1675,14 +1652,14 @@ function WbSignalGrid({ item }: { item: PriceRow }) {
   const clubPrice = clubDiscount
     ? priceRange(item.min_club_discounted_price, item.max_club_discounted_price)
     : "нет";
-  const signals = [
+  const currentSignals: PriceSignal[] = [
     {
       icon: Tag,
-      label: "Скидка WB",
+      label: "Текущая скидка",
       value: discount ? percentValue(discount) : "нет",
       detail: discount
-        ? "из Prices & Discounts API"
-        : item.currency_iso_code || "WB price list",
+        ? "цена продавца"
+        : item.currency_iso_code || "без скидки",
       tone: "default" as const,
     },
     {
@@ -1696,14 +1673,16 @@ function WbSignalGrid({ item }: { item: PriceRow }) {
     },
     {
       icon: ShieldCheck,
-      label: "WB Club",
+      label: "Клубная скидка",
       value: clubDiscount ? percentValue(clubDiscount) : "нет",
-      detail: clubDiscount ? clubPrice : "скидки WB Club нет",
+      detail: clubDiscount ? clubPrice : "клубной скидки нет",
       tone: "default" as const,
     },
+  ];
+  const promoSignals: PriceSignal[] = [
     {
       icon: CalendarDays,
-      label: "Акция WB",
+      label: "Акции",
       value: promotionSignalValue(item),
       detail: promotionSignalDetail(item),
       tone: !item.promotion_calendar_synced
@@ -1714,26 +1693,26 @@ function WbSignalGrid({ item }: { item: PriceRow }) {
     },
     {
       icon: Calculator,
-      label: "План акции",
+      label: "Плановая цена",
       value: promotionPlanValue(item),
       detail: promotionPlanDetail(item),
       tone: promotionPlanTone(item),
     },
     {
       icon: ShieldAlert,
-      label: "Защита WB",
+      label: "Ограничения",
       value: item.quarantine
         ? "карантин"
         : item.is_bad_turnover
           ? "низкая оборач."
           : hasWholesale(item)
             ? "B2B уровни"
-            : "чисто",
+            : "нет",
       detail: item.quarantine
         ? `разница ${formatMoneyCompact(item.quarantine_price_diff)}`
         : hasWholesale(item)
           ? `${item.wholesale_discount_thresholds?.length ?? 0} уровней`
-          : "блокирующих флагов нет",
+          : "ограничений нет",
       tone: item.quarantine
         ? ("danger" as const)
         : item.is_bad_turnover
@@ -1742,11 +1721,29 @@ function WbSignalGrid({ item }: { item: PriceRow }) {
     },
   ];
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
-      {signals.map((signal) => (
-        <SignalBox key={signal.label} {...signal} />
-      ))}
+    <div className="space-y-3">
+      <SignalGroup title="Текущие условия" signals={currentSignals} />
+      <SignalGroup title="Промо и ограничения" signals={promoSignals} />
     </div>
+  );
+}
+
+function SignalGroup({
+  title,
+  signals,
+}: {
+  title: string;
+  signals: PriceSignal[];
+}) {
+  return (
+    <section className="space-y-2">
+      <div className="text-xs font-medium text-muted-foreground">{title}</div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {signals.map((signal) => (
+          <SignalBox key={signal.label} {...signal} />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -1761,7 +1758,7 @@ function SignalBox({
   label: string;
   value: string;
   detail: string;
-  tone: "default" | "info" | "warning" | "danger";
+  tone: SignalTone;
 }) {
   const wrapCls =
     tone === "danger"
@@ -1822,10 +1819,10 @@ function PromotionBreakdown({ item }: { item: PriceRow }) {
           <CalendarDays className="h-4 w-4 text-warning" />
           <div>
             <div className="text-[10px] uppercase text-muted-foreground">
-              Акции WB
+              Акции и промо
             </div>
             <div className="text-sm font-semibold text-warning">
-              календарь не загружен
+              календарь акций не загружен
             </div>
           </div>
         </div>
@@ -1839,7 +1836,7 @@ function PromotionBreakdown({ item }: { item: PriceRow }) {
           <CalendarDays className="h-4 w-4 text-muted-foreground" />
           <div>
             <div className="text-[10px] uppercase text-muted-foreground">
-              Акции WB
+              Акции и промо
             </div>
             <div className="text-sm font-semibold">нет подходящих акций</div>
           </div>
@@ -1856,10 +1853,10 @@ function PromotionBreakdown({ item }: { item: PriceRow }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm font-semibold">
             <CalendarDays className="h-4 w-4 text-primary" />
-            Акции WB
+            Акции и промо
           </div>
           <div className="mt-0.5 text-xs text-muted-foreground">
-            {rows.length} строк из Promotion Calendar
+            {rows.length} строк из календаря акций
           </div>
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -1965,17 +1962,17 @@ function PromotionBreakdownRow({ promotion }: { promotion: PromotionDetail }) {
           <div className="text-xs text-muted-foreground">
             {promotion.plan_price
               ? `план ${formatMoneyCompact(promotion.plan_price)}`
-              : "planPrice нет"}
+              : "плановой цены нет"}
           </div>
         </div>
       </div>
       <div className="mt-3 grid overflow-hidden rounded-md border border-border/70 bg-border/70 sm:grid-cols-5">
         <PromotionMetric
-          label="WB price"
+          label="Цена сейчас"
           value={formatMoney(promotion.price)}
         />
         <PromotionMetric
-          label="planPrice"
+          label="План акции"
           value={formatMoney(promotion.plan_price)}
           tone={
             tone === "danger"
@@ -1986,7 +1983,7 @@ function PromotionBreakdownRow({ promotion }: { promotion: PromotionDetail }) {
           }
         />
         <PromotionMetric
-          label="discount"
+          label="Скидка"
           value={promotionDiscountLine(promotion)}
         />
         <PromotionMetric
@@ -2047,13 +2044,13 @@ function StateBadge({ state }: { state: ReturnType<typeof safetyState> }) {
   const meta =
     state === "risk"
       ? {
-          label: "ниже break-even",
+          label: "ниже нуля",
           cls: "border-destructive/35 bg-destructive/5 text-destructive",
           icon: ShieldAlert,
         }
       : state === "target"
         ? {
-            label: "ниже target",
+            label: "ниже цели",
             cls: "border-warning/40 bg-warning/10 text-warning",
             icon: TrendingUp,
           }
@@ -2091,17 +2088,23 @@ function PriceDetailSheet({
   onClose: () => void;
 }) {
   const ref = referencePrice(item);
+  const safeGap = num(item?.safe_price_gap);
+  const tGap = targetGap(item);
+  const margin =
+    num(item?.estimated_margin_at_current_price) ??
+    num(item?.estimated_margin_percent);
+  const state = safetyState(item);
   return (
     <Sheet open={!!item} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="flex w-full flex-col overflow-hidden p-0 sm:max-w-[880px] xl:max-w-[960px]">
+      <SheetContent className="flex w-full flex-col overflow-hidden p-0 sm:max-w-[min(1180px,calc(100vw-3rem))]">
         {item ? (
-          <>
-            <div className="border-b bg-background/95 px-5 pb-4 pt-5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/90">
+          <div className="flex min-h-0 flex-1 flex-col bg-background">
+            <div className="border-b px-5 pb-4 pt-5">
               <SheetHeader className="space-y-2 pr-10 text-left">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
-                    <SheetTitle className="break-words pr-1 text-base leading-6 sm:text-lg">
-                      {item.title ?? item.vendor_code ?? "Pricing detail"}
+                    <SheetTitle className="break-words pr-1 text-lg leading-6 sm:text-xl">
+                      {item.title ?? item.vendor_code ?? "Детали цены"}
                     </SheetTitle>
                     <SheetDescription className="mt-1 flex flex-wrap items-center gap-2 text-xs">
                       <span className="font-mono">
@@ -2116,28 +2119,67 @@ function PriceDetailSheet({
                   <StateBadge state={safetyState(item)} />
                 </div>
               </SheetHeader>
-              <div className="mt-4">
-                <DetailSummaryRail item={item} />
+              <div className="mt-4 grid overflow-hidden rounded-lg border bg-border md:grid-cols-4">
+                <ReviewMetric
+                  icon={Tag}
+                  label="Цена покупателя"
+                  value={formatMoneyCompact(ref)}
+                  detail={sourceLabel(item.price_source)}
+                />
+                <ReviewMetric
+                  icon={TrendingUp}
+                  label="Маржа"
+                  value={formatPercent(margin)}
+                  detail={statusLabel(
+                    item.confidence ?? item.calculation_state,
+                  )}
+                  tone={margin != null && margin < 0 ? "danger" : "default"}
+                />
+                <ReviewMetric
+                  icon={ShieldCheck}
+                  label="Запас до нуля"
+                  value={formatMoneyCompact(safeGap)}
+                  detail={
+                    safeGap != null && safeGap < 0
+                      ? "цена ниже себестоимости"
+                      : "себестоимость покрыта"
+                  }
+                  tone={safeGap != null && safeGap < 0 ? "danger" : "success"}
+                />
+                <ReviewMetric
+                  icon={CalendarDays}
+                  label="План акции"
+                  value={
+                    item.promotion_min_plan_price
+                      ? formatMoneyCompact(item.promotion_min_plan_price)
+                      : "нет"
+                  }
+                  detail={promotionPlanValue(item)}
+                  tone={promotionPlanTone(item)}
+                />
               </div>
             </div>
 
             <Tabs
-              defaultValue="source"
+              defaultValue="summary"
               className="flex min-h-0 flex-1 flex-col"
             >
               <div className="border-b bg-background px-5 py-3">
-                <TabsList className="grid h-10 w-full grid-cols-4 rounded-md bg-muted/70 p-1">
+                <TabsList className="grid h-auto w-full grid-cols-2 rounded-md bg-muted/70 p-1 md:grid-cols-5">
                   <TabsTrigger
                     className="h-8 rounded-sm text-xs"
-                    value="economics"
+                    value="summary"
                   >
-                    Экономика
+                    Решение
                   </TabsTrigger>
                   <TabsTrigger
                     className="h-8 rounded-sm text-xs"
-                    value="source"
+                    value="discounts"
                   >
-                    WB API
+                    Скидки
+                  </TabsTrigger>
+                  <TabsTrigger className="h-8 rounded-sm text-xs" value="promo">
+                    Акции
                   </TabsTrigger>
                   <TabsTrigger
                     className="h-8 rounded-sm text-xs"
@@ -2149,142 +2191,90 @@ function PriceDetailSheet({
                     className="h-8 rounded-sm text-xs"
                     value="simulate"
                   >
-                    Симуляция
+                    Что если
                   </TabsTrigger>
                 </TabsList>
               </div>
 
               <ScrollArea className="min-h-0 flex-1">
                 <div className="px-5 py-4">
-                  <TabsContent value="economics" className="mt-0 space-y-4">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <PanelValue
-                        label="Цена WB"
-                        value={formatMoney(item.current_price)}
-                      />
-                      <PanelValue
-                        label="Со скидкой"
-                        value={formatMoney(item.current_discounted_price)}
-                      />
-                      <PanelValue
-                        label="Опорная цена"
-                        value={formatMoney(ref)}
-                      />
-                      <PanelValue
-                        label="Средняя продажа"
-                        value={formatMoney(item.average_sale_price)}
-                      />
-                      <PanelValue
-                        label="Цена до нуля"
-                        value={formatMoney(item.break_even_price)}
-                      />
-                      <PanelValue
-                        label="Цена цели"
-                        value={formatMoney(item.target_margin_price)}
-                      />
-                      <PanelValue
-                        label="Запас до нуля"
-                        value={formatMoney(item.safe_price_gap)}
-                        tone={
-                          (item.safe_price_gap ?? 0) < 0 ? "danger" : "success"
-                        }
-                      />
-                      <PanelValue
-                        label="Запас до цели"
-                        value={formatMoney(targetGap(item))}
-                        tone={
-                          (targetGap(item) ?? 0) < 0 ? "warning" : "success"
-                        }
-                      />
+                  <TabsContent value="summary" className="mt-0 space-y-4">
+                    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+                      <section className="space-y-4">
+                        <DecisionNarrative item={item} />
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                          <PanelValue
+                            label="Цена до скидки"
+                            value={formatMoney(item.current_price)}
+                          />
+                          <PanelValue
+                            label="Со скидкой"
+                            value={formatMoney(item.current_discounted_price)}
+                          />
+                          <PanelValue
+                            label="Цена до нуля"
+                            value={formatMoney(item.break_even_price)}
+                          />
+                          <PanelValue
+                            label="Цена цели"
+                            value={formatMoney(item.target_margin_price)}
+                          />
+                          <PanelValue
+                            label="Запас до нуля"
+                            value={formatMoney(safeGap)}
+                            tone={
+                              safeGap != null && safeGap < 0
+                                ? "danger"
+                                : "success"
+                            }
+                          />
+                          <PanelValue
+                            label="Запас до цели"
+                            value={formatMoney(tGap)}
+                            tone={
+                              tGap != null && tGap < 0 ? "warning" : "success"
+                            }
+                          />
+                          <PanelValue
+                            label="Средняя продажа"
+                            value={formatMoney(item.average_sale_price)}
+                          />
+                          <PanelValue
+                            label="Источник цены"
+                            value={sourceLabel(item.price_source)}
+                          />
+                        </div>
+                        <MarginRail item={item} />
+                      </section>
+                      <section className="space-y-3 rounded-lg border bg-muted/20 p-3">
+                        <div className="flex items-center gap-2 text-sm font-semibold">
+                          <FileSearch className="h-4 w-4 text-primary" />
+                          Карта решения
+                        </div>
+                        <DecisionChecklist item={item} />
+                        <div className="flex flex-wrap gap-2">
+                          {item.nm_id ? (
+                            <Button asChild size="sm" variant="outline">
+                              <Link
+                                to="/products/$nmId"
+                                params={{ nmId: String(item.nm_id) }}
+                              >
+                                <ArrowRight className="mr-1.5 h-4 w-4" />
+                                Карточка товара
+                              </Link>
+                            </Button>
+                          ) : null}
+                        </div>
+                      </section>
                     </div>
-                    <MarginRail item={item} />
                   </TabsContent>
 
-                  <TabsContent value="source" className="mt-0 space-y-4">
+                  <TabsContent value="discounts" className="mt-0 space-y-4">
                     <WbSignalGrid item={item} />
-                    <PromotionBreakdown item={item} />
-                    <section className="space-y-2">
-                      <div className="flex items-center gap-2 text-sm font-semibold">
-                        <Database className="h-4 w-4 text-muted-foreground" />
-                        Источники и расчёт
-                      </div>
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <SourceBox
-                          label="Источник цены"
-                          value={sourceLabel(item.price_source)}
-                          status={item.mapping_status ?? "unknown"}
-                        />
-                        <SourceBox
-                          label="Расчёт"
-                          value={item.calculation_state ?? "unknown"}
-                          status={item.confidence ?? "unknown"}
-                        />
-                        <SourceBox
-                          label="Данные"
-                          value={item.data_state ?? "unknown"}
-                          status={reasonText(item) || "ready"}
-                        />
-                        <SourceBox
-                          label="Себестоимость"
-                          value="настройки владельца"
-                          status={item.estimated ? "estimated" : "computed"}
-                        />
-                        <SourceBox
-                          label="WB price range"
-                          value={priceRange(
-                            item.min_size_price,
-                            item.max_size_price,
-                          )}
-                          status={`${item.sizes_count ?? 0} размерных строк`}
-                        />
-                        <SourceBox
-                          label="Цена со скидкой"
-                          value={priceRange(
-                            item.min_discounted_price,
-                            item.max_discounted_price,
-                          )}
-                          status={
-                            positivePercent(item.discount)
-                              ? `скидка WB ${percentValue(item.discount)}`
-                              : "скидки WB нет"
-                          }
-                        />
-                        <SourceBox
-                          label="Цена WB Club"
-                          value={priceRange(
-                            item.min_club_discounted_price,
-                            item.max_club_discounted_price,
-                          )}
-                          status={
-                            positivePercent(item.club_discount)
-                              ? `WB Club ${percentValue(item.club_discount)}`
-                              : "скидки WB Club нет"
-                          }
-                        />
-                        <SourceBox
-                          label="B2B скидки"
-                          value={
-                            hasWholesale(item)
-                              ? `${item.wholesale_discount_thresholds?.length ?? 0} уровней`
-                              : "не задано"
-                          }
-                          status={
-                            hasWholesale(item)
-                              ? "поле wholesaleDiscountThreshold"
-                              : "wholesaleDiscountThreshold нет"
-                          }
-                        />
-                        <SourceBox
-                          label="План акции"
-                          value={formatMoney(item.promotion_min_plan_price)}
-                          status={promotionPlanDetail(item)}
-                        />
-                      </div>
-                    </section>
                     {hasWbAttention(item) ? (
                       <Alert className="border-primary/30 bg-primary/5">
                         <Tag className="h-4 w-4 text-primary" />
-                        <AlertTitle>WB сигналы цены</AlertTitle>
+                        <AlertTitle>Условия перед изменением цены</AlertTitle>
                         <AlertDescription>
                           Скидка, акция, цены по размерам, карантин, низкая
                           оборачиваемость и B2B уровни могут менять безопасный
@@ -2295,35 +2285,40 @@ function PriceDetailSheet({
                     {reasonText(item) ? (
                       <Alert className="border-warning/35 bg-warning/10">
                         <AlertTriangle className="h-4 w-4 text-warning" />
-                        <AlertTitle>Blocker</AlertTitle>
+                        <AlertTitle>Нужно заполнить данные</AlertTitle>
                         <AlertDescription>{reasonText(item)}</AlertDescription>
                       </Alert>
                     ) : null}
                   </TabsContent>
 
+                  <TabsContent value="promo" className="mt-0">
+                    <PromotionBreakdown item={item} />
+                  </TabsContent>
+
                   <TabsContent value="formula" className="mt-0 space-y-3">
+                    <DataAuditGrid item={item} />
                     <FormulaLine
-                      label="Reference price"
+                      label="Опорная цена"
                       value={formatMoney(ref)}
                     />
                     <FormulaLine
-                      label="Break-even price"
+                      label="Цена до нуля"
                       value={formatMoney(item.break_even_price)}
                     />
                     <FormulaLine
-                      label="Target margin price"
+                      label="Цена для цели"
                       value={formatMoney(item.target_margin_price)}
                     />
                     <FormulaLine
-                      label="Break-even gap"
+                      label="Запас до нуля"
                       value={`${formatMoney(ref)} - ${formatMoney(item.break_even_price)} = ${formatMoney(item.safe_price_gap)}`}
                     />
                     <FormulaLine
-                      label="Target gap"
+                      label="Запас до цели"
                       value={`${formatMoney(ref)} - ${formatMoney(item.target_margin_price)} = ${formatMoney(targetGap(item))}`}
                     />
                     <FormulaLine
-                      label="Margin at current price"
+                      label="Маржа сейчас"
                       value={formatPercent(
                         item.estimated_margin_at_current_price ??
                           item.estimated_margin_percent,
@@ -2342,10 +2337,204 @@ function PriceDetailSheet({
                 </div>
               </ScrollArea>
             </Tabs>
-          </>
+          </div>
         ) : null}
       </SheetContent>
     </Sheet>
+  );
+}
+
+function ReviewMetric({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  tone = "default",
+}: {
+  icon: typeof Tag;
+  label: string;
+  value: string;
+  detail: string;
+  tone?: "default" | "info" | "warning" | "danger" | "success";
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "text-destructive"
+      : tone === "warning"
+        ? "text-warning"
+        : tone === "info"
+          ? "text-primary"
+          : tone === "success"
+            ? "text-success"
+            : "text-foreground";
+  const iconClass =
+    tone === "danger"
+      ? "bg-destructive/10 text-destructive"
+      : tone === "warning"
+        ? "bg-warning/15 text-warning"
+        : tone === "info"
+          ? "bg-primary/10 text-primary"
+          : tone === "success"
+            ? "bg-success/10 text-success"
+            : "bg-muted text-muted-foreground";
+  return (
+    <div className="min-w-0 bg-card px-4 py-3">
+      <div className="flex min-w-0 items-center gap-2">
+        <span
+          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${iconClass}`}
+        >
+          <Icon className="h-3.5 w-3.5" />
+        </span>
+        <span className="truncate text-[10px] uppercase text-muted-foreground">
+          {label}
+        </span>
+      </div>
+      <div className={`mt-2 truncate text-xl font-semibold ${toneClass}`}>
+        {value}
+      </div>
+      <div className="mt-0.5 truncate text-xs text-muted-foreground">
+        {detail}
+      </div>
+    </div>
+  );
+}
+
+function DecisionNarrative({ item }: { item: PriceRow }) {
+  const state = safetyState(item);
+  const safeGap = num(item.safe_price_gap);
+  const tGap = targetGap(item);
+  const title =
+    state === "risk"
+      ? "Цена ниже себестоимости"
+      : state === "target"
+        ? "Маржа ниже целевой"
+        : state === "safe"
+          ? "Цена проходит экономику"
+          : "Расчёт пока неполный";
+  const text =
+    state === "risk"
+      ? `До нуля не хватает ${formatMoneyCompact(Math.abs(safeGap ?? 0))}. Сначала проверьте себестоимость и план акции.`
+      : state === "target"
+        ? `До цели не хватает ${formatMoneyCompact(Math.abs(tGap ?? 0))}. Цена не убыточная, но маржа ниже нормы.`
+        : state === "safe"
+          ? "Можно менять цену только после проверки скидок, акций и ограничений WB."
+          : reasonText(item) || "Не хватает данных для безопасного решения.";
+  return (
+    <section className="rounded-lg border bg-card p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-sm font-semibold">{title}</div>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+            {text}
+          </p>
+        </div>
+        <StateBadge state={state} />
+      </div>
+    </section>
+  );
+}
+
+function DecisionChecklist({ item }: { item: PriceRow }) {
+  const rows = [
+    {
+      label: "Экономика",
+      ok: safetyState(item) === "safe",
+      text:
+        safetyState(item) === "safe"
+          ? "запас есть"
+          : reasonText(item) || "нужна проверка цены",
+    },
+    {
+      label: "Скидки",
+      ok: Boolean(positivePercent(item.discount)),
+      text: positivePercent(item.discount)
+        ? `продавец ${percentValue(item.discount)}`
+        : "скидка не задана",
+    },
+    {
+      label: "Акции",
+      ok:
+        item.promotion_calendar_synced === true && !hasPromotionPlanRisk(item),
+      text: promotionPlanDetail(item),
+    },
+    {
+      label: "Ограничения",
+      ok: !item.quarantine && !item.is_bad_turnover,
+      text: item.quarantine
+        ? "карантин цены"
+        : item.is_bad_turnover
+          ? "низкая оборачиваемость"
+          : "блокировок нет",
+    },
+  ];
+  return (
+    <div className="space-y-2">
+      {rows.map((row) => (
+        <div
+          key={row.label}
+          className="flex items-start gap-2 rounded-md border bg-background px-3 py-2"
+        >
+          {row.ok ? (
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+          ) : (
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          )}
+          <div className="min-w-0">
+            <div className="text-xs font-medium">{row.label}</div>
+            <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+              {row.text}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DataAuditGrid({ item }: { item: PriceRow }) {
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <Database className="h-4 w-4 text-muted-foreground" />
+        Проверка данных
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        <SourceBox
+          label="Источник цены"
+          value={sourceLabel(item.price_source)}
+          status={statusLabel(item.mapping_status)}
+        />
+        <SourceBox
+          label="Расчёт"
+          value={statusLabel(item.calculation_state)}
+          status={statusLabel(item.confidence)}
+        />
+        <SourceBox
+          label="Данные"
+          value={statusLabel(item.data_state)}
+          status={reasonText(item) || "готово"}
+        />
+        <SourceBox
+          label="Себестоимость"
+          value="настройки владельца"
+          status={item.estimated ? "оценка" : "рассчитано"}
+        />
+        <SourceBox
+          label="Диапазон цен"
+          value={priceRange(item.min_size_price, item.max_size_price)}
+          status={`${item.sizes_count ?? 0} размерных строк`}
+        />
+        <SourceBox
+          label="B2B скидки"
+          value={
+            hasWholesale(item)
+              ? `${item.wholesale_discount_thresholds?.length ?? 0} уровней`
+              : "не задано"
+          }
+          status={hasWholesale(item) ? "оптовые уровни" : "оптовых уровней нет"}
+        />
+      </div>
+    </section>
   );
 }
 
@@ -2362,13 +2551,13 @@ function MarginRail({ item }: { item: PriceRow }) {
       <div className="mb-2 flex items-center justify-between text-xs">
         <span className="flex items-center gap-2 font-medium">
           <ShieldCheck className="h-3.5 w-3.5 text-muted-foreground" />
-          Safety rail
+          Запас маржи
         </span>
         <StateBadge state={state} />
       </div>
       <div className="space-y-3">
-        <RailRow label="Break-even" value={safePct} amount={safeGap} />
-        <RailRow label="Target margin" value={targetPct} amount={tGap} />
+        <RailRow label="До нуля" value={safePct} amount={safeGap} />
+        <RailRow label="До цели" value={targetPct} amount={tGap} />
       </div>
     </div>
   );
@@ -2480,7 +2669,7 @@ function SimulationInline({
             <Tooltip>
               <TooltipTrigger asChild>
                 <Badge variant="outline" className="text-[10px]">
-                  what-if
+                  сценарий
                 </Badge>
               </TooltipTrigger>
               <TooltipContent>

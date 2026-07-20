@@ -34,6 +34,7 @@ import { buildAgentPageContext } from "@/lib/agent-page-context";
 import {
   createAgentManualTask,
   sendAgentMessage,
+  type AgentIntent,
   type AgentMessageResponse,
   type AgentProductRef,
   type AgentUIAction,
@@ -51,8 +52,9 @@ type ChatMessage = {
 
 type PickerState = {
   open: boolean;
-  intent: string;
+  intent: AgentIntent;
   query: string;
+  draftMessage: string;
   products: AgentProductRef[];
 };
 
@@ -74,17 +76,89 @@ function nextId() {
 
 function fileNameFromDisposition(header: string | null, fallback: string) {
   if (!header) return fallback;
-  const match = header.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
-  if (!match) return fallback;
+  const value = header
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => {
+      const key = part.split("=", 1)[0]?.trim().toLowerCase();
+      return key === "filename" || key === "filename*";
+    });
+  if (!value) return fallback;
+  const separatorIndex = value.indexOf("=");
+  if (separatorIndex < 0) return fallback;
+  let filename = value.slice(separatorIndex + 1).trim();
+  if (filename.toLowerCase().startsWith("utf-8''")) {
+    filename = filename.slice("utf-8''".length);
+  }
+  if (filename.startsWith('"') && filename.endsWith('"')) {
+    filename = filename.slice(1, -1);
+  }
+  if (!filename) return fallback;
   try {
-    return decodeURIComponent(match[1]);
+    return decodeURIComponent(filename);
   } catch {
-    return match[1] || fallback;
+    return filename;
   }
 }
 
 function productTitle(product: AgentProductRef) {
   return product.title || product.vendor_code || `nm ${product.nm_id}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function compactText(value: unknown, maxLength = 420) {
+  const text =
+    typeof value === "string"
+      ? value
+      : JSON.stringify(value, null, 2) || String(value);
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}...`;
+}
+
+function summarizeApiActionResult(value: unknown) {
+  if (value == null) return "";
+  if (Array.isArray(value)) return `Получено элементов: ${value.length}.`;
+  if (!isRecord(value)) return compactText(value);
+
+  const parts: string[] = [];
+  const preferredKeys = [
+    "status",
+    "message",
+    "id",
+    "run_id",
+    "run_type",
+    "total",
+    "count",
+    "checked_accounts",
+    "opened_count",
+    "updated_count",
+    "resolved_count",
+    "active_count",
+    "sku_rows",
+    "stock_rows",
+    "finance_rows",
+  ];
+  for (const key of preferredKeys) {
+    const item = value[key];
+    if (
+      typeof item === "string" ||
+      typeof item === "number" ||
+      typeof item === "boolean"
+    ) {
+      parts.push(`${key}: ${item}`);
+    }
+  }
+  const items = value.items;
+  if (Array.isArray(items)) parts.push(`items: ${items.length}`);
+  const warnings = value.warnings;
+  if (Array.isArray(warnings) && warnings.length) {
+    parts.push(`warnings: ${warnings.length}`);
+  }
+  if (parts.length) return parts.slice(0, 10).join("\n");
+  return compactText(value);
 }
 
 function ProductThumbnail({ product }: { product: AgentProductRef }) {
@@ -115,7 +189,7 @@ export function AgentDock() {
     {
       id: "welcome",
       role: "assistant",
-      text: "Здравствуйте. Я на связи: можете задать вопрос или написать команду по товарам, остаткам, ценам, карточкам и задачам.",
+      text: "Здравствуйте. Я на связи: можете задать вопрос или написать команду по товарам, остаткам, отзывам, ценам, логистике, отчётам и задачам.",
     },
   ]);
   const [lastResponse, setLastResponse] = useState<AgentMessageResponse | null>(
@@ -125,6 +199,7 @@ export function AgentDock() {
     open: false,
     intent: "product_details",
     query: "",
+    draftMessage: "",
     products: [],
   });
   const [titleEditor, setTitleEditor] = useState<TitleState>({
@@ -202,10 +277,12 @@ export function AgentDock() {
     products: AgentProductRef[] = [],
   ) => {
     const payload = action.payload ?? {};
+    const intent = String(payload.intent || "product_details") as AgentIntent;
     setPicker({
       open: true,
-      intent: String(payload.intent || "product_details"),
+      intent,
       query: String(payload.search_query || ""),
+      draftMessage: String(payload.draft_message || ""),
       products,
     });
   };
@@ -243,6 +320,10 @@ export function AgentDock() {
     }
     if (action.type === "download_file" && action.href) {
       await downloadAction(action);
+      return;
+    }
+    if (action.type === "api_request" && action.href) {
+      await runApiAction(action);
       return;
     }
     if (action.type === "create_manual_task") {
@@ -290,6 +371,44 @@ export function AgentDock() {
     }
   };
 
+  const runApiAction = async (action: AgentUIAction) => {
+    if (!action.href) return;
+    if (action.confirm_required) {
+      const ok = window.confirm(
+        `${action.description || "Действие изменит состояние портала."}\n\nВыполнить действие?`,
+      );
+      if (!ok) return;
+    }
+    const method = String(action.method || "GET").toUpperCase();
+    const payload = action.payload ?? {};
+    const body = method === "GET" ? undefined : payload.body;
+    const successMessage =
+      typeof payload.success_message === "string" && payload.success_message
+        ? payload.success_message
+        : "Действие выполнено.";
+    setBusy(true);
+    try {
+      const result = await api<unknown>(action.href, {
+        method,
+        body,
+      });
+      const summary = summarizeApiActionResult(result);
+      setMessages((items) => [
+        ...items,
+        {
+          id: nextId(),
+          role: "assistant",
+          text: summary ? `${successMessage}\n${summary}` : successMessage,
+        },
+      ]);
+      toast.success(successMessage);
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const searchProducts = async () => {
     if (!activeId) return;
     setSearchBusy(true);
@@ -324,10 +443,10 @@ export function AgentDock() {
 
   const selectProduct = async (product: AgentProductRef) => {
     setPicker((value) => ({ ...value, open: false }));
-    await send("", {
+    await send(`Выбран товар: ${productTitle(product)}`, {
       intent: picker.intent,
       selected_nm_id: product.nm_id,
-      message: `${picker.intent} ${product.nm_id}`,
+      message: picker.draftMessage || `${picker.intent} ${product.nm_id}`,
     });
   };
 
@@ -450,7 +569,9 @@ export function AgentDock() {
                                   key={`${action.type}-${index}`}
                                   size="sm"
                                   variant={
-                                    action.type === "download_file"
+                                    action.type === "download_file" ||
+                                    (action.type === "api_request" &&
+                                      action.confirm_required)
                                       ? "default"
                                       : "outline"
                                   }
@@ -459,6 +580,8 @@ export function AgentDock() {
                                 >
                                   {action.type === "download_file" ? (
                                     <Download className="h-3.5 w-3.5" />
+                                  ) : action.type === "api_request" ? (
+                                    <Check className="h-3.5 w-3.5" />
                                   ) : (
                                     <Sparkles className="h-3.5 w-3.5" />
                                   )}

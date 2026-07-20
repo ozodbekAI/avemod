@@ -338,6 +338,8 @@ class ExpenseBreakdownItemRead(BaseModel):
 
 
 class ExpenseBreakdownSummaryRead(BaseModel):
+    computed_at: datetime | None = None
+    cache_status: str = "miss"
     account_id: int = 0
     date_from: date | None = None
     date_to: date | None = None
@@ -417,6 +419,8 @@ class ProfitCascadeBodyRead(BaseModel):
 
 
 class ProfitCascadeRead(BaseModel):
+    computed_at: datetime | None = None
+    cache_status: str = "miss"
     account_id: int
     date_from: date
     date_to: date
@@ -430,6 +434,8 @@ class ProfitCascadeRead(BaseModel):
 
 
 class MoneyExpenseLogisticsRead(BaseModel):
+    computed_at: datetime | None = None
+    cache_status: str = "miss"
     account_id: int
     date_from: date
     date_to: date
@@ -1117,6 +1123,9 @@ class MoneyArticleRow(BaseModel):
 
 
 class MoneyArticleListSummary(BaseModel):
+    revenue_total: float = 0.0
+    profit_total: float = 0.0
+    ads_spend_total: float = 0.0
     profitable_count: int = 0
     loss_count: int = 0
     economic_profitable_count: int = 0

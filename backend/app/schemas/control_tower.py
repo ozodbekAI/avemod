@@ -58,6 +58,84 @@ class OwnerMessage(BaseModel):
     today_focus: str = ""
 
 
+class OwnerWbDailyPoint(BaseModel):
+    date: date
+    orders_amount: float = 0.0
+    sales_amount: float = 0.0
+    open_count: int = 0
+    cart_count: int = 0
+    order_count: int = 0
+    buyout_count: int = 0
+    cart_conversion_percent: float | None = None
+    order_conversion_percent: float | None = None
+    buyout_percent: float | None = None
+    wb_expenses_total: float = 0.0
+
+
+class OwnerAdsDailyPoint(BaseModel):
+    date: date
+    source_spend: float = 0.0
+    impressions: int = 0
+    card_views: int = 0
+    ctr_percent: float | None = None
+    orders_count: int = 0
+    orders_amount: float = 0.0
+    source_drr_percent: float | None = None
+    avg_position: float | None = None
+
+
+class OwnerWbSummary(BaseModel):
+    rows_count: int = 0
+    sku_count: int = 0
+    nm_count: int = 0
+    orders_amount: float = 0.0
+    orders_count: int = 0
+    sales_amount: float = 0.0
+    sales_count: int = 0
+    returns_count: int = 0
+    buyout_count: int = 0
+    funnel_orders_count: int = 0
+    open_count: int = 0
+    cart_count: int = 0
+    cart_conversion_percent: float | None = None
+    order_conversion_percent: float | None = None
+    buyout_percent: float | None = None
+    margin_amount: float | None = None
+    margin_percent: float | None = None
+    cogs: float = 0.0
+    wb_expenses_total: float = 0.0
+    wb_commission: float = 0.0
+    logistics: float = 0.0
+    acceptance: float = 0.0
+    penalties: float = 0.0
+    storage: float = 0.0
+    missed_orders_amount: float = 0.0
+    missed_orders_count: int = 0
+    card_views: int = 0
+    turnover_days: float | None = None
+    stock_qty: float = 0.0
+    daily: list[OwnerWbDailyPoint] = Field(default_factory=list)
+
+
+class OwnerAdsSummary(BaseModel):
+    rows_count: int = 0
+    campaign_count: int = 0
+    impressions: int = 0
+    card_views: int = 0
+    ctr_percent: float | None = None
+    spend: float = 0.0
+    profit_spend: float = 0.0
+    source_spend: float = 0.0
+    allocation_gap: float = 0.0
+    drr_percent: float | None = None
+    source_drr_percent: float | None = None
+    orders_amount: float = 0.0
+    orders_count: int = 0
+    cpc: float | None = None
+    roas: float | None = None
+    daily: list[OwnerAdsDailyPoint] = Field(default_factory=list)
+
+
 class OwnerDashboardRead(BaseModel):
     computed_at: datetime | None = None
     cache_status: str = "miss"
@@ -110,6 +188,8 @@ class OwnerDashboardRead(BaseModel):
     negative_profit_sku_count: int
     blocked_data_sku_count: int
     action_summary: OwnerActionSummary
+    wb_summary: OwnerWbSummary = Field(default_factory=OwnerWbSummary)
+    ads_summary: OwnerAdsSummary = Field(default_factory=OwnerAdsSummary)
     top_risks: list[OwnerDashboardItem] = Field(default_factory=list)
     top_opportunities: list[OwnerDashboardItem] = Field(default_factory=list)
     next_actions_preview: list[OwnerDashboardItem] = Field(default_factory=list)

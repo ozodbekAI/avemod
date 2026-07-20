@@ -6459,6 +6459,20 @@ class MoneyManagementService:
             return row
 
         if code == "supplier_cost_coverage_below_threshold":
+            cost_coverage = getattr(state.health, "cost_coverage", None)
+            supplier_confirmed_revenue_raw = next(
+                (
+                    value
+                    for value in (
+                        getattr(cost_coverage, "supplier_confirmed_revenue", None),
+                        getattr(state.health, "supplier_confirmed_revenue", None),
+                        getattr(state.health, "revenue_with_real_cost", None),
+                    )
+                    if value is not None
+                ),
+                0,
+            )
+            supplier_confirmed_revenue = self._float0(supplier_confirmed_revenue_raw)
             item.calculation_title = (
                 "Покрытие выручки подтвержденной себестоимостью ниже порога"
             )
@@ -6472,9 +6486,9 @@ class MoneyManagementService:
                 ),
                 inp(
                     "Выручка с подтвержденной себестоимостью",
-                    money(getattr(state.health, "supplier_confirmed_revenue", 0)),
+                    money(supplier_confirmed_revenue),
                     "RUB",
-                    "dashboard.data_health",
+                    "dashboard.data_health.cost_coverage.supplier_confirmed_revenue",
                 ),
                 inp(
                     "Текущее покрытие",
@@ -11665,6 +11679,27 @@ class MoneyManagementService:
             if item.money.profit.after_source_ads < 0 and item.finality.profit_final
         )
         summary = MoneyArticleListSummary(
+            revenue_total=self._float0(
+                sum(
+                    (self._decimal(item.money.revenue) for item in items),
+                    start=Decimal("0"),
+                )
+            ),
+            profit_total=self._float0(
+                sum(
+                    (
+                        self._decimal(item.money.profit.after_source_ads)
+                        for item in items
+                    ),
+                    start=Decimal("0"),
+                )
+            ),
+            ads_spend_total=self._float0(
+                sum(
+                    (self._decimal(item.ads.spend) for item in items),
+                    start=Decimal("0"),
+                )
+            ),
             profitable_count=economic_profitable_count,
             loss_count=economic_loss_count,
             economic_profitable_count=economic_profitable_count,

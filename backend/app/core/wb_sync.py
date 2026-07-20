@@ -113,9 +113,11 @@ class DomainSyncBase(BaseDomainSyncService):
         params: dict[str, Any] | None = None,
         json_body: Any | None = None,
         api_category: str | None = None,
+        token_category: str | None = None,
     ) -> Any:
+        effective_category = token_category or self.category
         token = await self.account_service.get_decrypted_token(
-            session, account_id, self.category
+            session, account_id, effective_category
         )
         client = WBHTTPClient(token)
         try:
@@ -125,7 +127,7 @@ class DomainSyncBase(BaseDomainSyncService):
             await self.raw_service.store(
                 session,
                 account_id=account_id,
-                api_category=api_category or self.category,
+                api_category=api_category or effective_category,
                 endpoint=endpoint,
                 http_method=method,
                 request_params=params or {},
@@ -148,7 +150,7 @@ class DomainSyncBase(BaseDomainSyncService):
             await self.raw_service.store(
                 session,
                 account_id=account_id,
-                api_category=api_category or self.category,
+                api_category=api_category or effective_category,
                 endpoint=endpoint,
                 http_method=method,
                 request_params=params or {},

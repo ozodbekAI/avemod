@@ -64,6 +64,14 @@ class WBHTTPClient:
         "analytics_funnel": 20,
         "documents": 10,
         "stocks": 10,
+        "paid_storage_create": 60,
+        "paid_storage_status": 5,
+        "paid_storage_download": 60,
+        "acceptance_report_create": 60,
+        "acceptance_report_status": 5,
+        "acceptance_report_download": 60,
+        "marketplace_inventory": 1,
+        "supplies_transit": 10,
     }
 
     def __init__(self, token: str, timeout: int | None = None) -> None:
@@ -82,6 +90,22 @@ class WBHTTPClient:
             return "documents"
         if "/api/v1/warehouse_remains" in url:
             return "stocks"
+        if "/api/v1/paid_storage/tasks/" in url and url.endswith("/status"):
+            return "paid_storage_status"
+        if "/api/v1/paid_storage/tasks/" in url and url.endswith("/download"):
+            return "paid_storage_download"
+        if "/api/v1/paid_storage" in url:
+            return "paid_storage_create"
+        if "/api/v1/acceptance_report/tasks/" in url and url.endswith("/status"):
+            return "acceptance_report_status"
+        if "/api/v1/acceptance_report/tasks/" in url and url.endswith("/download"):
+            return "acceptance_report_download"
+        if "/api/v1/acceptance_report" in url:
+            return "acceptance_report_create"
+        if "/api/v3/stocks/" in url or "/api/v3/warehouses" in url:
+            return "marketplace_inventory"
+        if "/api/v1/transit-tariffs" in url:
+            return "supplies_transit"
         return None
 
     @classmethod

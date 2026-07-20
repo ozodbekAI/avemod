@@ -51,6 +51,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { proxyWbImageUrl } from "@/lib/wb-images";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/checker/")({
@@ -305,7 +306,7 @@ function CheckerCardsPage() {
     <PageShell>
       <PageHeader
         title="Проверка карточек"
-        description="Реальный checker из backend: анализ WB-карточек, AI-рекомендации, diff, локальная фиксация и отправка в WB по capability."
+        description="Очередь карточек WB: что мешает качеству, какие поля исправить и где нужен ручной контроль."
         actions={
           <>
             <Button
@@ -653,7 +654,7 @@ function ProductQualityRow({ row }: { row: CardQualityProductRow }) {
             {issueCount} ошибок
           </div>
           <div className="mt-0.5 text-[11px] text-muted-foreground">
-            {actionable} actionable / {mediaTotal} media
+            {actionable} открыто / {mediaTotal} медиа
           </div>
         </div>
 
@@ -675,13 +676,16 @@ function ProductQualityRow({ row }: { row: CardQualityProductRow }) {
 }
 
 function ProductThumb({ src, title }: { src?: string | null; title: string }) {
+  const [failed, setFailed] = useState(false);
+  const displaySrc = proxyWbImageUrl(src);
   return (
     <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted">
-      {src ? (
+      {displaySrc && !failed ? (
         <img
-          src={src}
+          src={displaySrc}
           alt={title}
           loading="lazy"
+          onError={() => setFailed(true)}
           className="h-full w-full object-cover"
         />
       ) : (

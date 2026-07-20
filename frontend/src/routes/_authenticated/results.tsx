@@ -224,8 +224,16 @@ const TRACKING_FILTERS: Array<{
   hint: string;
 }> = [
   { value: "all", label: "Все", hint: "Все загруженные события" },
-  { value: "attention", label: "Требуют внимания", hint: "Ждут данных или проверки" },
-  { value: "missing_after", label: "Нет данных после", hint: "Нет снимка после действия" },
+  {
+    value: "attention",
+    label: "Требуют внимания",
+    hint: "Ждут данных или проверки",
+  },
+  {
+    value: "missing_after",
+    label: "Нет данных после",
+    hint: "Нет снимка после действия",
+  },
   {
     value: "missing_evidence",
     label: "Нет доказательств",
@@ -339,7 +347,10 @@ function dayKey(value?: string | null): string {
   return date.toISOString().slice(0, 10);
 }
 
-function hasSnapshot(event: unknown, key: "before_snapshot" | "after_snapshot") {
+function hasSnapshot(
+  event: unknown,
+  key: "before_snapshot" | "after_snapshot",
+) {
   const r = isRecord(event) ? event : {};
   const value = r[key];
   return isRecord(value) && Object.keys(value).length > 0;
@@ -482,7 +493,11 @@ function matchesLocalSearch(event: unknown, query: string): boolean {
 function matchesExactText(eventValue: unknown, filterValue: string): boolean {
   const filter = filterValue.trim().toLowerCase();
   if (!filter) return true;
-  return String(eventValue ?? "").trim().toLowerCase() === filter;
+  return (
+    String(eventValue ?? "")
+      .trim()
+      .toLowerCase() === filter
+  );
 }
 
 function matchesDateRange(
@@ -525,14 +540,19 @@ function matchesFocusedProblemFilters(
   ) {
     return false;
   }
-  if (!matchesDateRange(eventCreatedAt(event), filters.dateFrom, filters.dateTo)) {
+  if (
+    !matchesDateRange(eventCreatedAt(event), filters.dateFrom, filters.dateTo)
+  ) {
     return false;
   }
   if (!matchesLocalSearch(event, filters.search)) return false;
   return true;
 }
 
-function matchesTrackingFilter(event: unknown, filter: TrackingFilter): boolean {
+function matchesTrackingFilter(
+  event: unknown,
+  filter: TrackingFilter,
+): boolean {
   if (filter === "all") return true;
   if (filter === "attention") return needsAttention(event);
   if (filter === "missing_after") return !problemResultHasAfterData(event);
@@ -562,16 +582,14 @@ function buildTrend(items: unknown[]) {
   for (const item of items) {
     const createdAt = eventCreatedAt(item);
     const key = dayKey(createdAt);
-    const current =
-      grouped.get(key) ??
-      {
-        key,
-        label: key === "unknown" ? "Без даты" : fmtDay(createdAt),
-        total: 0,
-        improved: 0,
-        worse: 0,
-        pending: 0,
-      };
+    const current = grouped.get(key) ?? {
+      key,
+      label: key === "unknown" ? "Без даты" : fmtDay(createdAt),
+      total: 0,
+      improved: 0,
+      worse: 0,
+      pending: 0,
+    };
     const outcome = classifyOutcome(item);
     current.total += 1;
     if (outcome === "improved") current.improved += 1;
@@ -589,26 +607,29 @@ function buildTrend(items: unknown[]) {
 function buildModuleRows(items: unknown[]) {
   const grouped = new Map<
     string,
-    { key: string; label: string; count: number; improved: number; attention: number }
+    {
+      key: string;
+      label: string;
+      count: number;
+      improved: number;
+      attention: number;
+    }
   >();
   for (const item of items) {
     const key = eventModule(item) || "unknown";
-    const current =
-      grouped.get(key) ?? {
-        key,
-        label: key === "unknown" ? "Источник не указан" : humanizeModule(key),
-        count: 0,
-        improved: 0,
-        attention: 0,
-      };
+    const current = grouped.get(key) ?? {
+      key,
+      label: key === "unknown" ? "Источник не указан" : humanizeModule(key),
+      count: 0,
+      improved: 0,
+      attention: 0,
+    };
     current.count += 1;
     if (classifyOutcome(item) === "improved") current.improved += 1;
     if (needsAttention(item)) current.attention += 1;
     grouped.set(key, current);
   }
-  return [...grouped.values()]
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 8);
+  return [...grouped.values()].sort((a, b) => b.count - a.count).slice(0, 8);
 }
 
 function buildProblemRows(items: unknown[]) {
@@ -625,15 +646,14 @@ function buildProblemRows(items: unknown[]) {
   >();
   for (const item of items) {
     const code = eventProblemCode(item) || "unknown";
-    const current =
-      grouped.get(code) ?? {
-        code,
-        count: 0,
-        improved: 0,
-        worse: 0,
-        pending: 0,
-        after: 0,
-      };
+    const current = grouped.get(code) ?? {
+      code,
+      count: 0,
+      improved: 0,
+      worse: 0,
+      pending: 0,
+      after: 0,
+    };
     const outcome = classifyOutcome(item);
     current.count += 1;
     if (outcome === "improved") current.improved += 1;
@@ -644,9 +664,7 @@ function buildProblemRows(items: unknown[]) {
     if (problemResultHasAfterData(item)) current.after += 1;
     grouped.set(code, current);
   }
-  return [...grouped.values()]
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 7);
+  return [...grouped.values()].sort((a, b) => b.count - a.count).slice(0, 7);
 }
 
 function buildDashboard(items: unknown[], total: number) {
@@ -979,7 +997,9 @@ function ResultsFilterPanel({
             disabled={focusedProblem}
           />
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Код проблемы</Label>
+            <Label className="text-xs text-muted-foreground">
+              Код проблемы
+            </Label>
             <Input
               value={problemCode}
               onChange={(e) => setProblemCode(e.target.value)}
@@ -1085,8 +1105,13 @@ function TrackingFilterBar({
   );
 }
 
-function ResultsKpis({ dashboard }: { dashboard: ReturnType<typeof buildDashboard> }) {
-  const waiting = dashboard.counts.pending_data + dashboard.counts.not_enough_data;
+function ResultsKpis({
+  dashboard,
+}: {
+  dashboard: ReturnType<typeof buildDashboard>;
+}) {
+  const waiting =
+    dashboard.counts.pending_data + dashboard.counts.not_enough_data;
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
       <KpiCard
@@ -1137,7 +1162,11 @@ function ResultsKpis({ dashboard }: { dashboard: ReturnType<typeof buildDashboar
   );
 }
 
-function ResultsCharts({ dashboard }: { dashboard: ReturnType<typeof buildDashboard> }) {
+function ResultsCharts({
+  dashboard,
+}: {
+  dashboard: ReturnType<typeof buildDashboard>;
+}) {
   return (
     <div className="grid gap-3 xl:grid-cols-[1.25fr_0.75fr]">
       <Card className="rounded-md">
@@ -1357,7 +1386,10 @@ function ProblemBreakdown({
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium" title={row.code}>
+                  <div
+                    className="truncate text-sm font-medium"
+                    title={row.code}
+                  >
                     {problemCodeLabel(row.code)}
                   </div>
                   <div className="mt-1 text-[11px] text-muted-foreground">
@@ -1444,11 +1476,21 @@ function ResultEventMobileCard({
         </div>
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <InfoPill label="До действия" value={hasSnapshot(event, "before_snapshot") ? "есть" : "нет"} />
-        <InfoPill label="После действия" value={problemResultHasAfterData(event) ? "есть" : "нет"} />
-        <InfoPill label="Доказательства" value={hasProof(event) ? "есть" : "нет"} />
+        <InfoPill
+          label="До действия"
+          value={hasSnapshot(event, "before_snapshot") ? "есть" : "нет"}
+        />
+        <InfoPill
+          label="После действия"
+          value={problemResultHasAfterData(event) ? "есть" : "нет"}
+        />
+        <InfoPill
+          label="Доказательства"
+          value={hasProof(event) ? "есть" : "нет"}
+        />
         <InfoPill label="Точность" value={formatConfidenceValue(event)} />
       </div>
+      <ExperimentEvidence event={event} />
       <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
         {problemCode ? (
           <Badge variant="outline" title={problemCode}>
@@ -1508,6 +1550,71 @@ function InfoPill({ label, value }: { label: string; value: string }) {
     <div className="rounded-sm border bg-background px-2 py-1">
       <div className="text-[10px] uppercase text-muted-foreground">{label}</div>
       <div className="font-medium">{value}</div>
+    </div>
+  );
+}
+
+function experimentEvidencePayload(
+  event: unknown,
+): Record<string, unknown> | null {
+  const r = isRecord(event) ? event : {};
+  const payload =
+    [r.payload, r.data, r.meta, r.evaluation].find(isRecord) ?? {};
+  const experiment =
+    pick<Record<string, unknown>>(payload, [
+      "experiment",
+      "experiment_evidence",
+      "experiment_result",
+    ]) ?? payload;
+  if (!isRecord(experiment)) return null;
+  const hasExperimentEvidence = [
+    "baseline_window",
+    "post_window",
+    "primary_result",
+    "data_sufficiency",
+    "confounders",
+  ].some((key) => experiment[key] != null);
+  return hasExperimentEvidence ? experiment : null;
+}
+
+function experimentValue(value: unknown): string {
+  if (value == null || value === "") return "—";
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "—";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function ExperimentEvidence({ event }: { event: unknown }) {
+  const payload = experimentEvidencePayload(event);
+  if (!payload) return null;
+  const baseline_window = payload.baseline_window;
+  const post_window = payload.post_window;
+  const primary_result = payload.primary_result;
+  const data_sufficiency = payload.data_sufficiency;
+  const confounders = payload.confounders;
+  const rows = [
+    ["До", baseline_window],
+    ["После", post_window],
+    ["Метрика", primary_result],
+    ["Достаточность", data_sufficiency],
+    ["Факторы", confounders],
+  ];
+  return (
+    <div className="mt-2 rounded-md border bg-warning/5 p-2 text-[11px]">
+      <div className="mb-1 font-medium text-warning">
+        Корреляция, а не гарантия
+      </div>
+      <div className="grid gap-1 sm:grid-cols-2">
+        {rows.map(([label, value]) => (
+          <div key={label} className="min-w-0">
+            <span className="text-muted-foreground">{label}: </span>
+            <span className="break-words">{experimentValue(value)}</span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 text-muted-foreground">
+        {PROBLEM_RESULT_CORRELATION_DISCLAIMER}
+      </div>
     </div>
   );
 }
@@ -1589,8 +1696,12 @@ function ResultsEventLedger({
                     <TableHead>Товар / проблема</TableHead>
                     <TableHead className="w-[190px]">Статус</TableHead>
                     <TableHead className="w-[180px]">Проверка записи</TableHead>
-                    <TableHead className="w-[160px] text-right">Эффект</TableHead>
-                    <TableHead className="w-[180px] text-right">Действия</TableHead>
+                    <TableHead className="w-[160px] text-right">
+                      Эффект
+                    </TableHead>
+                    <TableHead className="w-[180px] text-right">
+                      Действия
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1684,7 +1795,9 @@ function ResultEventTableRow({
   return (
     <TableRow>
       <TableCell className="align-top text-xs text-muted-foreground">
-        <div className="font-mono tabular-nums">{fmtDateTime(eventCreatedAt(event))}</div>
+        <div className="font-mono tabular-nums">
+          {fmtDateTime(eventCreatedAt(event))}
+        </div>
         <div className="mt-1">{humanizeModule(moduleKey)}</div>
       </TableCell>
       <TableCell className="align-top">
@@ -1708,6 +1821,7 @@ function ResultEventTableRow({
             {humanizeMessage(message)}
           </div>
         ) : null}
+        <ExperimentEvidence event={event} />
       </TableCell>
       <TableCell className="align-top">
         <div className="flex flex-wrap gap-1.5">
@@ -1732,7 +1846,10 @@ function ResultEventTableRow({
           <TrackingChip ok={hasSnapshot(event, "before_snapshot")} label="До" />
           <TrackingChip ok={problemResultHasAfterData(event)} label="После" />
           <TrackingChip ok={hasProof(event)} label="Расчёт" />
-          <TrackingChip ok={problemResultHasConfidence(event)} label="Точность" />
+          <TrackingChip
+            ok={problemResultHasConfidence(event)}
+            label="Точность"
+          />
         </div>
       </TableCell>
       <TableCell className="align-top text-right">
@@ -1820,8 +1937,9 @@ function ResultsPage() {
   const [problemCode, setProblemCodeState] = useState(
     routeHasProblemInstance ? "" : routeFilter(routeSearch.problem_code),
   );
-  const [problemInstanceId, setProblemInstanceIdState] =
-    useState(routeProblemInstanceId);
+  const [problemInstanceId, setProblemInstanceIdState] = useState(
+    routeProblemInstanceId,
+  );
   const [nmId, setNmIdState] = useState(
     routeHasProblemInstance ? "" : routeFilter(routeSearch.nm_id),
   );
@@ -1846,9 +1964,10 @@ function ResultsPage() {
   const [dateTo, setDateToState] = useState(routeFilter(routeSearch.date_to));
   const [search, setSearchState] = useState(routeFilter(routeSearch.search));
   const [page, setPageState] = useState(positiveInt(routeSearch.page, 1));
-  const [pageSize, setPageSizeState] = useState(allowedLimit(routeSearch.limit));
-  const [trackingFilter, setTrackingFilter] =
-    useState<TrackingFilter>("all");
+  const [pageSize, setPageSizeState] = useState(
+    allowedLimit(routeSearch.limit),
+  );
+  const [trackingFilter, setTrackingFilter] = useState<TrackingFilter>("all");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
   const [drawerEvent, setDrawerEvent] = useState<unknown>(null);
@@ -1913,9 +2032,7 @@ function ResultsPage() {
     const nextProblemInstanceId = routeFilter(routeSearch.problem_instance_id);
     const focused = Boolean(nextProblemInstanceId);
     setActionIdState(routeFilter(routeSearch.action_id));
-    setProblemCodeState(
-      focused ? "" : routeFilter(routeSearch.problem_code),
-    );
+    setProblemCodeState(focused ? "" : routeFilter(routeSearch.problem_code));
     setProblemInstanceIdState(nextProblemInstanceId);
     setNmIdState(focused ? "" : routeFilter(routeSearch.nm_id));
     setSourceModuleState(routeFilter(routeSearch.source_module));
@@ -2263,7 +2380,8 @@ function ResultsPage() {
                   <div>
                     <div className="text-sm font-medium">Быстрый отбор</div>
                     <div className="text-xs text-muted-foreground">
-                      Основные фильтры выше отправляются на сервер; быстрый отбор работает по текущей странице.
+                      Основные фильтры выше отправляются на сервер; быстрый
+                      отбор работает по текущей странице.
                     </div>
                   </div>
                   <TrackingFilterBar

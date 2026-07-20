@@ -15,6 +15,7 @@ def load_all_models() -> None:
     from app.models import experiments as _experiments_models  # noqa: F401
     from app.models import finance as _finance_models  # noqa: F401
     from app.models import grouping as _grouping_models  # noqa: F401
+    from app.models import logistics as _logistics_models  # noqa: F401
     from app.models import manual_costs as _manual_costs_models  # noqa: F401
     from app.models import marts as _marts_models  # noqa: F401
     from app.models import orders as _orders_models  # noqa: F401

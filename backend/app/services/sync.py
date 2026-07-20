@@ -106,7 +106,7 @@ class SyncOrchestrator:
         reset_cursors = 0
         for cursor in stale_cursors:
             reference_time = (
-                cursor.last_synced_at or cursor.updated_at or cursor.created_at
+                cursor.updated_at or cursor.last_synced_at or cursor.created_at
             )
             if reference_time is None or reference_time > stale_before:
                 continue
@@ -115,8 +115,8 @@ class SyncOrchestrator:
                 **(cursor.cursor_value or {}),
                 "staleResetAt": utcnow().isoformat(),
                 "stalePreviousStatus": "running",
+                "lastErrorText": "Stale running cursor was reset before the next attempt",
             }
-            cursor.last_synced_at = utcnow()
             reset_cursors += 1
 
         stale_runs_stmt = (
@@ -563,6 +563,10 @@ class SyncOrchestrator:
             from app.modules.tariffs.sync import TariffsSyncService
 
             return TariffsSyncService()
+        if domain == "logistics":
+            from app.modules.logistics.sync import LogisticsSyncService
+
+            return LogisticsSyncService()
         if domain == "documents":
             from app.modules.documents.sync import DocumentsSyncService
 

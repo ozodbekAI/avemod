@@ -65,6 +65,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { proxyWbImageUrl } from "@/lib/wb-images";
 import { cn } from "@/lib/utils";
 
 type CheckerTab =
@@ -185,8 +186,7 @@ function formatDate(value?: string | null) {
 }
 
 function proxyImage(src?: string | null): string | null {
-  if (!src) return null;
-  return src;
+  return proxyWbImageUrl(src);
 }
 
 function firstImage(...values: unknown[]): string {
@@ -280,6 +280,27 @@ function issueField(issue: any) {
       issue?.category ??
       issue?.issue_code,
   );
+}
+
+function issueFieldLabel(issue: any) {
+  const raw = issueField(issue);
+  const key = raw.trim().toLowerCase();
+  if (!key) return "";
+  if (key === "description" || key.endsWith(".description")) return "Описание";
+  if (key === "title" || key.endsWith(".title")) return "Название";
+  if (key === "brand" || key.endsWith(".brand")) return "Бренд";
+  if (key === "subject" || key.includes("subject_name")) return "Категория";
+  if (key.includes("photo") || key.includes("media")) return "Медиа";
+  if (key.includes("video")) return "Видео";
+  if (key.includes("size")) return "Размер";
+  if (key.includes("package")) return "Упаковка";
+  if (key.includes("document") || key.includes("certificate"))
+    return "Документы";
+  if (key.startsWith("characteristics")) {
+    const name = raw.replace(/^characteristics[.\s:/-]*/i, "").trim();
+    return name ? `Характеристика: ${name}` : "Характеристики";
+  }
+  return raw.replaceAll("_", " ");
 }
 
 function characteristicNameFromIssue(issue: any) {
@@ -482,7 +503,16 @@ function shouldShowIssue(issue: any) {
     return true;
   if (Array.isArray(issue?.ai_alternatives) && issue.ai_alternatives.length)
     return true;
-  return false;
+  return Boolean(
+    text(
+      issue?.recommendation ??
+        issue?.recommended_fix ??
+        issue?.description ??
+        issue?.business_explanation ??
+        issue?.ai_reason_short ??
+        issue?.ai_reason,
+    ) || diagnosticMessage(issue?.expected_value_json),
+  );
 }
 
 function mapIssueToTab(issue: any): CheckerTab {
@@ -659,7 +689,7 @@ function CheckerProductPage() {
       invalidateChecker();
     },
     onError: (error: any) =>
-      toast.error(error?.message ?? "Checker action не выполнен"),
+      toast.error(error?.message ?? "Действие checker не выполнено"),
   });
 
   const transferMutation = useMutation({
@@ -675,9 +705,9 @@ function CheckerProductPage() {
         description: [
           `Карточка: ${title}`,
           `nmID: ${nmId}`,
-          `Поле: ${issueField(issue) || "—"}`,
+          `Поле: ${issueFieldLabel(issue) || "—"}`,
           `Текущее значение: ${issueCurrent(issue) || "—"}`,
-          `Предложение AI: ${issueSuggested(issue) || "—"}`,
+          `Предложение ИИ: ${issueSuggested(issue) || "—"}`,
           `Причина: ${issueReason(issue) || "—"}`,
         ].join("\n"),
         task_kind: "card_quality_review",
@@ -811,10 +841,10 @@ function CheckerProductPage() {
       {qualityQuery.isError ? (
         <Alert className="mb-4 border-destructive/40">
           <CircleAlert className="h-4 w-4" />
-          <AlertTitle>Checker data не загрузилась</AlertTitle>
+          <AlertTitle>Данные checker не загрузились</AlertTitle>
           <AlertDescription>
             {qualityQuery.error?.message ??
-              "Проверьте backend endpoint /portal/products/{nmId}/quality."}
+              "Проверьте серверный endpoint /portal/products/{nmId}/quality."}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -825,7 +855,7 @@ function CheckerProductPage() {
           <AlertTitle>{statusLabel(quality?.status)}</AlertTitle>
           <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
             <span>
-              {quality?.message ?? "Для карточки ещё нет snapshot checker."}
+              {quality?.message ?? "Для карточки ещё нет снимка checker."}
             </span>
             <Button
               size="sm"
@@ -989,10 +1019,12 @@ function IssueRail({ issues, activeTab, onTabChange, className }: any) {
           <CardTitle className="text-sm">Требуют исправления</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 p-3 pt-0">
-          <div className="flex gap-2">
-            <Badge className="bg-destructive">{critical}</Badge>
-            <Badge variant="secondary">
-              {Math.max(issues.length - critical, 0)}
+          <div className="grid grid-cols-2 gap-2">
+            <Badge className="justify-center bg-destructive">
+              {critical} критично
+            </Badge>
+            <Badge variant="secondary" className="justify-center">
+              {Math.max(issues.length - critical, 0)} проверить
             </Badge>
           </div>
           {groups.map(([key, label, count]: any) => (
@@ -1027,7 +1059,7 @@ function IssueRail({ issues, activeTab, onTabChange, className }: any) {
               />
               <span className="min-w-0">
                 <span className="block truncate font-medium">
-                  {issueField(issue)}
+                  {issueFieldLabel(issue)}
                 </span>
                 <span className="block truncate text-muted-foreground">
                   {text(issue?.title) || text(issue?.issue_code)}
@@ -1066,7 +1098,12 @@ function ProductAside({
     >
       <div className="flex h-[265px] items-center justify-center bg-muted">
         {photo ? (
-          <img src={photo} alt={title} className="h-full w-full object-cover" />
+          <CheckerImage
+            src={photo}
+            alt={title}
+            className="h-full w-full object-cover"
+            fallbackClassName="h-full w-full"
+          />
         ) : (
           <ImageOff className="h-8 w-8 text-muted-foreground" />
         )}
@@ -1097,7 +1134,7 @@ function CheckerAnalysisProgress({ progress }: { progress: number }) {
     ["Данные WB", ShieldCheck],
     ["Правила checker", ClipboardList],
     ["Fixed-file", BadgeCheck],
-    ["AI-рекомендации", Bot],
+    ["ИИ-рекомендации", Bot],
   ];
   return (
     <Card className="mb-4 overflow-hidden border-primary/30 bg-primary/5">
@@ -1110,7 +1147,7 @@ function CheckerAnalysisProgress({ progress }: { progress: number }) {
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
               Сверяем карточку с WB-данными, fixed-file, справочниками и
-              AI-правилами.
+              ИИ-правилами.
             </div>
           </div>
           <Badge variant="outline" className="tabular-nums">
@@ -1363,7 +1400,7 @@ function CharacteristicIssueCard({
   const field =
     characteristic?.name ||
     characteristicNameFromIssue(issue) ||
-    issueField(issue);
+    issueFieldLabel(issue);
   const current = issueCurrent(issue) || text(characteristic?.value) || "—";
   const suggested = issueSuggested(issue);
   const [selectedSuggestion, setSelectedSuggestion] = useState("");
@@ -1472,8 +1509,8 @@ function CharacteristicIssueCard({
             {issueField(issue) ? (
               <div className="text-xs text-muted-foreground">
                 Влияет на:{" "}
-                <span className="font-mono text-foreground">
-                  {issueField(issue)}
+                <span className="text-foreground">
+                  {issueFieldLabel(issue)}
                 </span>
               </div>
             ) : null}
@@ -1509,10 +1546,11 @@ function MediaTab(props: any) {
             key={`${photo}:${index}`}
             className="relative h-[280px] overflow-hidden rounded-lg border bg-muted"
           >
-            <img
+            <CheckerImage
               src={photo}
               alt={`photo ${index + 1}`}
               className="h-full w-full object-cover"
+              fallbackClassName="h-full w-full"
             />
             {index === 0 ? (
               <div className="absolute bottom-0 left-0 right-0 bg-black/45 py-2 text-center text-xs font-medium text-white">
@@ -1528,6 +1566,42 @@ function MediaTab(props: any) {
         ) : null}
       </div>
     </div>
+  );
+}
+
+function CheckerImage({
+  src,
+  alt,
+  className,
+  fallbackClassName,
+}: {
+  src?: string | null;
+  alt: string;
+  className?: string;
+  fallbackClassName?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const displaySrc = proxyWbImageUrl(src);
+  if (!displaySrc || failed) {
+    return (
+      <div
+        className={cn(
+          "flex items-center justify-center bg-muted text-muted-foreground",
+          fallbackClassName,
+        )}
+      >
+        <ImageOff className="h-8 w-8" />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={displaySrc}
+      alt={alt}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className={className}
+    />
   );
 }
 
@@ -1607,7 +1681,7 @@ function IssueCard({
   const [selectedSuggestion, setSelectedSuggestion] = useState("");
   const effectiveSuggested = selectedSuggestion || suggested;
   const valueGroups = issueValueGroups(issue, selectedSuggestion);
-  const field = issueField(issue);
+  const field = issueFieldLabel(issue);
   const current = issueCurrent(issue) || "—";
   const reason = issueReason(issue);
   const recommendation = text(issue?.recommendation ?? issue?.recommended_fix);
@@ -1626,7 +1700,7 @@ function IssueCard({
               </span>
               {["critical", "high"].includes(norm(issue?.severity)) ? (
                 <span className="rounded-md bg-destructive/10 px-2 py-1 text-xs font-semibold text-destructive">
-                  critical
+                  критично
                 </span>
               ) : null}
             </div>
@@ -1635,7 +1709,7 @@ function IssueCard({
             </div>
             {field ? (
               <div className="mt-1 text-xs text-muted-foreground">
-                Поле: <span className="font-mono">{field}</span>
+                Поле: <span>{field}</span>
               </div>
             ) : null}
           </div>

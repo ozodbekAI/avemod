@@ -49,6 +49,8 @@ test("action-center-task-drawer exposes professional navigation actions", async 
   await expect(
     page.getByRole("button", { name: "Перепроверить" }),
   ).toBeVisible();
+  await expect(page.getByText("Открыть в результатах")).toBeVisible();
+  await expect(page.getByText("Открыть исправление данных")).toBeVisible();
 });
 
 test("results-problem-timeline can be opened from Action Center", async ({
@@ -71,4 +73,5 @@ test("product360-problem-preview can be opened from Action Center", async ({
   await expect(
     page.getByRole("link", { name: /Проблема.*Открыть задачу/i }).first(),
   ).toBeVisible();
+  await expect(page.getByText("Открыть задачу").first()).toBeVisible();
 });

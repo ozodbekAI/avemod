@@ -25,6 +25,9 @@ class _FakeResult:
     def scalar_one(self):
         return self._rows[0]
 
+    def scalar_one_or_none(self):
+        return self._rows[0] if self._rows else None
+
     def __iter__(self):
         return iter(self._rows)
 
@@ -127,6 +130,147 @@ def test_auth_error_detection_ignores_sql_placeholders_with_401_403() -> None:
     assert PortalService._is_auth_error(error_text) is False
     assert PortalService._is_auth_error("WB API error 403: forbidden") is True
     assert PortalService._is_auth_error("WB API error 401: unauthorized") is True
+
+
+def test_data_sync_alignment_detects_new_connected_account() -> None:
+    status, warnings, domains = PortalService._data_sync_alignment(
+        [
+            PortalDataSyncDomainStatus(
+                domain="sales",
+                status="not_started",
+                token_category="statistics",
+                token_configured=True,
+                configured=True,
+                permission_status="unknown",
+                freshness_status="missing",
+                source_status="missing",
+            ),
+            PortalDataSyncDomainStatus(
+                domain="finance",
+                status="not_started",
+                token_category="finance",
+                token_configured=True,
+                configured=True,
+                permission_status="unknown",
+                freshness_status="missing",
+                source_status="missing",
+            ),
+        ]
+    )
+
+    assert status == "new_account"
+    assert "первая загрузка" in warnings[0]
+    assert domains == ["sales", "finance"]
+
+
+def test_data_sync_alignment_detects_domain_date_mismatch() -> None:
+    now = datetime.now(timezone.utc)
+    status, warnings, domains = PortalService._data_sync_alignment(
+        [
+            PortalDataSyncDomainStatus(
+                domain="sales",
+                status="completed",
+                token_category="statistics",
+                token_configured=True,
+                configured=True,
+                permission_status="ok",
+                freshness_status="fresh",
+                source_status="fresh",
+                data_watermark_at=now,
+                last_successful_sync_at=now,
+            ),
+            PortalDataSyncDomainStatus(
+                domain="orders",
+                status="completed",
+                token_category="statistics",
+                token_configured=True,
+                configured=True,
+                permission_status="ok",
+                freshness_status="fresh",
+                source_status="fresh",
+                data_watermark_at=now - timedelta(hours=3),
+                last_successful_sync_at=now,
+            ),
+        ]
+    )
+
+    assert status == "misaligned"
+    assert any("Sales / orders" in warning for warning in warnings)
+    assert domains == ["orders"]
+
+
+def test_sync_data_watermark_does_not_use_run_timestamps_without_data_cursor() -> None:
+    now = datetime.now(timezone.utc)
+    run = SimpleNamespace(
+        status="completed",
+        finished_at=now,
+        started_at=now - timedelta(minutes=2),
+        details={"rowsLoaded": 10},
+    )
+
+    assert PortalService._sync_data_watermark(cursor=None, run=run) is None
+
+
+def test_data_sync_alignment_ignores_success_time_without_loaded_data() -> None:
+    now = datetime.now(timezone.utc)
+    status, warnings, domains = PortalService._data_sync_alignment(
+        [
+            PortalDataSyncDomainStatus(
+                domain="sales",
+                status="completed",
+                token_category="statistics",
+                token_configured=True,
+                configured=True,
+                permission_status="ok",
+                freshness_status="fresh",
+                source_status="fresh",
+                last_successful_sync_at=now,
+            )
+        ]
+    )
+
+    assert status == "new_account"
+    assert "первая загрузка" in warnings[0]
+    assert domains == ["sales"]
+
+
+@pytest.mark.asyncio
+async def test_data_sync_status_treats_partial_as_stale_not_fresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = PortalService()
+    now = datetime.now(timezone.utc)
+    partial_run = SimpleNamespace(
+        id=1,
+        domain="sales",
+        status="partial",
+        trigger="manual",
+        is_backfill=False,
+        finished_at=now - timedelta(hours=1),
+        started_at=now - timedelta(hours=1, minutes=2),
+        details={"rowsLoaded": 7},
+        error_text=None,
+    )
+
+    async def fake_raw_counts(*_args, **_kwargs):
+        return {"sales": 7}
+
+    monkeypatch.setattr(service, "_raw_response_counts_by_domain", fake_raw_counts)
+    monkeypatch.setattr(
+        service, "_portal_local_source_counts", _fake_empty_local_source_counts
+    )
+
+    result = await service.data_sync_status(
+        _FakeSession([partial_run], ["statistics"], []),
+        account_id=1,
+    )
+
+    sales = {item.domain: item for item in result.domains}["sales"]
+    assert sales.status == "partial"
+    assert sales.freshness_status == "stale"
+    assert sales.source_status == "stale"
+    assert sales.user_facing_status == "Нужна синхронизация"
+    assert sales.next_recommended_action == "Запустить синхронизацию домена `sales`."
 
 
 @pytest.mark.asyncio
@@ -237,10 +381,70 @@ async def test_data_sync_status_reports_fresh_missing_stale_error_not_configured
     assert by_domain["finance"].source_status == "error"
     assert by_domain["documents"].source_status == "not_configured"
     assert by_domain["orders"].user_facing_status == "Синхронизация идёт"
-    assert result.user_facing_status == "Синхронизация идёт"
+    assert (
+        result.user_facing_status
+        == "Синхронизация идёт, расчёты обновятся после завершения"
+    )
+    assert result.has_active_sync is True
+    assert result.calculation_refresh_status == "pending"
+    assert (
+        result.calculation_refresh_message
+        == "Синхронизация идёт. Расчёты обновятся после завершения."
+    )
     assert [run.id for run in result.active_sync_progress] == [4]
     assert [run.id for run in result.queued_syncs] == [5]
     assert result.active_sync_progress[0].progress_percent == 45
+
+
+@pytest.mark.asyncio
+async def test_data_sync_status_marks_stale_running_cursor_as_stuck(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = PortalService()
+    now = datetime.now(timezone.utc)
+    stale_at = now - timedelta(hours=8)
+    cursors = [
+        SimpleNamespace(
+            id=10,
+            domain="stocks",
+            cursor_key="default",
+            cursor_value={},
+            status="completed",
+            last_synced_at=now - timedelta(hours=1),
+            updated_at=now - timedelta(hours=1),
+            created_at=now - timedelta(hours=1),
+        ),
+        SimpleNamespace(
+            id=11,
+            domain="stocks",
+            cursor_key="pending_task",
+            cursor_value={"taskId": "old-task"},
+            status="running",
+            last_synced_at=stale_at,
+            updated_at=stale_at,
+            created_at=stale_at - timedelta(minutes=5),
+        ),
+    ]
+
+    async def fake_raw_counts(*_args, **_kwargs):
+        return {"stocks": 20}
+
+    monkeypatch.setattr(service, "_raw_response_counts_by_domain", fake_raw_counts)
+    monkeypatch.setattr(service, "_portal_local_source_counts", _fake_empty_local_source_counts)
+
+    result = await service.data_sync_status(
+        _FakeSession([], ["analytics"], cursors),
+        account_id=1,
+    )
+
+    stocks = {item.domain: item for item in result.domains}["stocks"]
+    assert stocks.status == "failed"
+    assert stocks.source_status == "error"
+    assert stocks.last_successful_sync_at == cursors[0].last_synced_at
+    assert "зависла" in (stocks.last_error_human_message or "")
+    assert result.has_active_sync is False
+    assert result.has_stale_running_sync is True
+    assert result.calculation_refresh_status == "blocked"
 
 
 @pytest.mark.asyncio

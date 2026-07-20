@@ -1,0 +1,62 @@
+name: Finance Backend Deploy Gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/app/**"
+      - "backend/alembic/**"
+      - "backend/scripts/**"
+      - "backend/tests/**"
+      - "backend/pyproject.toml"
+      - ".github/workflows/deploy-finance-backend.yml"
+
+jobs:
+  backend-gate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend
+        run: |
+          cd backend
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[dev]"
+        working-directory: .
+
+      - name: Compile backend
+        run: python -m compileall -q app tests scripts alembic
+
+      - name: Unit tests
+        run: python -m pytest -q -p no:ddtrace
+
+      - name: Secret scan
+        run: |
+          python scripts/scan_secret_leaks.py app scripts
+          python scripts/scan_frontend_secret_literals.py ../frontend/src ../frontend/e2e ../frontend/playwright.config.ts ../frontend/package.json
+
+      - name: Deploy artifact safety
+        run: python scripts/check_deploy_artifact_safety.py --source-tree .
+
+      - name: Package backend artifact
+        run: |
+          rsync -az --delete \
+            --exclude '/_incoming_projects' \
+            --exclude '/reports' \
+            --exclude '/logs' \
+            --exclude '*.zip' \
+            --exclude '*.db' \
+            --exclude '*.xlsx' \
+            --exclude 'audit-bundle*' \
+            --exclude '*.har' \
+            --exclude '*.trace' \
+            ./ /tmp/finance-backend-artifact/

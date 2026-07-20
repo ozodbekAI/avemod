@@ -15,8 +15,8 @@ import {
 } from "lucide-react";
 
 import { API_ENDPOINTS } from "@/lib/endpoints";
-import { apiList, type SyncCursor, type SyncRun } from "@/lib/api";
-import { formatNumber } from "@/lib/format";
+import { api, apiList, type SyncCursor, type SyncRun } from "@/lib/api";
+import { formatDateTime, formatNumber } from "@/lib/format";
 import { formatSyncTime, type DataFreshnessDomain } from "@/lib/owner-ux";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +38,34 @@ type FreshnessItem = {
   status: string | null;
   source: string | null;
   state: FreshnessState;
+};
+
+type SyncRunLike = Partial<SyncRun> & {
+  id?: number;
+  source_code?: string | null;
+  domain?: string | null;
+  status?: string | null;
+  progress_percent?: number | null;
+  rows_loaded?: number | null;
+  user_facing_status?: string | null;
+};
+
+type PortalSyncStatus = {
+  user_facing_status?: string | null;
+  has_active_sync?: boolean | null;
+  has_stale_running_sync?: boolean | null;
+  calculation_refresh_status?: string | null;
+  calculation_refresh_message?: string | null;
+  last_calculated_at?: string | null;
+  calculation_cache_status?: string | null;
+  active_sync_progress?: SyncRunLike[];
+  queued_syncs?: SyncRunLike[];
+  domains?: Array<{
+    domain?: string | null;
+    freshness_status?: string | null;
+    source_status?: string | null;
+    status?: string | null;
+  }>;
 };
 
 const ACTIVE_SYNC_STATUSES = new Set(["queued", "running", "in_progress"]);
@@ -101,6 +129,11 @@ const SYNC_STAGE_LABELS: Record<string, string> = {
   finance_cursors: "Сохранение курсоров",
   finance_rate_limit_wait: "Пауза из-за лимита Вайлдберриз",
   finance_rate_limited: "Вайлдберриз ограничил частоту запросов",
+  logistics_paid_storage: "Детализация хранения",
+  logistics_acceptance_report: "Расходы приёмки",
+  logistics_transit_tariffs: "Транзитные тарифы",
+  logistics_seller_warehouses: "Склады продавца",
+  logistics_done: "Логистика загружена",
 };
 
 const DOMAIN_LABELS: Record<string, string> = {
@@ -114,6 +147,7 @@ const DOMAIN_LABELS: Record<string, string> = {
   analytics: "Аналитика",
   tariffs: "Тарифы",
   supplies: "Поставки",
+  logistics: "Логистика",
   documents: "Документы",
   reputation: "Отзывы и вопросы",
 };
@@ -141,7 +175,7 @@ function numericValue(value: unknown): number | null {
   return null;
 }
 
-function isActiveSyncRun(run: SyncRun | null | undefined): boolean {
+function isActiveSyncRun(run: SyncRunLike | null | undefined): boolean {
   return ACTIVE_SYNC_STATUSES.has(String(run?.status ?? "").toLowerCase());
 }
 
@@ -168,10 +202,11 @@ function syncStatusLabel(status: unknown): string {
   }
 }
 
-function syncProgressPercent(run: SyncRun | null | undefined): number {
+function syncProgressPercent(run: SyncRunLike | null | undefined): number {
   if (!run) return 0;
   const details = run.details ?? {};
   const raw =
+    numericValue(run.progress_percent) ??
     numericValue(details.progress_percent) ??
     numericValue(details.progress) ??
     numericValue(details.percent);
@@ -187,7 +222,7 @@ function syncProgressPercent(run: SyncRun | null | undefined): number {
   return 0;
 }
 
-function syncStageLabel(run: SyncRun | null | undefined): string {
+function syncStageLabel(run: SyncRunLike | null | undefined): string {
   const details = run?.details ?? {};
   const stage = textValue(details.stage);
   if (stage && SYNC_STAGE_LABELS[stage]) return SYNC_STAGE_LABELS[stage];
@@ -198,7 +233,7 @@ function syncStageLabel(run: SyncRun | null | undefined): string {
   );
 }
 
-function syncDetailLine(run: SyncRun): string {
+function syncDetailLine(run: SyncRunLike): string {
   const details = run.details ?? {};
   const pieces: string[] = [];
   const dateFrom =
@@ -209,6 +244,7 @@ function syncDetailLine(run: SyncRun): string {
     numericValue(details.detailsPagesLoaded) ??
     numericValue(details.pagesLoaded);
   const rows =
+    numericValue(run.rows_loaded) ??
     numericValue(details.detailsRowsLoaded) ??
     numericValue(details.rowsLoaded) ??
     numericValue(details.acquiringRows);
@@ -223,7 +259,7 @@ function syncDetailLine(run: SyncRun): string {
   return pieces.join(" · ");
 }
 
-function latestRun(runs: SyncRun[]): SyncRun | null {
+function latestRun(runs: SyncRunLike[]): SyncRunLike | null {
   const sorted = [...runs].sort((a, b) => {
     const left = toTs(a.started_at) || toTs(a.finished_at);
     const right = toTs(b.started_at) || toTs(b.finished_at);
@@ -303,6 +339,19 @@ function cleanTechnicalCopy(value: string | null | undefined): string {
     .replace(/\bAPI\b/g, "интерфейс");
 }
 
+function calculationStatusLabel(value: unknown): string {
+  switch (String(value ?? "").toLowerCase()) {
+    case "fresh":
+      return "готов";
+    case "stale":
+      return "устарел";
+    case "missing":
+      return "ещё не выполнен";
+    default:
+      return "неизвестно";
+  }
+}
+
 export function TopBarSyncStatus({ accountId }: { accountId: number | null }) {
   const cursorsQ = useQuery({
     queryKey: ["topbar-sync-cursors", accountId],
@@ -329,15 +378,61 @@ export function TopBarSyncStatus({ accountId }: { accountId: number | null }) {
     },
   });
 
+  const statusQ = useQuery({
+    queryKey: ["topbar-sync-status", accountId],
+    enabled: !!accountId,
+    queryFn: () =>
+      api<PortalSyncStatus>(API_ENDPOINTS.portalExtras.dataSyncStatus, {
+        query: { account_id: accountId! },
+      }),
+    staleTime: 0,
+    retry: false,
+    refetchInterval: (query) => {
+      const data = query.state.data as PortalSyncStatus | undefined;
+      const active =
+        data?.has_active_sync ||
+        (data?.active_sync_progress?.length ?? 0) > 0 ||
+        (data?.queued_syncs?.length ?? 0) > 0;
+      return active ? 2_000 : 30_000;
+    },
+  });
+
   const freshness = useMemo(
     () => pickFreshness(cursorsQ.data ?? []),
     [cursorsQ.data],
   );
-  const run = useMemo(() => latestRun(runsQ.data ?? []), [runsQ.data]);
-  const active = isActiveSyncRun(run);
+  const statusRuns = useMemo<SyncRunLike[]>(
+    () => [
+      ...(statusQ.data?.active_sync_progress ?? []),
+      ...(statusQ.data?.queued_syncs ?? []),
+    ],
+    [statusQ.data?.active_sync_progress, statusQ.data?.queued_syncs],
+  );
+  const run = useMemo(
+    () => latestRun(statusRuns) ?? latestRun(runsQ.data ?? []),
+    [runsQ.data, statusRuns],
+  );
+  const active = Boolean(statusQ.data?.has_active_sync || isActiveSyncRun(run));
   const percent = active ? syncProgressPercent(run) : 100;
-  const issues = freshness.filter((item) => item.state !== "ok").length;
-  const healthy = freshness.length - issues;
+  const statusIssues =
+    statusQ.data?.domains?.filter((item) => {
+      const freshnessStatus = String(item.freshness_status ?? "").toLowerCase();
+      const sourceStatus = String(item.source_status ?? "").toLowerCase();
+      const status = String(item.status ?? "").toLowerCase();
+      return (
+        Boolean(freshnessStatus && freshnessStatus !== "fresh") ||
+        ["error", "not_configured", "missing", "stale"].includes(
+          sourceStatus,
+        ) ||
+        ["failed", "running", "queued", "in_progress"].includes(status)
+      );
+    }).length ?? 0;
+  const issues = Math.max(
+    freshness.filter((item) => item.state !== "ok").length,
+    statusIssues,
+  );
+  const visualIssues = Math.min(issues, freshness.length);
+  const healthy = Math.max(0, freshness.length - visualIssues);
   const ringPercent = active
     ? percent
     : Math.round((healthy / Math.max(freshness.length, 1)) * 100);
@@ -348,7 +443,11 @@ export function TopBarSyncStatus({ accountId }: { accountId: number | null }) {
       : "var(--success)";
   const detailLine = run ? syncDetailLine(run) : "";
   const stage = run ? syncStageLabel(run) : null;
-  const loading = cursorsQ.isLoading || runsQ.isLoading;
+  const calculationMessage = statusQ.data?.calculation_refresh_message ?? null;
+  const calculationLine = statusQ.data?.last_calculated_at
+    ? `Последний расчёт: ${formatDateTime(statusQ.data.last_calculated_at)} · ${calculationStatusLabel(statusQ.data.calculation_cache_status)}`
+    : "Последний расчёт: ещё не выполнен";
+  const loading = cursorsQ.isLoading || runsQ.isLoading || statusQ.isLoading;
 
   if (!accountId) return null;
 
@@ -416,7 +515,9 @@ export function TopBarSyncStatus({ accountId }: { accountId: number | null }) {
             </div>
             <div className="mt-0.5 truncate text-xs text-muted-foreground">
               {active
-                ? `${domainLabel(run?.domain ?? "")}: ${stage}`
+                ? run?.domain
+                  ? `${domainLabel(String(run.domain))}: ${stage}`
+                  : statusQ.data?.user_facing_status || "Синхронизация идёт"
                 : issues
                   ? "Есть источники, которые нужно проверить"
                   : "Основные источники свежие"}
@@ -438,7 +539,7 @@ export function TopBarSyncStatus({ accountId }: { accountId: number | null }) {
             <div className="flex items-center justify-between gap-2 text-xs">
               <div className="min-w-0">
                 <div className="truncate font-medium text-foreground">
-                  {domainLabel(run.domain)}
+                  {domainLabel(String(run.domain ?? run.source_code ?? ""))}
                 </div>
                 <div className="truncate text-muted-foreground">
                   #{run.id} · {syncStatusLabel(run.status)}
@@ -452,6 +553,14 @@ export function TopBarSyncStatus({ accountId }: { accountId: number | null }) {
             <div className="mt-2 text-xs font-medium text-foreground">
               {syncStageLabel(run)}
             </div>
+            {calculationMessage ? (
+              <div className="mt-1 text-[11px] leading-4 text-primary">
+                {calculationMessage}
+              </div>
+            ) : null}
+            <div className="mt-1 text-[11px] leading-4 text-muted-foreground">
+              {calculationLine}
+            </div>
             {detailLine ? (
               <div className="mt-1 text-[11px] leading-4 text-muted-foreground">
                 {detailLine}
@@ -463,7 +572,14 @@ export function TopBarSyncStatus({ accountId }: { accountId: number | null }) {
               </div>
             ) : null}
           </div>
-        ) : null}
+        ) : (
+          <div className="mt-3 rounded-lg border border-border/70 bg-muted/25 p-3 text-xs text-muted-foreground">
+            {calculationMessage ? <div>{calculationMessage}</div> : null}
+            <div className={calculationMessage ? "mt-1" : undefined}>
+              {calculationLine}
+            </div>
+          </div>
+        )}
 
         <div className="mt-3 grid grid-cols-5 gap-1.5">
           {freshness.map((item) => (

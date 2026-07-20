@@ -1,9 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-import {
-  fetchAssignableUsers,
-  fetchPortalActions,
-} from "@/lib/portal";
+import { fetchAssignableUsers, fetchAllPortalActions } from "@/lib/portal";
 
 export function useActionCenterData({
   activeId,
@@ -21,7 +18,7 @@ export function useActionCenterData({
   const actionsQuery = useQuery({
     queryKey: ["portal-actions", activeId, dateFrom, dateTo, queryFilters],
     queryFn: () =>
-      fetchPortalActions(activeId, queryFilters, { dateFrom, dateTo }),
+      fetchAllPortalActions(activeId, queryFilters, { dateFrom, dateTo }),
     enabled: !!activeId,
     staleTime: 30_000,
   });

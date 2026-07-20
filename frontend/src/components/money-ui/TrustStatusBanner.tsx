@@ -37,6 +37,24 @@ export interface TrustStatusBannerProps {
 
 type Tone = "success" | "warning" | "danger";
 
+const TRUST_REASON_LABELS: Record<string, string> = {
+  data_blocked: "данные заблокированы до исправления",
+  finance_not_confirmed: "финансовые данные еще не подтверждены",
+  finance_reconciliation_mismatch: "идет сверка финансов WB",
+  finance_without_sale: "финансовая строка без продажи",
+  missing_cost: "не указана себестоимость",
+  missing_finance_report: "не загружен финансовый отчет WB",
+  missing_manual_cost: "не хватает ручной себестоимости",
+  no_sales_history: "недостаточно истории продаж",
+  open_blocking_dq_issues: "есть блокирующие проблемы данных",
+  order_without_sale_or_return: "заказ пока без продажи или возврата",
+  sale_without_finance: "продажа без финансовой строки",
+  stale_data: "данные нужно обновить",
+  supplier_cost_coverage_below_threshold:
+    "покрытие себестоимости ниже нужного порога",
+  supplier_cost_not_confirmed: "себестоимость не подтверждена",
+};
+
 const TONE: Record<
   Tone,
   { card: string; icon: string; Icon: typeof CheckCircle2; badge: string }
@@ -82,6 +100,14 @@ function pickHeadline(trust?: TrustInput | null): { tone: Tone; text: string } {
   return { tone: "warning", text: "Данные предварительные" };
 }
 
+function trustReasonLabel(reason: string): string {
+  const normalized = reason.trim().toLowerCase();
+  return (
+    TRUST_REASON_LABELS[normalized] ||
+    normalized.replace(/_/g, " ").replace(/\s+/g, " ")
+  );
+}
+
 export function TrustStatusBanner({
   trust,
   quality,
@@ -119,7 +145,9 @@ export function TrustStatusBanner({
   const HeadIcon = cfg.Icon;
 
   // Reasons from backend (optional context, never overrides the rules above).
-  const reasons = (trust?.trust_reasons ?? []).filter(Boolean);
+  const reasons = Array.from(
+    new Set((trust?.trust_reasons ?? []).filter(Boolean).map(trustReasonLabel)),
+  );
   // trust_label is allowed only if it's not the forbidden "Доверенные данные"
   // copy in a non-final state.
   const label =

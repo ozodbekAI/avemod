@@ -117,6 +117,13 @@ export function allowedActionHref(
   });
   if (contextualHref) return contextualHref;
   if (code === "classify_expense") return "/data-fix?code=expense_unclassified";
+  if (
+    code === "review_reputation" ||
+    code === "reply_review" ||
+    code === "reply_question"
+  ) {
+    return a.nm_id ? `/reputation?nm_id=${a.nm_id}` : "/reputation";
+  }
   if (code === "open_results") return resultsHrefForAction(a);
   if (code === "create_task") return null;
   if (code === "assign" || code === "recheck" || code === "dismiss") {

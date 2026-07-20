@@ -134,28 +134,65 @@ class _FixtureMetricResolver:
 
 
 def _value_type(metric_code: str) -> str:
-    if metric_code in {"margin_pct"}:
+    if metric_code in {"margin_pct", "return_rate", "conversion_rate", "ad_ctr_7d"}:
         return "percent"
     if metric_code in {"days_of_stock"}:
         return "days"
-    if metric_code in {"stock_qty", "sales_30d", "units_sold_7d", "sales_7d"}:
+    if metric_code in {
+        "stock_qty",
+        "sales_30d",
+        "units_sold_7d",
+        "sales_7d",
+        "orders_7d",
+        "orders_30d",
+        "views_30d",
+        "ad_views_7d",
+        "ad_clicks_7d",
+        "ad_orders_7d",
+        "negative_reviews_30d",
+        "unanswered_negative_reviews_30d",
+        "unanswered_questions_30d",
+    }:
         return "count"
-    if metric_code in {"avg_daily_sales_7d", "avg_daily_sales_14d"}:
+    if metric_code in {"avg_daily_sales_7d", "avg_daily_sales_14d", "avg_rating_30d"}:
         return "number"
     return "money"
 
 
 def _unit(metric_code: str) -> str:
-    if metric_code in {"margin_pct"}:
+    if metric_code in {"margin_pct", "return_rate", "conversion_rate", "ad_ctr_7d"}:
         return "%"
     if metric_code in {"days_of_stock"}:
         return "days"
-    if metric_code in {"stock_qty", "sales_30d", "units_sold_7d", "sales_7d"}:
+    if metric_code in {
+        "stock_qty",
+        "sales_30d",
+        "units_sold_7d",
+        "sales_7d",
+        "orders_7d",
+        "orders_30d",
+        "ad_orders_7d",
+    }:
         return "pcs"
+    if metric_code in {
+        "negative_reviews_30d",
+        "unanswered_negative_reviews_30d",
+    }:
+        return "reviews"
+    if metric_code == "unanswered_questions_30d":
+        return "questions"
+    if metric_code in {"views_30d", "ad_views_7d"}:
+        return "views"
+    if metric_code == "ad_clicks_7d":
+        return "clicks"
     if metric_code in {"avg_daily_sales_7d", "avg_daily_sales_14d"}:
         return "pcs/day"
+    if metric_code == "avg_rating_30d":
+        return "stars"
     if metric_code == "avg_daily_revenue_7d":
         return "RUB/day"
+    if metric_code == "ad_cpo_7d":
+        return "RUB/order"
     return "RUB"
 
 
@@ -385,6 +422,351 @@ async def test_scenario_low_stock_points_to_supply_replenishment() -> None:
     assert low_stock.money_impact_amount == Decimal("400.0000")
     assert "запланируйте поставку или пополнение" in low_stock.recommendation.lower()
     assert low_stock.evidence_ledger_json["formula_code"] == "low_stock_risk.v1"
+
+
+@pytest.mark.asyncio
+async def test_scenario_ads_spend_without_orders_creates_ads_review_task() -> None:
+    sync_session, session = await _session_with_seeded_rules()
+    with sync_session:
+        _activate_only(sync_session, "ads_spend_no_orders")
+
+        await _evaluate_product(
+            session,
+            _FixtureMetricResolver(
+                {
+                    NM_ID: {
+                        "ad_spend_7d": Decimal("1600"),
+                        "orders_7d": Decimal("0"),
+                    }
+                }
+            ),
+        )
+
+        ads_problem = _instance(sync_session, "ads_spend_no_orders")
+        action = PortalService()._problem_instance_action(
+            ads_problem,
+            definition=_definition(sync_session, "ads_spend_no_orders"),
+        )
+
+    assert ads_problem.impact_type == "probable_loss"
+    assert ads_problem.money_impact_amount == Decimal("1600.0000")
+    assert ads_problem.evidence_ledger_json["formula_code"] == "ads_spend_no_orders.v1"
+    assert "open_ads_dashboard" in set(action.allowed_actions or [])
+    assert "run_checker" in set(action.allowed_actions or [])
+
+
+@pytest.mark.asyncio
+async def test_scenario_low_conversion_card_creates_content_opportunity_task() -> None:
+    sync_session, session = await _session_with_seeded_rules()
+    with sync_session:
+        _activate_only(sync_session, "low_conversion_card")
+
+        await _evaluate_product(
+            session,
+            _FixtureMetricResolver(
+                {
+                    NM_ID: {
+                        "views_30d": Decimal("2400"),
+                        "conversion_rate": Decimal("0.4"),
+                        "orders_30d": Decimal("9"),
+                        "revenue_30d": Decimal("18000"),
+                    }
+                }
+            ),
+        )
+
+        conversion = _instance(sync_session, "low_conversion_card")
+        action = PortalService()._problem_instance_action(
+            conversion,
+            definition=_definition(sync_session, "low_conversion_card"),
+        )
+
+    assert conversion.impact_type == "opportunity"
+    assert conversion.trust_state == "opportunity"
+    assert conversion.money_impact_amount == Decimal("18000.0000")
+    assert conversion.evidence_ledger_json["formula_code"] == "low_conversion_card.v1"
+    assert {"run_checker", "open_ads_dashboard", "open_price_review"}.issubset(
+        set(action.allowed_actions or [])
+    )
+
+
+@pytest.mark.asyncio
+async def test_scenario_high_return_rate_creates_card_quality_task() -> None:
+    sync_session, session = await _session_with_seeded_rules()
+    with sync_session:
+        _activate_only(sync_session, "high_return_rate")
+
+        await _evaluate_product(
+            session,
+            _FixtureMetricResolver(
+                {
+                    NM_ID: {
+                        "sales_30d": Decimal("12"),
+                        "return_rate": Decimal("35"),
+                        "revenue_30d": Decimal("24000"),
+                    }
+                }
+            ),
+        )
+
+        returns = _instance(sync_session, "high_return_rate")
+        action = PortalService()._problem_instance_action(
+            returns,
+            definition=_definition(sync_session, "high_return_rate"),
+        )
+
+    assert returns.impact_type == "probable_loss"
+    assert returns.money_impact_amount == Decimal("8400.0000")
+    assert returns.evidence_ledger_json["formula_code"] == "high_return_rate.v1"
+    assert "run_checker" in set(action.allowed_actions or [])
+
+
+@pytest.mark.asyncio
+async def test_scenario_jvo_ads_efficiency_tasks_create_ad_reviews() -> None:
+    sync_session, session = await _session_with_seeded_rules()
+    with sync_session:
+        _activate_only(
+            sync_session,
+            "high_ad_drr",
+            "high_ad_cpo",
+            "low_ads_ctr",
+            "ads_stockout_risk",
+        )
+
+        await _evaluate_product(
+            session,
+            _FixtureMetricResolver(
+                {
+                    NM_ID: {
+                        "ad_spend_7d": Decimal("6000"),
+                        "revenue_7d": Decimal("10000"),
+                        "ad_orders_7d": Decimal("5"),
+                        "ad_cpo_7d": Decimal("1200"),
+                        "ad_views_7d": Decimal("5000"),
+                        "ad_clicks_7d": Decimal("15"),
+                        "ad_ctr_7d": Decimal("0.3"),
+                        "days_of_stock": Decimal("2"),
+                        "avg_daily_sales_7d": Decimal("2"),
+                    }
+                }
+            ),
+        )
+
+        problem_codes = {instance.problem_code for instance in _instances(sync_session)}
+        high_drr = _instance(sync_session, "high_ad_drr")
+        low_ctr = _instance(sync_session, "low_ads_ctr")
+
+    assert {
+        "high_ad_drr",
+        "high_ad_cpo",
+        "low_ads_ctr",
+        "ads_stockout_risk",
+    }.issubset(problem_codes)
+    assert high_drr.money_impact_amount == Decimal("6000.0000")
+    assert high_drr.evidence_ledger_json["formula_code"] == "high_ad_drr.v1"
+    assert low_ctr.impact_type == "opportunity"
+    assert low_ctr.evidence_ledger_json["formula_code"] == "low_ads_ctr.v1"
+
+
+@pytest.mark.asyncio
+async def test_scenario_jvo_stockout_now_creates_critical_supply_task() -> None:
+    sync_session, session = await _session_with_seeded_rules()
+    with sync_session:
+        _activate_only(sync_session, "stockout_now_with_recent_orders")
+
+        await _evaluate_product(
+            session,
+            _FixtureMetricResolver(
+                {
+                    NM_ID: {
+                        "stock_qty": Decimal("0"),
+                        "orders_7d": Decimal("3"),
+                        "avg_daily_revenue_7d": Decimal("700"),
+                    }
+                }
+            ),
+        )
+
+        stockout = _instance(sync_session, "stockout_now_with_recent_orders")
+
+    assert stockout.severity == "critical"
+    assert stockout.impact_type == "lost_sales_risk"
+    assert stockout.money_impact_amount == Decimal("4900.0000")
+    assert stockout.evidence_ledger_json["formula_code"] == "stockout_now_with_recent_orders.v1"
+
+
+@pytest.mark.asyncio
+async def test_scenario_jvo_stockout_14d_creates_planning_task() -> None:
+    sync_session, session = await _session_with_seeded_rules()
+    with sync_session:
+        _activate_only(sync_session, "stockout_risk_14d")
+
+        await _evaluate_product(
+            session,
+            _FixtureMetricResolver(
+                {
+                    NM_ID: {
+                        "days_of_stock": Decimal("10"),
+                        "avg_daily_sales_14d": Decimal("2"),
+                        "avg_daily_revenue_7d": Decimal("900"),
+                    }
+                }
+            ),
+        )
+
+        stockout = _instance(sync_session, "stockout_risk_14d")
+
+    assert stockout.severity == "medium"
+    assert stockout.impact_type == "lost_sales_risk"
+    assert stockout.money_impact_amount == Decimal("3600.0000")
+    assert stockout.evidence_ledger_json["formula_code"] == "stockout_risk_14d.v1"
+
+
+@pytest.mark.asyncio
+async def test_scenario_jvo_storage_pressure_creates_stock_task() -> None:
+    sync_session, session = await _session_with_seeded_rules()
+    with sync_session:
+        _activate_only(sync_session, "storage_cost_pressure")
+
+        await _evaluate_product(
+            session,
+            _FixtureMetricResolver(
+                {
+                    NM_ID: {
+                        "stock_qty": Decimal("120"),
+                        "days_of_stock": Decimal("80"),
+                        "storage_fee_per_unit": Decimal("6"),
+                    }
+                }
+            ),
+        )
+
+        storage = _instance(sync_session, "storage_cost_pressure")
+
+    assert storage.impact_type == "blocked_cash"
+    assert storage.money_impact_amount == Decimal("720.0000")
+    assert storage.evidence_ledger_json["formula_code"] == "storage_cost_pressure.v1"
+
+
+@pytest.mark.asyncio
+async def test_scenario_jvo_views_without_orders_creates_card_offer_task() -> None:
+    sync_session, session = await _session_with_seeded_rules()
+    with sync_session:
+        _activate_only(sync_session, "no_sales_with_views")
+
+        await _evaluate_product(
+            session,
+            _FixtureMetricResolver(
+                {
+                    NM_ID: {
+                        "views_30d": Decimal("2500"),
+                        "orders_30d": Decimal("0"),
+                    }
+                }
+            ),
+        )
+
+        card = _instance(sync_session, "no_sales_with_views")
+
+    assert card.impact_type == "opportunity"
+    assert card.money_impact_amount == Decimal("0.0000")
+    assert card.evidence_ledger_json["formula_code"] == "no_sales_with_views.v1"
+
+
+@pytest.mark.asyncio
+async def test_scenario_jvo_price_opportunities_create_price_reviews() -> None:
+    sync_session, session = await _session_with_seeded_rules()
+    with sync_session:
+        _activate_only(sync_session, "price_offer_blocks_conversion")
+
+        await _evaluate_product(
+            session,
+            _FixtureMetricResolver(
+                {
+                    NM_ID: {
+                        "views_30d": Decimal("2400"),
+                        "conversion_rate": Decimal("0.5"),
+                        "margin_pct": Decimal("35"),
+                        "revenue_30d": Decimal("18000"),
+                    }
+                }
+            ),
+        )
+
+        price_offer = _instance(sync_session, "price_offer_blocks_conversion")
+
+    assert price_offer.impact_type == "opportunity"
+    assert price_offer.money_impact_amount == Decimal("18000.0000")
+    assert price_offer.evidence_ledger_json["formula_code"] == "price_offer_blocks_conversion.v1"
+
+
+@pytest.mark.asyncio
+async def test_scenario_jvo_high_demand_can_raise_price_to_protect_stock() -> None:
+    sync_session, session = await _session_with_seeded_rules()
+    with sync_session:
+        _activate_only(sync_session, "raise_price_possible_high_demand")
+
+        await _evaluate_product(
+            session,
+            _FixtureMetricResolver(
+                {
+                    NM_ID: {
+                        "orders_7d": Decimal("25"),
+                        "days_of_stock": Decimal("5"),
+                        "margin_pct": Decimal("18"),
+                        "price_after_discount": Decimal("900"),
+                        "avg_daily_revenue_7d": Decimal("1500"),
+                    }
+                }
+            ),
+        )
+
+        price = _instance(sync_session, "raise_price_possible_high_demand")
+
+    assert price.impact_type == "opportunity"
+    assert price.money_impact_amount == Decimal("3000.0000")
+    assert price.evidence_ledger_json["formula_code"] == "raise_price_possible_high_demand.v1"
+
+
+@pytest.mark.asyncio
+async def test_scenario_jvo_reputation_tasks_create_reply_and_rating_work() -> None:
+    sync_session, session = await _session_with_seeded_rules()
+    with sync_session:
+        _activate_only(
+            sync_session,
+            "negative_reviews_need_reply",
+            "questions_need_reply",
+            "low_product_rating",
+        )
+
+        await _evaluate_product(
+            session,
+            _FixtureMetricResolver(
+                {
+                    NM_ID: {
+                        "negative_reviews_30d": Decimal("3"),
+                        "unanswered_negative_reviews_30d": Decimal("1"),
+                        "unanswered_questions_30d": Decimal("2"),
+                        "avg_rating_30d": Decimal("3.6"),
+                        "revenue_30d": Decimal("22000"),
+                    }
+                }
+            ),
+        )
+
+        problem_codes = {instance.problem_code for instance in _instances(sync_session)}
+        reviews = _instance(sync_session, "negative_reviews_need_reply")
+        rating = _instance(sync_session, "low_product_rating")
+
+    assert {
+        "negative_reviews_need_reply",
+        "questions_need_reply",
+        "low_product_rating",
+    }.issubset(problem_codes)
+    assert reviews.impact_type == "opportunity"
+    assert reviews.evidence_ledger_json["formula_code"] == "negative_reviews_need_reply.v1"
+    assert rating.severity == "high"
+    assert rating.money_impact_amount == Decimal("22000.0000")
 
 
 @pytest.mark.asyncio

@@ -9,11 +9,19 @@ export type AgentIntent =
   | "stock_export"
   | "title_update"
   | "page_explain"
+  | "reputation_agent"
+  | "scenario_create"
+  | "pricing_agent"
+  | "insights_report"
+  | "strategy_advice"
+  | "module_navigate"
+  | "open_logistics"
   | "open_action_center"
   | "open_checker"
   | "open_pricing"
   | "open_stock_control"
-  | "open_money";
+  | "open_money"
+  | "api_action";
 
 export type AgentActionType =
   | "answer"
@@ -22,7 +30,8 @@ export type AgentActionType =
   | "open_title_editor"
   | "open_preview_dialog"
   | "download_file"
-  | "create_manual_task";
+  | "create_manual_task"
+  | "api_request";
 
 export interface AgentMessageRequest {
   account_id: number;
@@ -30,6 +39,31 @@ export interface AgentMessageRequest {
   intent?: AgentIntent | null;
   selected_nm_id?: number | null;
   new_title?: string | null;
+  context?: Record<string, unknown>;
+}
+
+export interface AgentToolSpec {
+  name: string;
+  intent: AgentIntent;
+  title: string;
+  description: string;
+  required_args: string[];
+  write_policy: string;
+  input_schema: Record<string, unknown>;
+}
+
+export interface AgentToolsResponse {
+  protocol: "finance-agent-tools-v1";
+  tools: AgentToolSpec[];
+  modules: Record<string, Record<string, string>>;
+  api_actions?: Record<string, Record<string, unknown>>;
+  direct_marketplace_writes: boolean;
+}
+
+export interface AgentToolCallRequest {
+  account_id: number;
+  tool_name: string;
+  arguments?: Record<string, unknown>;
   context?: Record<string, unknown>;
 }
 
@@ -66,6 +100,19 @@ export interface AgentMessageResponse {
 
 export function sendAgentMessage(payload: AgentMessageRequest) {
   return api<AgentMessageResponse>(API_ENDPOINTS.portal.agentMessage, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function fetchAgentTools(accountId: number) {
+  return api<AgentToolsResponse>(
+    `${API_ENDPOINTS.portal.agentTools}?account_id=${encodeURIComponent(String(accountId))}`,
+  );
+}
+
+export function callAgentTool(payload: AgentToolCallRequest) {
+  return api<AgentMessageResponse>(API_ENDPOINTS.portal.agentToolCall, {
     method: "POST",
     body: payload,
   });

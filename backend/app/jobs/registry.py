@@ -26,77 +26,84 @@ from app.jobs.sync_jobs import (
 def register_jobs(scheduler: AsyncIOScheduler) -> None:
     scheduler.add_job(
         run_scheduled_domain_sync,
-        CronTrigger(minute="*/30"),
+        CronTrigger(minute=30, hour=0),
         kwargs={"domain": "orders"},
         id="sync-orders",
         replace_existing=True,
     )
     scheduler.add_job(
         run_scheduled_domain_sync,
-        CronTrigger(minute="*/30"),
+        CronTrigger(minute=40, hour=0),
         kwargs={"domain": "sales"},
         id="sync-sales",
         replace_existing=True,
     )
     scheduler.add_job(
         run_scheduled_domain_sync,
-        CronTrigger(minute=0, hour="*/3"),
+        CronTrigger(minute=30, hour=1),
         kwargs={"domain": "stocks"},
         id="sync-stocks",
         replace_existing=True,
     )
     scheduler.add_job(
         run_scheduled_domain_sync,
-        CronTrigger(minute=0, hour=1),
+        CronTrigger(minute=10, hour=0),
         kwargs={"domain": "product_cards"},
         id="sync-product-cards",
         replace_existing=True,
     )
     scheduler.add_job(
         run_scheduled_domain_sync,
-        CronTrigger(minute=0, hour="2,14"),
+        CronTrigger(minute=20, hour=0),
         kwargs={"domain": "prices"},
         id="sync-prices",
         replace_existing=True,
     )
     scheduler.add_job(
         run_scheduled_domain_sync,
-        CronTrigger(minute=0, hour=3),
+        CronTrigger(minute=10, hour=1),
         kwargs={"domain": "finance"},
         id="sync-finance",
         replace_existing=True,
     )
     scheduler.add_job(
         run_scheduled_domain_sync,
-        CronTrigger(minute="*/30"),
+        CronTrigger(minute=50, hour=1),
         kwargs={"domain": "supplies"},
         id="sync-supplies",
         replace_existing=True,
     )
     scheduler.add_job(
         run_scheduled_domain_sync,
-        CronTrigger(minute=0, hour="6,12,18"),
+        CronTrigger(minute=10, hour=2),
         kwargs={"domain": "ads"},
         id="sync-ads",
         replace_existing=True,
     )
     scheduler.add_job(
         run_scheduled_domain_sync,
-        CronTrigger(minute=0, hour="*/2"),
+        CronTrigger(minute=25, hour=2),
+        kwargs={"domain": "promotions"},
+        id="sync-promotions",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_scheduled_domain_sync,
+        CronTrigger(minute=40, hour=2),
         kwargs={"domain": "analytics"},
         id="sync-analytics",
         replace_existing=True,
     )
     scheduler.add_job(
         run_scheduled_domain_sync,
-        CronTrigger(minute=0, hour=5),
+        CronTrigger(minute=0, hour=3),
         kwargs={"domain": "tariffs"},
         id="sync-tariffs",
         replace_existing=True,
     )
     scheduler.add_job(
         run_scheduled_domain_sync,
-        CronTrigger(minute=0, hour=7),
+        CronTrigger(minute=20, hour=3),
         kwargs={"domain": "documents"},
         id="sync-documents",
         replace_existing=True,
@@ -109,25 +116,25 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
     )
     scheduler.add_job(
         refresh_scheduled_marts,
-        CronTrigger(minute=15, hour=8),
+        CronTrigger(minute=15, hour=4),
         id="refresh-marts",
         replace_existing=True,
     )
     scheduler.add_job(
         run_scheduled_data_quality_checks,
-        CronTrigger(minute=30, hour=8),
+        CronTrigger(minute=15, hour=5),
         id="run-data-quality",
         replace_existing=True,
     )
     scheduler.add_job(
         refresh_scheduled_money_snapshots,
-        CronTrigger(minute="*/10"),
+        CronTrigger(minute=45, hour=5),
         id="refresh-money-snapshots",
         replace_existing=True,
     )
     scheduler.add_job(
         run_nightly_dynamic_problem_evaluation,
-        CronTrigger(minute=30, hour=4),
+        CronTrigger(minute=45, hour=4),
         id="dynamic-problem-nightly",
         replace_existing=True,
     )
@@ -145,13 +152,13 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
     )
     scheduler.add_job(
         process_scheduled_reputation_syncs,
-        CronTrigger(minute=20, hour="*/2"),
+        CronTrigger(minute=40, hour=3),
         id="sync-local-reputation",
         replace_existing=True,
     )
     scheduler.add_job(
         process_scheduled_reputation_auto_drafts,
-        CronTrigger(minute=35, hour="*/2"),
+        CronTrigger(minute=30, hour=6),
         id="reputation-auto-draft-local",
         replace_existing=True,
     )

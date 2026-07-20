@@ -7,6 +7,7 @@ import type { JsonObject, JsonValue, Paginated } from "./api";
 import { API_ENDPOINTS } from "./endpoints";
 import type { EvidenceLedger } from "./evidence";
 import type { MoneyTrustInfo } from "./money-trust";
+import { proxyWbImageUrl as resolveWbImageUrl } from "./wb-images";
 export type { PortalModuleHealth } from "./modules-health";
 export {
   fetchModulesHealth,
@@ -575,6 +576,7 @@ export interface PortalDataReadinessRead {
   operational_status: JsonObject;
   final_profit_status: JsonObject;
   cost_status: JsonObject;
+  sources?: JsonObject[];
   blockers?: Array<
     JsonObject & {
       evidence_ledger?: EvidenceLedger | null;
@@ -1187,8 +1189,7 @@ function firstImageFromArray(value: unknown): string | null {
 }
 
 function proxyWbImageUrl(src: string | null): string | null {
-  if (!src) return null;
-  return src;
+  return resolveWbImageUrl(src);
 }
 
 export const fetchProduct360 = (

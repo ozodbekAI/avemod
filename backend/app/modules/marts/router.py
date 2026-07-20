@@ -145,7 +145,22 @@ async def list_stock_daily(
     _: AuthUser = Depends(get_current_superuser),
     session: AsyncSession = Depends(get_db_session),
 ):
-    return await service.list_stock_daily(
+    if account_id is None:
+        return await service.list_stock_daily(
+            session,
+            account_id=account_id,
+            sku_id=sku_id,
+            nm_id=nm_id,
+            barcode=barcode,
+            warehouse_name=warehouse_name,
+            date_from=None if date_from is None else date.fromisoformat(date_from),
+            date_to=None if date_to is None else date.fromisoformat(date_to),
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            limit=limit,
+            offset=offset,
+        )
+    return await snapshot_service.stock_daily(
         session,
         account_id=account_id,
         sku_id=sku_id,
@@ -180,7 +195,23 @@ async def list_finance_reconciliation(
     _: AuthUser = Depends(get_current_superuser),
     session: AsyncSession = Depends(get_db_session),
 ):
-    return await service.list_finance_reconciliation(
+    if account_id is None:
+        return await service.list_finance_reconciliation(
+            session,
+            account_id=account_id,
+            nm_id=nm_id,
+            srid=srid,
+            barcode=barcode,
+            status=status,
+            date_from=None if date_from is None else date.fromisoformat(date_from),
+            date_to=None if date_to is None else date.fromisoformat(date_to),
+            only_diff=only_diff,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            limit=limit,
+            offset=offset,
+        )
+    return await snapshot_service.finance_reconciliation(
         session,
         account_id=account_id,
         nm_id=nm_id,
@@ -211,7 +242,18 @@ async def list_account_expense_daily(
     _: AuthUser = Depends(get_current_superuser),
     session: AsyncSession = Depends(get_db_session),
 ):
-    return await service.list_account_expense_daily(
+    if account_id is None:
+        return await service.list_account_expense_daily(
+            session,
+            account_id=account_id,
+            date_from=None if date_from is None else date.fromisoformat(date_from),
+            date_to=None if date_to is None else date.fromisoformat(date_to),
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            limit=limit,
+            offset=offset,
+        )
+    return await snapshot_service.account_expense_daily(
         session,
         account_id=account_id,
         date_from=None if date_from is None else date.fromisoformat(date_from),

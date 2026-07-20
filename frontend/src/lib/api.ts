@@ -50,11 +50,23 @@ const LS_ACCOUNT = "wb.active_account_id";
 
 export function getBaseUrl(): string {
   if (typeof window !== "undefined") {
-    const override = localStorage.getItem(LS_BASE);
-    if (override) return normalizeBaseUrl(override);
+    const override = getBaseUrlOverride();
+    if (override) return override;
   }
   return DEFAULT_BASE_URL;
 }
+
+function getBaseUrlOverride(): string | null {
+  if (typeof window === "undefined") return null;
+  const override = localStorage.getItem(LS_BASE);
+  return override ? normalizeBaseUrl(override) : null;
+}
+
+function clearBaseUrlOverride() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(LS_BASE);
+}
+
 export function setBaseUrl(url: string) {
   if (typeof window === "undefined") return;
   const normalized = normalizeBaseUrl(url);
@@ -281,9 +293,12 @@ function assertValidApiPath(path: string) {
   }
 }
 
-function buildUrl(path: string, query?: ReqOpts["query"]): string {
+function buildUrl(
+  path: string,
+  query?: ReqOpts["query"],
+  base = getBaseUrl(),
+): string {
   assertValidApiPath(path);
-  const base = getBaseUrl();
   const url = new URL(`${base}${path.startsWith("/") ? path : `/${path}`}`);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
@@ -301,6 +316,14 @@ function buildUrl(path: string, query?: ReqOpts["query"]): string {
   return url.toString();
 }
 
+function isAbortError(error: unknown): boolean {
+  return (
+    typeof DOMException !== "undefined" &&
+    error instanceof DOMException &&
+    error.name === "AbortError"
+  );
+}
+
 async function doFetch(
   path: string,
   opts: ReqOpts,
@@ -314,7 +337,7 @@ async function doFetch(
     const t = getAccessToken();
     if (t) headers["Authorization"] = `Bearer ${t}`;
   }
-  const res = await fetch(buildUrl(path, opts.query), {
+  const requestInit: RequestInit = {
     method: opts.method ?? "GET",
     headers,
     body: opts.formData
@@ -323,7 +346,27 @@ async function doFetch(
         ? JSON.stringify(opts.body)
         : undefined,
     signal: opts.signal,
-  });
+  };
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path, opts.query), requestInit);
+  } catch (error) {
+    const override = getBaseUrlOverride();
+    if (
+      !retried &&
+      override &&
+      override !== DEFAULT_BASE_URL &&
+      !isAbortError(error)
+    ) {
+      clearBaseUrlOverride();
+      res = await fetch(
+        buildUrl(path, opts.query, DEFAULT_BASE_URL),
+        requestInit,
+      );
+    } else {
+      throw error;
+    }
+  }
 
   // Single, deduped refresh attempt on 401. `retried` prevents a second
   // pass — no infinite refresh loop is possible from this code path.

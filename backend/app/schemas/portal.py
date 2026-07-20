@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.core.action_registry import (
     ACTION_ALIASES,
-    ACTION_CENTER_ALLOWED_ACTIONS,
     normalize_action_codes,
 )
 from app.core.redaction import redact_sensitive_text
@@ -961,6 +960,10 @@ def _solve_map_target_href(
         return _append_query(
             "/results", problem_instance_id=problem_instance_id, nm_id=nm_id
         )
+    if action_code == "open_reputation":
+        return _append_query(
+            "/reputation", problem_instance_id=problem_instance_id, nm_id=nm_id
+        )
     return None
 
 
@@ -1085,6 +1088,164 @@ def _append_create_task_fallback_step(
     return steps
 
 
+_GENERIC_SOLVE_ACTION_TITLES: dict[str, tuple[str, str, list[str]]] = {
+    "open_data_fix": (
+        "Открыть исправление данных",
+        "Проверьте строки и источники, из-за которых задача не может быть решена автоматически.",
+        ["data_quality", "source_rows"],
+    ),
+    "upload_cost": (
+        "Заполнить себестоимость",
+        "Загрузите или сопоставьте себестоимость, чтобы пересчитать прибыль и безопасные действия.",
+        ["cost_price", "manual_cost"],
+    ),
+    "open_supply_planner": (
+        "Открыть план поставок",
+        "Проверьте остаток, скорость продаж и план пополнения по товару.",
+        ["stock_qty", "days_of_stock", "sales_velocity"],
+    ),
+    "open_ads_dashboard": (
+        "Открыть рекламный review",
+        "Проверьте расход, заказы, ставки и кампании до изменения рекламы.",
+        ["ad_spend", "orders_7d", "drr"],
+    ),
+    "run_checker": (
+        "Проверить карточку",
+        "Откройте Checker, чтобы разобрать контент, фото, характеристики и конверсию.",
+        ["card_quality_score", "conversion_rate"],
+    ),
+    "open_price_review": (
+        "Проверить цену",
+        "Откройте цену товара и сверите безопасную маржу перед изменениями.",
+        ["price", "cost_price", "margin_pct"],
+    ),
+    "open_promo_planner": (
+        "Открыть промо-план",
+        "Проверьте скидку, промо и маржу перед ускорением продаж.",
+        ["promo_spend", "price_after_discount", "margin_pct"],
+    ),
+    "open_reputation": (
+        "Открыть репутацию",
+        "Проверьте отзывы, вопросы и черновики ответов, связанные с товаром.",
+        ["avg_rating", "negative_reviews", "unanswered_questions"],
+    ),
+    "create_task": (
+        "Создать задачу владельцу",
+        "Зафиксируйте владельца, срок и безопасный следующий шаг для ручной проверки.",
+        [],
+    ),
+}
+
+
+def _generic_solve_action(problem_code: str, allowed_actions: list[str]) -> str | None:
+    preferences: list[str] = []
+    code = problem_code.lower()
+    if any(token in code for token in ("cost", "cogs", "expense")):
+        preferences.extend(["upload_cost", "open_data_fix"])
+    if any(token in code for token in ("stockout", "stock", "depletion", "supply")):
+        preferences.append("open_supply_planner")
+    if any(token in code for token in ("ad_", "ads", "drr", "cpo", "ctr")):
+        preferences.append("open_ads_dashboard")
+    if any(token in code for token in ("review", "rating", "question", "reputation")):
+        preferences.append("open_reputation")
+    if any(token in code for token in ("conversion", "card", "return", "content")):
+        preferences.append("run_checker")
+    if "price" in code:
+        preferences.append("open_price_review")
+    if any(token in code for token in ("promo", "storage", "dead", "overstock")):
+        preferences.append("open_promo_planner")
+    preferences.extend(
+        [
+            "open_data_fix",
+            "upload_cost",
+            "open_supply_planner",
+            "open_ads_dashboard",
+            "run_checker",
+            "open_price_review",
+            "open_promo_planner",
+            "open_reputation",
+            "create_task",
+        ]
+    )
+    for action in preferences:
+        if action in allowed_actions:
+            return action
+    return None
+
+
+def _generic_action_center_solve_map(
+    *,
+    problem_code: str,
+    allowed_actions: list[str],
+    nm_id: int | None,
+    problem_instance_id: int | None,
+    data_freshness: ActionCenterDataFreshness | None,
+    evidence_status: ActionCenterSolveStepStatus,
+) -> ActionCenterSolveMap:
+    action_code = _generic_solve_action(problem_code, allowed_actions)
+    title, description, metrics = _GENERIC_SOLVE_ACTION_TITLES.get(
+        action_code or "create_task",
+        _GENERIC_SOLVE_ACTION_TITLES["create_task"],
+    )
+    steps = [
+        _solve_map_step(
+            step_id="evidence",
+            order=1,
+            title="Проверить доказательства",
+            description="Откройте «Как посчитано?» и проверьте формулу, факты, источники и свежесть данных.",
+            required_metrics=metrics,
+            completion_signal="Доказательства и источники понятны.",
+            data_freshness=data_freshness,
+            allowed_actions=allowed_actions,
+            force_status=evidence_status,
+            problem_instance_id=problem_instance_id,
+        )
+    ]
+    if action_code:
+        steps.append(
+            _solve_map_step(
+                step_id="primary_action",
+                order=2,
+                title=title,
+                description=description,
+                action_code=action_code,
+                nm_id=nm_id,
+                problem_instance_id=problem_instance_id,
+                required_metrics=metrics,
+                completion_signal="Следующий безопасный шаг выполнен или передан владельцу.",
+                data_freshness=data_freshness,
+                allowed_actions=allowed_actions,
+            )
+        )
+    steps.append(
+        _solve_map_step(
+            step_id="recheck",
+            order=3,
+            title="Перепроверить результат",
+            description="Повторите проверку после действия и обновления данных источников.",
+            action_code="recheck",
+            nm_id=nm_id,
+            problem_instance_id=problem_instance_id,
+            required_metrics=metrics,
+            completion_signal="Проблема перепроверена на свежих данных.",
+            data_freshness=data_freshness,
+            allowed_actions=allowed_actions,
+        )
+    )
+    steps = _append_create_task_fallback_step(
+        steps,
+        allowed_actions=allowed_actions,
+        nm_id=nm_id,
+        problem_instance_id=problem_instance_id,
+    )
+    return ActionCenterSolveMap(
+        title="Карта решения",
+        summary="Проверьте доказательства, откройте самый близкий рабочий экран и перепроверьте проблему после действия.",
+        steps=steps,
+        recheck_description="Повторите проверку после выполнения шага и обновления WB/finance данных.",
+    )
+
+
 def build_action_center_solve_map(
     *,
     problem_code: str | None,
@@ -1097,18 +1258,7 @@ def build_action_center_solve_map(
     code = str(problem_code or "").strip().lower()
     if code in {"card_quality_fix", "checker_card_quality", "content_quality_issue"}:
         code = "card_quality_issue"
-    if code not in {
-        "missing_cost_blocks_profit",
-        "negative_unit_profit",
-        "overstock_slow_moving",
-        "low_stock_risk",
-        "ads_spend_without_profit",
-        "promo_not_profitable",
-        "price_below_safe_margin",
-        "dead_stock",
-        "fast_stock_depletion",
-        "card_quality_issue",
-    }:
+    if not code:
         return None
     normalized_allowed = normalize_action_center_allowed_actions(allowed_actions)
     freshness = (
@@ -1591,7 +1741,16 @@ def build_action_center_solve_map(
         },
     }
 
-    spec = maps[code]
+    spec = maps.get(code)
+    if spec is None:
+        return _generic_action_center_solve_map(
+            problem_code=code,
+            allowed_actions=normalized_allowed,
+            nm_id=nm_id,
+            problem_instance_id=problem_instance_id,
+            data_freshness=freshness,
+            evidence_status=evidence_status,
+        )
     steps = [
         _solve_map_step(
             step_id="evidence",
@@ -2644,9 +2803,7 @@ class PortalActionRead(PortalBaseModel):
             return "read_only_signal" if not self.can_update else "missing_evidence"
         formula_code = str(self.evidence_ledger.formula_code or "")
         formula_human = str(self.evidence_ledger.formula_human or "")
-        synthetic = bool(self.evidence_ledger.is_synthetic) or formula_code.startswith(
-            "portal_action."
-        )
+        synthetic = bool(self.evidence_ledger.is_synthetic) or formula_code.startswith("portal_action.")
         has_formula = bool(
             formula_human.strip()
             or formula_code.strip()
@@ -3649,7 +3806,14 @@ class PortalDataSyncRunSummary(PortalBaseModel):
 class PortalDataSyncDomainStatus(PortalBaseModel):
     domain: str
     status: Literal[
-        "completed", "failed", "not_started", "running", "queued", "skipped", "unknown"
+        "completed",
+        "failed",
+        "not_started",
+        "running",
+        "queued",
+        "partial",
+        "skipped",
+        "unknown",
     ]
     source_code: str | None = None
     title: str | None = None
@@ -3662,6 +3826,7 @@ class PortalDataSyncDomainStatus(PortalBaseModel):
     last_synced_at: datetime | None = None
     last_successful_sync_at: datetime | None = None
     last_failed_sync_at: datetime | None = None
+    data_watermark_at: datetime | None = None
     last_error_text: str | None = None
     last_error_human_message: str | None = None
     rows_loaded: int = 0
@@ -3695,6 +3860,21 @@ class PortalDataSyncStatusRead(PortalBaseModel):
     account_id: int
     overall_state: Literal["ok", "warning", "failed", "unknown"]
     user_facing_status: str | None = None
+    has_active_sync: bool = False
+    has_stale_running_sync: bool = False
+    data_alignment_status: Literal[
+        "aligned", "new_account", "misaligned", "insufficient_data"
+    ] = "insufficient_data"
+    data_alignment_warnings: list[str] = Field(default_factory=list)
+    data_alignment_domains: list[str] = Field(default_factory=list)
+    last_calculated_at: datetime | None = None
+    calculation_cache_status: Literal["fresh", "stale", "missing", "unknown"] = (
+        "missing"
+    )
+    calculation_refresh_status: Literal[
+        "ready", "pending", "blocked", "stale", "unknown"
+    ] = "unknown"
+    calculation_refresh_message: str | None = None
     domains: list[PortalDataSyncDomainStatus] = Field(default_factory=list)
     sources: list[PortalDataReadinessSource] = Field(default_factory=list)
     current_sync_runs: list[PortalDataSyncRunSummary] = Field(default_factory=list)

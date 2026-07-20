@@ -21,6 +21,7 @@ from app.services.auth import (
 )
 from app.services.money_snapshots import MoneyEndpointSnapshotService
 from app.services.operator_snapshots import OperatorEndpointSnapshotService
+from app.services.portal import PortalService
 from app.services.problem_engine.runner import ProblemEvaluationRunnerService
 from app.services.sync import SyncOrchestrator
 from app.jobs.sync_jobs import process_queued_wb_sync_run
@@ -57,6 +58,7 @@ async def _invalidate_account_snapshots(
 ) -> None:
     await money_snapshot_service.invalidate_snapshots(session, account_id=account_id)
     await operator_snapshot_service.invalidate_snapshots(session, account_id=account_id)
+    PortalService.invalidate_shared_runtime_caches()
 
 
 def _cursor_read(cursor: WBSyncCursor) -> SyncCursorRead:

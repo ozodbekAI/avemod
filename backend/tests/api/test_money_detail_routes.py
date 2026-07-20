@@ -391,7 +391,10 @@ def _article_detail_payload() -> dict:
             "next_step": "Не докупать до закрытия вопросов по данным",
             "recommended_qty": 0,
             "required_cash": 0.0,
-            "money_effect": {"affected_stock_value": 30000.0, "expected_cash_release": 0.0},
+            "money_effect": {
+                "affected_stock_value": 30000.0,
+                "expected_cash_release": 0.0,
+            },
             "confidence": "medium",
             "decision_confidence": "medium",
             "financial_final": False,
@@ -421,7 +424,7 @@ def test_money_card_detail_route_returns_trust_fields(monkeypatch) -> None:
     async def _fake_card_detail(session, **kwargs):
         return _card_detail_payload()
 
-    monkeypatch.setattr(money_router.service, "card_detail", _fake_card_detail)
+    monkeypatch.setattr(money_router.snapshot_service, "card_detail", _fake_card_detail)
     app.dependency_overrides[get_current_superuser] = _override_user
     app.dependency_overrides[get_db_session] = _override_session
     try:
@@ -441,7 +444,9 @@ def test_money_article_detail_route_returns_trust_fields(monkeypatch) -> None:
     async def _fake_article_detail(session, **kwargs):
         return _article_detail_payload()
 
-    monkeypatch.setattr(money_router.service, "article_detail", _fake_article_detail)
+    monkeypatch.setattr(
+        money_router.snapshot_service, "article_detail", _fake_article_detail
+    )
     app.dependency_overrides[get_current_superuser] = _override_user
     app.dependency_overrides[get_db_session] = _override_session
     try:
@@ -704,13 +709,17 @@ def test_money_expense_breakdown_route_returns_payload(monkeypatch) -> None:
     async def _fake_breakdown(session, **kwargs):
         return _expense_breakdown_payload()
 
-    monkeypatch.setattr(money_router.service, "expense_breakdown", _fake_breakdown)
+    monkeypatch.setattr(
+        money_router.snapshot_service, "expense_breakdown", _fake_breakdown
+    )
     monkeypatch.setattr(money_router, "_require_money_read", _allow_money_read)
     app.dependency_overrides[get_current_user] = _override_user
     app.dependency_overrides[get_db_session] = _override_session
     try:
         with TestClient(app) as client:
-            response = client.get("/api/v1/money/expenses/breakdown?account_id=1&group_by=category")
+            response = client.get(
+                "/api/v1/money/expenses/breakdown?account_id=1&group_by=category"
+            )
     finally:
         app.dependency_overrides.clear()
 
@@ -726,7 +735,9 @@ def test_money_profit_cascade_route_returns_payload(monkeypatch) -> None:
     async def _fake_profit_cascade(session, **kwargs):
         return _profit_cascade_payload()
 
-    monkeypatch.setattr(money_router.service, "profit_cascade", _fake_profit_cascade)
+    monkeypatch.setattr(
+        money_router.snapshot_service, "profit_cascade", _fake_profit_cascade
+    )
     monkeypatch.setattr(money_router, "_require_money_read", _allow_money_read)
     app.dependency_overrides[get_current_user] = _override_user
     app.dependency_overrides[get_db_session] = _override_session
@@ -740,14 +751,19 @@ def test_money_profit_cascade_route_returns_payload(monkeypatch) -> None:
     body = response.json()
     assert body["source_of_truth"] == "finance_report"
     assert body["cascade"]["groups"][2]["code"] == "wb_direct_expenses"
-    assert body["cascade"]["groups"][3]["children"][0]["ad_spend_source"] == "finance_report"
+    assert (
+        body["cascade"]["groups"][3]["children"][0]["ad_spend_source"]
+        == "finance_report"
+    )
 
 
 def test_money_expense_logistics_route_returns_payload(monkeypatch) -> None:
     async def _fake_logistics(session, **kwargs):
         return _expense_logistics_payload()
 
-    monkeypatch.setattr(money_router.service, "expense_logistics", _fake_logistics)
+    monkeypatch.setattr(
+        money_router.snapshot_service, "expense_logistics", _fake_logistics
+    )
     monkeypatch.setattr(money_router, "_require_money_read", _allow_money_read)
     app.dependency_overrides[get_current_user] = _override_user
     app.dependency_overrides[get_db_session] = _override_session

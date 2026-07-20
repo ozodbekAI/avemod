@@ -23,6 +23,7 @@ from app.services.marts import MartService
 from app.services.sync import SyncOrchestrator
 from app.services.money_snapshots import MoneyEndpointSnapshotService
 from app.services.operator_snapshots import OperatorEndpointSnapshotService
+from app.services.portal import PortalService
 from app.services.photo_studio import PhotoStudioService
 from app.services.problem_engine.runner import ProblemEvaluationRunnerService
 from app.services.reputation import ReputationService
@@ -186,6 +187,7 @@ async def process_queued_wb_sync_run(run_id: int) -> None:
             await OperatorEndpointSnapshotService().invalidate_snapshots(
                 session, account_id=account_id
             )
+            PortalService.invalidate_shared_runtime_caches()
             await session.commit()
         except Exception:
             await session.rollback()

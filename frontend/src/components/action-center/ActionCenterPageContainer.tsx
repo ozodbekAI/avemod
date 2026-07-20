@@ -14,6 +14,7 @@ import {
   ChevronDown,
   ChevronRight,
   ClipboardCheck,
+  ClipboardList,
   Clock3,
   Database,
   ExternalLink,
@@ -23,6 +24,7 @@ import {
   ListChecks,
   Loader2,
   Lock,
+  MessageSquare,
   PackageSearch,
   Play,
   Plus,
@@ -168,6 +170,22 @@ const CLOSED_STATUSES = new Set([
   "rejected",
 ]);
 
+const COMPLETED_TASK_STATUSES = new Set(["done", "resolved", "closed"]);
+
+const DEACTIVATED_TASK_STATUSES = new Set([
+  "postponed",
+  "ignored",
+  "dismissed",
+  "rejected",
+]);
+
+const ACTIVE_TASK_QUERY_STATUS =
+  "new,acknowledged,in_progress,postponed,blocked,reopened";
+const COMPLETED_TASK_QUERY_STATUS = "done,resolved";
+const DEACTIVATED_TASK_QUERY_STATUS = "ignored,dismissed";
+
+type TaskBoardMode = "active" | "completed" | "deactivated";
+
 const STATUS_TONE: Record<string, string> = {
   new: "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300",
   in_progress:
@@ -293,6 +311,31 @@ function hasCyrillicText(value: unknown): boolean {
 
 function isClosedStatus(value: unknown): boolean {
   return CLOSED_STATUSES.has(norm(value));
+}
+
+function taskBoardModeForItem(item: ActionCenterItem): TaskBoardMode {
+  const status = norm(item.status);
+  if (DEACTIVATED_TASK_STATUSES.has(status)) return "deactivated";
+  if (COMPLETED_TASK_STATUSES.has(status) || isClosedAction(item)) {
+    return "completed";
+  }
+  return "active";
+}
+
+function taskBoardModeTitle(mode: TaskBoardMode): string {
+  if (mode === "completed") return "Выполненные";
+  if (mode === "deactivated") return "Деактивированные";
+  return "Активные";
+}
+
+function taskBoardModeHint(mode: TaskBoardMode): string {
+  if (mode === "completed") {
+    return "История закрытых задач. При ошибке можно вернуть задачу в активные.";
+  }
+  if (mode === "deactivated") {
+    return "Отложенные и неактуальные задачи не мешают текущей очереди.";
+  }
+  return "Задачи, которые можно брать в работу и закрывать по очереди.";
 }
 
 function compactDate(value?: string | null): string {
@@ -514,13 +557,12 @@ function wbImageCandidates(nmId: string | number | null | undefined): string[] {
   const vol = Math.floor(n / 100000);
   const part = Math.floor(n / 1000);
   const host = wbBasketHost(vol);
-  return [
-    `https://${host}/vol${vol}/part${part}/${n}/images/c246x328/1.webp`,
-  ];
+  return [`https://${host}/vol${vol}/part${part}/${n}/images/c246x328/1.webp`];
 }
 
 function proxyWbImageUrl(src: string | null): string | null {
   if (!src) return null;
+  if (/\.wbbasket\.ru\//i.test(src)) return null;
   return src;
 }
 
@@ -550,7 +592,8 @@ function itemImageCandidates(item: ActionCenterItem | null): string[] {
     firstArrayImage(raw.photos),
     firstArrayImage(raw.images),
   ];
-  const primary = firstString(...sources) ?? wbImageCandidates(item.nm_id)[0] ?? null;
+  const primary =
+    firstString(...sources) ?? wbImageCandidates(item.nm_id)[0] ?? null;
   const displayUrl = proxyWbImageUrl(primary);
   return displayUrl ? [displayUrl] : [];
 }
@@ -567,7 +610,8 @@ function rowImageCandidates(row: CostsMissingItem | null): string[] {
     firstArrayImage(obj.photos),
     firstArrayImage(obj.images),
   ];
-  const primary = firstString(...sources) ?? wbImageCandidates(row.nm_id)[0] ?? null;
+  const primary =
+    firstString(...sources) ?? wbImageCandidates(row.nm_id)[0] ?? null;
   const displayUrl = proxyWbImageUrl(primary);
   return displayUrl ? [displayUrl] : [];
 }
@@ -585,7 +629,8 @@ function productRowImageCandidates(row: PortalProductRow | null): string[] {
     firstArrayImage(obj.photos),
     firstArrayImage(obj.images),
   ];
-  const primary = firstString(...sources) ?? wbImageCandidates(row.nm_id)[0] ?? null;
+  const primary =
+    firstString(...sources) ?? wbImageCandidates(row.nm_id)[0] ?? null;
   const displayUrl = proxyWbImageUrl(primary);
   return displayUrl ? [displayUrl] : [];
 }
@@ -651,6 +696,23 @@ function numberFromUnknown(value: unknown): number | null {
   return null;
 }
 
+function moneyFromUnknown(value: unknown): number {
+  const parsed = numberFromUnknown(value);
+  return parsed == null ? 0 : Math.abs(parsed);
+}
+
+function missingCostRevenue(row: CostsMissingItem | null | undefined): number {
+  return moneyFromUnknown(row?.affected_revenue);
+}
+
+function sortMissingCostRows(rows: CostsMissingItem[]): CostsMissingItem[] {
+  return [...rows].sort((a, b) => {
+    const revenueDelta = missingCostRevenue(b) - missingCostRevenue(a);
+    if (revenueDelta) return revenueDelta;
+    return String(costRowLabel(a)).localeCompare(String(costRowLabel(b)), "ru");
+  });
+}
+
 function isManualTask(item: ActionCenterItem | null): boolean {
   return (
     norm(item?.source_module) === "manual" ||
@@ -711,6 +773,13 @@ function defaultManualDeadline(): string {
 function dateTimeLocalToIso(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+
+function postponeUntilIso(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  date.setHours(10, 0, 0, 0);
+  return date.toISOString();
 }
 
 function parseMoneyDraft(value: string, optional = false): number | null {
@@ -971,6 +1040,8 @@ function problemPlaybook(item: ActionCenterItem): Array<{
       "negative_unit_profit",
       "price_below_safe_margin",
       "promo_not_profitable",
+      "price_offer_blocks_conversion",
+      "raise_price_possible_high_demand",
     ].includes(code)
   ) {
     return [
@@ -1068,7 +1139,14 @@ function problemPlaybook(item: ActionCenterItem): Array<{
     ];
   }
   if (
-    ["ads_spend_without_profit", "expense_ad_double_count_risk"].includes(code)
+    [
+      "ads_spend_without_profit",
+      "expense_ad_double_count_risk",
+      "high_ad_drr",
+      "high_ad_cpo",
+      "low_ads_ctr",
+      "ads_stockout_risk",
+    ].includes(code)
   ) {
     return [
       {
@@ -1097,7 +1175,131 @@ function problemPlaybook(item: ActionCenterItem): Array<{
       },
     ];
   }
-  if (["overstock_slow_moving", "dead_stock"].includes(code)) {
+  if (code === "ads_spend_no_orders") {
+    return [
+      {
+        step_id: "check_ads_no_orders",
+        title: "Найти рекламу без заказов",
+        description:
+          "Сверьте расход, заказы, кампанию, ставку, кластер и карточку. Сначала нужно понять: проблема в трафике, карточке или цене.",
+        completion_signal:
+          "Понятна кампания или кластер, который тратит бюджет",
+        preferred_href: "result",
+      },
+      {
+        step_id: "ads_review",
+        title: "Открыть рекламный review",
+        description:
+          "Проверьте ставки и бюджет. Если карточка или цена слабые, сначала исправьте их, затем возвращайтесь к рекламе.",
+        completion_signal: "Выбран безопасный план по рекламе",
+        preferred_href: "work",
+      },
+      {
+        step_id: "recheck_ads_orders",
+        title: "Перепроверить заказы",
+        description:
+          "После обновления рекламной статистики запустите перепроверку и закройте задачу, если появились заказы или расход снизился.",
+        completion_signal: "Расход больше не идёт без заказов",
+        preferred_href: "result",
+      },
+    ];
+  }
+  if (["low_conversion_card", "no_sales_with_views"].includes(code)) {
+    return [
+      {
+        step_id: "check_conversion",
+        title: "Понять, почему просмотры не дают заказы",
+        description:
+          "Сверьте фото, title, характеристики, цену, отзывы и источник трафика. Это возможность роста, не подтверждённый убыток.",
+        completion_signal: "Понятна главная гипотеза низкой конверсии",
+        preferred_href: "result",
+      },
+      {
+        step_id: "fix_card_conversion",
+        title: "Улучшить карточку или цену",
+        description:
+          "Запустите проверку карточки, исправьте title/фото/характеристики или откройте цену, если товар проигрывает по офферу.",
+        completion_signal: "Изменение сохранено или поставлено ответственному",
+        preferred_href: "work",
+      },
+      {
+        step_id: "recheck_conversion",
+        title: "Перепроверить конверсию",
+        description:
+          "После обновления аналитики проверьте, выросла ли конверсия или нужно создать новую ручную задачу.",
+        completion_signal: "Конверсия стала нормальной или есть следующий план",
+        preferred_href: "result",
+      },
+    ];
+  }
+  if (code === "high_return_rate") {
+    return [
+      {
+        step_id: "check_return_reason",
+        title: "Найти причину возвратов",
+        description:
+          "Проверьте размерную сетку, фото, описание, характеристики, качество товара и ожидания покупателя.",
+        completion_signal:
+          "Понятна причина, из-за которой покупатели возвращают товар",
+        preferred_href: "result",
+      },
+      {
+        step_id: "fix_return_cause",
+        title: "Исправить ожидания в карточке",
+        description:
+          "Обновите фото, описание, размеры или создайте задачу ответственному, если нужна проверка качества товара.",
+        completion_signal: "Карточка или задача по качеству обновлена",
+        preferred_href: "work",
+      },
+      {
+        step_id: "recheck_returns",
+        title: "Перепроверить возвратность",
+        description:
+          "После новых продаж и возвратов запустите перепроверку и закройте задачу, если процент возвратов снизился.",
+        completion_signal: "Возвратность снизилась или есть ручной план",
+        preferred_href: "result",
+      },
+    ];
+  }
+  if (
+    [
+      "negative_reviews_need_reply",
+      "questions_need_reply",
+      "low_product_rating",
+    ].includes(code)
+  ) {
+    return [
+      {
+        step_id: "read_reputation_signal",
+        title: "Прочитать отзыв или вопрос",
+        description:
+          "Откройте репутацию и проверьте текст, рейтинг, категорию негатива и связь с карточкой товара.",
+        completion_signal: "Понятно, что именно беспокоит покупателя",
+        preferred_href: "result",
+      },
+      {
+        step_id: "reply_or_assign_quality",
+        title: "Ответить или назначить разбор",
+        description:
+          "Подготовьте ответ покупателю. Если причина в качестве товара, размерах или описании, создайте ручную задачу ответственному.",
+        completion_signal: "Ответ готов или задача по причине создана",
+        preferred_href: "work",
+      },
+      {
+        step_id: "recheck_reputation",
+        title: "Перепроверить репутацию",
+        description:
+          "После ответа или обновления репутации запустите перепроверку и закройте задачу, если сигнал исчез.",
+        completion_signal: "Отзыв/вопрос обработан или есть план исправления",
+        preferred_href: "result",
+      },
+    ];
+  }
+  if (
+    ["overstock_slow_moving", "dead_stock", "storage_cost_pressure"].includes(
+      code,
+    )
+  ) {
     return [
       {
         step_id: "check_stock_reason",
@@ -1125,7 +1327,14 @@ function problemPlaybook(item: ActionCenterItem): Array<{
       },
     ];
   }
-  if (["low_stock_risk", "fast_stock_depletion"].includes(code)) {
+  if (
+    [
+      "low_stock_risk",
+      "fast_stock_depletion",
+      "stockout_now_with_recent_orders",
+      "stockout_risk_14d",
+    ].includes(code)
+  ) {
     return [
       {
         step_id: "check_depletion",
@@ -1442,6 +1651,7 @@ type ProblemGroupKey =
   | "stock"
   | "ads_promo"
   | "card_quality"
+  | "reputation"
   | "system_checks"
   | "other";
 
@@ -1463,6 +1673,10 @@ type ProblemGroupSummary = {
   topCodes: Array<{ code: string; label: string; count: number }>;
 };
 
+type ProblemGroupMoneyOverrides = {
+  missingCostRevenue?: number | null;
+};
+
 const PROBLEM_GROUP_ORDER: ProblemGroupKey[] = [
   "manual_tasks",
   "data_blockers",
@@ -1471,9 +1685,17 @@ const PROBLEM_GROUP_ORDER: ProblemGroupKey[] = [
   "stock",
   "ads_promo",
   "card_quality",
+  "reputation",
   "system_checks",
   "other",
 ];
+
+function normalizeProblemGroupKey(value: unknown): ProblemGroupKey | null {
+  const key = norm(value);
+  return PROBLEM_GROUP_ORDER.includes(key as ProblemGroupKey)
+    ? (key as ProblemGroupKey)
+    : null;
+}
 
 const PROBLEM_GROUP_CONFIG: Record<
   ProblemGroupKey,
@@ -1536,6 +1758,13 @@ const PROBLEM_GROUP_CONFIG: Record<
     tone: "border-emerald-500/35 bg-emerald-500/5",
     icon: <FileText className="h-4 w-4" />,
   },
+  reputation: {
+    title: "Отзывы и вопросы",
+    subtitle: "Негативные отзывы, вопросы покупателей и рейтинг товара.",
+    actionLabel: "Ответить покупателям",
+    tone: "border-pink-500/35 bg-pink-500/5",
+    icon: <MessageSquare className="h-4 w-4" />,
+  },
   system_checks: {
     title: "Системные проверки",
     subtitle:
@@ -1553,6 +1782,143 @@ const PROBLEM_GROUP_CONFIG: Record<
   },
 };
 
+const TASK_DOMAIN_CATALOG: Record<
+  ProblemGroupKey,
+  {
+    direction: string;
+    short: string;
+    taskTypes: string[];
+    workflow: string[];
+    doneSignal: string;
+  }
+> = {
+  manual_tasks: {
+    direction: "Операционные поручения",
+    short: "Ручные задачи по товарам, срокам и исполнителям.",
+    taskTypes: [
+      "изменить title",
+      "проверить фото",
+      "обновить карточку",
+      "ручная проверка цены",
+    ],
+    workflow: ["выбрать товары", "дать результат", "назначить срок"],
+    doneSignal: "исполнитель отметил задачу выполненной",
+  },
+  data_blockers: {
+    direction: "Финансы и данные",
+    short:
+      "Блокеры расчёта прибыли: себестоимость, SKU, расходы, синхронизации.",
+    taskTypes: [
+      "заполнить себестоимость",
+      "связать SKU",
+      "разнести расход",
+      "обновить источник",
+    ],
+    workflow: ["найти строку", "исправить здесь", "пересчитать"],
+    doneSignal: "прибыль и отчёты пересчитались на свежих данных",
+  },
+  profitability: {
+    direction: "Финансы",
+    short: "Минусовая экономика, низкая маржа и риск потери денег.",
+    taskTypes: [
+      "товар в минус",
+      "низкая маржа",
+      "промо съело прибыль",
+      "реклама дороже прибыли",
+    ],
+    workflow: ["проверить факты", "убрать причину", "перепроверить маржу"],
+    doneSignal: "товар больше не уходит в минус или есть ручное решение",
+  },
+  price: {
+    direction: "Цена и скидки",
+    short: "Безопасная цена, скидки и изменения через review.",
+    taskTypes: [
+      "проверить цену WB",
+      "поднять до безопасной",
+      "убрать опасную скидку",
+      "проверить промо",
+    ],
+    workflow: ["сверить цену", "посчитать безопасную", "отправить review"],
+    doneSignal: "цена не ломает минимальную безопасную маржу",
+  },
+  stock: {
+    direction: "Логистика и склад",
+    short: "Дефицит, пересток, медленные продажи и план пополнения.",
+    taskTypes: [
+      "риск out-of-stock",
+      "пересток",
+      "низкая оборачиваемость",
+      "план поставки",
+    ],
+    workflow: [
+      "оценить остаток",
+      "выбрать склад/поставку",
+      "проверить динамику",
+    ],
+    doneSignal: "есть план поставки или безопасный план распродажи",
+  },
+  ads_promo: {
+    direction: "Продвижение",
+    short: "Реклама, ставки, бюджеты, промо и SEO-задачи.",
+    taskTypes: [
+      "снизить ставку",
+      "остановить кампанию",
+      "проверить DRR",
+      "обновить SEO",
+    ],
+    workflow: [
+      "найти кампанию",
+      "поменять ставку/бюджет",
+      "проверить результат",
+    ],
+    doneSignal: "расходы не перекрывают прибыль",
+  },
+  card_quality: {
+    direction: "Контент",
+    short: "Название, описание, характеристики, фото и качество карточки.",
+    taskTypes: [
+      "добавить название",
+      "заполнить характеристики",
+      "улучшить фото",
+      "исправить описание",
+    ],
+    workflow: ["открыть карточку", "исправить поле", "перепроверить"],
+    doneSignal: "карточка проходит проверку качества",
+  },
+  reputation: {
+    direction: "Отзывы и вопросы",
+    short: "Негативные отзывы, вопросы покупателей и рейтинг товара.",
+    taskTypes: [
+      "ответить на отзыв",
+      "ответить на вопрос",
+      "разобрать негатив",
+      "проверить рейтинг",
+    ],
+    workflow: ["прочитать отзыв", "ответить или назначить", "перепроверить"],
+    doneSignal:
+      "ответ опубликован или причина негативного рейтинга взята в работу",
+  },
+  system_checks: {
+    direction: "Контроль",
+    short: "Расхождения сверок, технические сигналы и качество интеграций.",
+    taskTypes: [
+      "финальная сверка",
+      "продажа без финансов",
+      "финансы без продажи",
+      "ошибка синка",
+    ],
+    workflow: ["понять источник", "обновить данные", "перепроверить"],
+    doneSignal: "контрольная сверка больше не показывает расхождение",
+  },
+  other: {
+    direction: "Разбор",
+    short: "Редкие задачи, которые ещё не вошли в основные направления.",
+    taskTypes: ["проверить причину", "назначить владельца", "закрыть вручную"],
+    workflow: ["понять сигнал", "решить или назначить", "закрыть"],
+    doneSignal: "есть понятный итог задачи",
+  },
+};
+
 function problemGroupKey(item: ActionCenterItem): ProblemGroupKey {
   const source = norm(item.source_module);
   const code = norm(actionCode(item));
@@ -1564,11 +1930,26 @@ function problemGroupKey(item: ActionCenterItem): ProblemGroupKey {
     return "manual_tasks";
   }
   if (
+    text.includes("reputation") ||
+    text.includes("review") ||
+    text.includes("rating") ||
+    text.includes("question") ||
+    text.includes("feedback") ||
+    text.includes("отзыв") ||
+    text.includes("вопрос") ||
+    text.includes("рейтинг")
+  ) {
+    return "reputation";
+  }
+  if (
     text.includes("checker") ||
     text.includes("card_quality") ||
     text.includes("card_content") ||
     text.includes("content_quality") ||
-    text.includes("content_review")
+    text.includes("content_review") ||
+    text.includes("conversion") ||
+    text.includes("views") ||
+    text.includes("return_rate")
   ) {
     return "card_quality";
   }
@@ -1602,6 +1983,8 @@ function problemGroupKey(item: ActionCenterItem): ProblemGroupKey {
     text.includes("stock") ||
     text.includes("overstock") ||
     text.includes("depletion") ||
+    text.includes("storage") ||
+    text.includes("logistics") ||
     text.includes("supply") ||
     text.includes("reorder")
   ) {
@@ -1633,7 +2016,63 @@ function problemGroupKey(item: ActionCenterItem): ProblemGroupKey {
   return "other";
 }
 
-function buildProblemGroups(items: ActionCenterItem[]): ProblemGroupSummary[] {
+function isMissingCostProblem(item: ActionCenterItem): boolean {
+  const text = `${norm(actionCode(item))} ${norm(item.source_module)} ${norm(item.title)} ${norm(item.reason)}`;
+  return (
+    text.includes("missing_cost") ||
+    text.includes("cost_missing") ||
+    text.includes("missing_manual_cost")
+  );
+}
+
+function problemGroupMoney(
+  key: ProblemGroupKey,
+  items: ActionCenterItem[],
+  overrides: ProblemGroupMoneyOverrides,
+): number {
+  const computedMoney = items.reduce(
+    (sum, item) => sum + moneyFromUnknown(item.money_impact_amount),
+    0,
+  );
+  if (
+    key !== "data_blockers" ||
+    overrides.missingCostRevenue == null ||
+    !items.some(isMissingCostProblem)
+  ) {
+    return computedMoney;
+  }
+  const nonMissingCostMoney = items.reduce(
+    (sum, item) =>
+      isMissingCostProblem(item)
+        ? sum
+        : sum + moneyFromUnknown(item.money_impact_amount),
+    0,
+  );
+  return nonMissingCostMoney + moneyFromUnknown(overrides.missingCostRevenue);
+}
+
+function applyActionDisplayMoney(
+  items: ActionCenterItem[],
+  overrides: ProblemGroupMoneyOverrides,
+): ActionCenterItem[] {
+  if (!overrides.missingCostRevenue) return items;
+  return items.map((item) => {
+    const isAggregateMissingCost =
+      isMissingCostProblem(item) &&
+      moneyFromUnknown(item.money_impact_amount) === 0 &&
+      numberFromUnknown(item.nm_id) == null;
+    if (!isAggregateMissingCost) return item;
+    return {
+      ...item,
+      money_impact_amount: overrides.missingCostRevenue,
+    };
+  });
+}
+
+function buildProblemGroups(
+  items: ActionCenterItem[],
+  overrides: ProblemGroupMoneyOverrides = {},
+): ProblemGroupSummary[] {
   return PROBLEM_GROUP_ORDER.map((key) => {
     const groupItems = items.filter((item) => problemGroupKey(item) === key);
     const open = groupItems.filter((item) => !isClosedAction(item)).length;
@@ -1645,10 +2084,7 @@ function buildProblemGroups(items: ActionCenterItem[]): ProblemGroupSummary[] {
       (item) => !isClosedAction(item) && isDataBlockerAction(item),
     ).length;
     const actionable = groupItems.filter(isActionable).length;
-    const money = groupItems.reduce(
-      (sum, item) => sum + Math.abs(Number(item.money_impact_amount ?? 0)),
-      0,
-    );
+    const money = problemGroupMoney(key, groupItems, overrides);
     const counts = new Map<string, number>();
     for (const item of groupItems) {
       const code = actionCode(item) || "unknown";
@@ -1943,6 +2379,155 @@ function WorkButton({
         <ExternalLink className="h-3.5 w-3.5" />
       </a>
     </Button>
+  );
+}
+
+function TaskLifecycleActions({
+  item,
+  busy,
+  onStatus,
+  onDoneNext,
+  onNext,
+  showDone = true,
+}: {
+  item: ActionCenterItem;
+  busy: boolean;
+  onStatus: (
+    item: ActionCenterItem,
+    status: string,
+    next?: boolean,
+    options?: { deadline_at?: string; comment?: string },
+  ) => void;
+  onDoneNext: (item: ActionCenterItem) => void;
+  onNext: () => void;
+  showDone?: boolean;
+}) {
+  const mode = taskBoardModeForItem(item);
+  const closed = mode !== "active" || isClosedAction(item);
+  const canUpdate = item.can_update !== false;
+  const inProgress = norm(item.status) === "in_progress";
+
+  if (mode !== "active") {
+    return (
+      <div className="flex flex-wrap items-center gap-2 rounded-md border bg-card p-2 shadow-sm">
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-9 rounded-md"
+          disabled={busy || !canUpdate}
+          onClick={() =>
+            onStatus(item, "reopened", true, {
+              comment: "Возвращено в активные задачи из Центра действий",
+            })
+          }
+        >
+          <RotateCw className="h-3.5 w-3.5" />
+          Вернуть в активные
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-9 rounded-md"
+          onClick={onNext}
+        >
+          Следующая
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border bg-card p-2 shadow-sm">
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-9 rounded-md"
+        disabled={closed || busy || !canUpdate || inProgress}
+        onClick={() =>
+          onStatus(item, "in_progress", false, {
+            comment: "Взято в работу из Центра действий",
+          })
+        }
+      >
+        <Play className="h-3.5 w-3.5" />В работу
+      </Button>
+      {showDone ? (
+        <Button
+          size="sm"
+          className="h-9 rounded-md shadow-sm"
+          disabled={closed || busy || !canUpdate}
+          onClick={() =>
+            onStatus(item, "done", true, {
+              deadline_at: postponeUntilIso(1),
+              comment:
+                "Выполнено из Центра действий. Скрыто из активной очереди до следующей ежедневной проверки.",
+            })
+          }
+        >
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          Готово на 1 день
+        </Button>
+      ) : null}
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-9 rounded-md"
+            disabled={closed || busy || !canUpdate}
+          >
+            <Clock3 className="h-3.5 w-3.5" />
+            Отложить
+            <ChevronDown className="h-3.5 w-3.5" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-64 p-2">
+          <div className="mb-2 px-1 text-xs text-muted-foreground">
+            Уберите задачу из активной очереди до нужного дня.
+          </div>
+          {[1, 3, 7].map((days) => (
+            <Button
+              key={days}
+              type="button"
+              variant="ghost"
+              className="h-9 w-full justify-start rounded-md"
+              onClick={() =>
+                onStatus(item, "postponed", true, {
+                  deadline_at: postponeUntilIso(days),
+                  comment: `Отложено на ${days} дн. из Центра действий`,
+                })
+              }
+            >
+              На {days} {days === 1 ? "день" : days < 5 ? "дня" : "дней"}
+            </Button>
+          ))}
+        </PopoverContent>
+      </Popover>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-9 rounded-md"
+        disabled={closed || busy || !canUpdate}
+        onClick={() =>
+          onStatus(item, "ignored", true, {
+            comment: "Деактивировано как неактуальная задача",
+          })
+        }
+      >
+        <SkipForward className="h-3.5 w-3.5" />
+        Неактуально
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-9 rounded-md"
+        onClick={onNext}
+      >
+        Следующая
+        <ArrowRight className="h-3.5 w-3.5" />
+      </Button>
+    </div>
   );
 }
 
@@ -2679,13 +3264,20 @@ function CostInlineResolution({
   });
 
   const rows = useMemo(() => {
-    const allRows = missingCostsQ.data?.items ?? [];
+    const allRows = sortMissingCostRows(missingCostsQ.data?.items ?? []);
     if (!itemNmId) return allRows;
-    const filtered = allRows.filter(
-      (row) => numberFromUnknown(row.nm_id) === itemNmId,
+    const filtered = sortMissingCostRows(
+      allRows.filter((row) => numberFromUnknown(row.nm_id) === itemNmId),
     );
     return filtered.length ? filtered : allRows;
   }, [itemNmId, missingCostsQ.data]);
+  const totalMissingRows = Number(
+    missingCostsQ.data?.total ?? rows.length ?? 0,
+  );
+  const missingCostSummaryRevenue = moneyFromUnknown(
+    missingCostsQ.data?.summary?.affected_revenue,
+  );
+  const revenueRows = rows.filter((row) => missingCostRevenue(row) > 0).length;
 
   useEffect(() => {
     if (index >= rows.length) setIndex(Math.max(0, rows.length - 1));
@@ -2779,8 +3371,19 @@ function CostInlineResolution({
             <Badge variant="outline">
               {missingCostsQ.isLoading
                 ? "Загружаем строки"
-                : `${rows.length || 0} строк`}
+                : `${totalMissingRows || rows.length || 0} строк`}
             </Badge>
+            {missingCostSummaryRevenue ? (
+              <Badge
+                variant="outline"
+                className="border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-300"
+              >
+                {formatMoney(missingCostSummaryRevenue)} выручки
+              </Badge>
+            ) : null}
+            {revenueRows ? (
+              <Badge variant="secondary">{revenueRows} с продажами</Badge>
+            ) : null}
             <Badge variant="outline">{filledCount} заполнено</Badge>
           </div>
         </div>
@@ -2850,9 +3453,11 @@ function CostInlineResolution({
                     {costRowLabel(current)}
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
-                    Блокирует расчёт прибыли на сумму{" "}
+                    Блокирует расчёт прибыли в выбранном периоде на сумму{" "}
                     <span className="font-semibold text-foreground">
-                      {formatMoney(current.affected_revenue ?? 0)}
+                      {missingCostRevenue(current)
+                        ? formatMoney(missingCostRevenue(current))
+                        : "без продаж за период"}
                     </span>
                   </div>
                 </div>
@@ -3204,7 +3809,12 @@ function ManualTaskResolutionPanel({
 }: {
   item: ActionCenterItem;
   busy: boolean;
-  onStatus: (item: ActionCenterItem, status: string, next?: boolean) => void;
+  onStatus: (
+    item: ActionCenterItem,
+    status: string,
+    next?: boolean,
+    options?: { deadline_at?: string; comment?: string },
+  ) => void;
   onDoneNext: (item: ActionCenterItem) => void;
   onNext: () => void;
 }) {
@@ -3232,6 +3842,39 @@ function ManualTaskResolutionPanel({
           ),
         } as PortalProductRow,
       ];
+  const [checkedProducts, setCheckedProducts] = useState<Set<string>>(
+    () => new Set(),
+  );
+  useEffect(() => {
+    setCheckedProducts(new Set());
+  }, [item.id]);
+  const productKey = (product: PortalProductRow, index: number) =>
+    `${product.nm_id ?? index}:${product.vendor_code ?? ""}:${index}`;
+  const checkedCount = checkedProducts.size;
+  const allChecked =
+    displayProducts.length > 0 && checkedCount >= displayProducts.length;
+  const toggleProductDone = (key: string, checked: boolean) => {
+    setCheckedProducts((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  };
+  const markSelectedDone = () => {
+    if (allChecked || displayProducts.length <= 1) {
+      onStatus(item, "done", true, {
+        deadline_at: postponeUntilIso(1),
+        comment:
+          "Выполнено из Центра действий. Скрыто из активной очереди до следующей ежедневной проверки.",
+      });
+      return;
+    }
+    onStatus(item, "in_progress", false, {
+      comment: `Отмечено выполненным по ${checkedCount} из ${displayProducts.length} товаров. Задача оставлена в работе.`,
+    });
+    toast.success("Часть товаров отмечена. Задача осталась в работе.");
+  };
   return (
     <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
       <div className="border-b bg-muted/20 px-4 py-4">
@@ -3296,7 +3939,7 @@ function ManualTaskResolutionPanel({
                 </div>
               </div>
               <Badge variant="secondary" className="rounded-full">
-                {displayProducts.length} товар
+                {checkedCount}/{displayProducts.length} готово
               </Badge>
             </div>
             <div className="rounded-lg border bg-muted/20 p-3">
@@ -3315,42 +3958,70 @@ function ManualTaskResolutionPanel({
                 </div>
               </div>
               <Badge variant="outline" className="rounded-full">
-                {displayProducts.length}
+                {displayProducts.length} товар
               </Badge>
             </div>
-            <div className="grid gap-2 md:grid-cols-2">
-              {displayProducts.slice(0, 6).map((product) => (
-                <div
-                  key={`${product.nm_id}-${product.vendor_code ?? ""}`}
-                  className="group flex min-w-0 items-center gap-3 rounded-lg border bg-card p-2 transition-colors hover:border-primary/35"
-                >
-                  <ProductThumb
-                    candidates={productRowImageCandidates(product)}
-                    label={productRowTitle(product)}
-                    className="h-16 w-12 rounded-lg"
-                  />
-                  <div className="min-w-0">
-                    <div className="line-clamp-2 text-sm font-semibold leading-snug">
-                      {productRowTitle(product)}
+            <div className="max-h-[360px] space-y-2 overflow-y-auto pr-1">
+              {displayProducts.map((product, index) => {
+                const key = productKey(product, index);
+                const checked = checkedProducts.has(key);
+                return (
+                  <label
+                    key={key}
+                    className={`group flex min-w-0 cursor-pointer items-center gap-3 rounded-lg border p-2 transition-colors ${
+                      checked
+                        ? "border-emerald-500/35 bg-emerald-500/5"
+                        : "bg-card hover:border-primary/35"
+                    }`}
+                  >
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={(value) =>
+                        toggleProductDone(key, value === true)
+                      }
+                    />
+                    <ProductThumb
+                      candidates={productRowImageCandidates(product)}
+                      label={productRowTitle(product)}
+                      className="h-16 w-12 rounded-lg"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="line-clamp-2 text-sm font-semibold leading-snug">
+                        {productRowTitle(product)}
+                      </div>
+                      <div className="mt-1 truncate text-xs text-muted-foreground">
+                        {productRowSubtitle(product)}
+                      </div>
                     </div>
-                    <div className="mt-1 truncate text-xs text-muted-foreground">
-                      {productRowSubtitle(product)}
-                    </div>
-                  </div>
-                </div>
-              ))}
+                    {checked ? (
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                    ) : null}
+                  </label>
+                );
+              })}
             </div>
-            {displayProducts.length > 6 ? (
-              <div className="mt-2 text-xs text-muted-foreground">
-                Ещё {displayProducts.length - 6} товаров в этой задаче.
-              </div>
-            ) : null}
           </div>
         </div>
 
         <div className="space-y-4">
           <div className="rounded-xl border bg-background p-4">
             <div className="text-sm font-semibold">Ход выполнения</div>
+            <div className="mt-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Товары готовы</span>
+                <span className="font-semibold">
+                  {checkedCount}/{displayProducts.length}
+                </span>
+              </div>
+              <Progress
+                value={
+                  displayProducts.length
+                    ? Math.round((checkedCount / displayProducts.length) * 100)
+                    : 0
+                }
+                className="mt-1 h-1.5"
+              />
+            </div>
             <div className="mt-3 space-y-3">
               {[
                 {
@@ -3396,44 +4067,36 @@ function ManualTaskResolutionPanel({
           </div>
 
           <div className="rounded-xl border bg-card p-3">
+            <div className="mb-2 text-xs text-muted-foreground">
+              {displayProducts.length > 1
+                ? "Частичный прогресс запишется в историю задачи. Чтобы закрыть задачу, отметьте все товары."
+                : "Закройте задачу, когда товар реально исправлен."}
+            </div>
             <div className="grid gap-2">
               <Button
                 size="sm"
-                variant="outline"
-                className="h-10 justify-start rounded-xl"
-                disabled={closed || busy || !item.can_update || inProgress}
-                onClick={() => onStatus(item, "in_progress")}
-              >
-                <Play className="h-3.5 w-3.5" />В работу
-              </Button>
-              <Button
-                size="sm"
                 className="h-10 justify-start rounded-xl shadow-sm"
-                disabled={closed || busy || !item.can_update}
-                onClick={() => onDoneNext(item)}
+                disabled={
+                  closed ||
+                  busy ||
+                  !item.can_update ||
+                  (!checkedCount && displayProducts.length > 1)
+                }
+                onClick={markSelectedDone}
               >
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                Готово, дальше
+                {allChecked || displayProducts.length <= 1
+                  ? "Готово на 1 день"
+                  : "Записать прогресс"}
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-10 justify-start rounded-xl"
-                disabled={closed || busy || !item.can_update}
-                onClick={() => onStatus(item, "ignored", true)}
-              >
-                <SkipForward className="h-3.5 w-3.5" />
-                Пропустить
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-10 justify-start rounded-xl"
-                onClick={onNext}
-              >
-                <ArrowRight className="h-3.5 w-3.5" />
-                Следующая
-              </Button>
+              <TaskLifecycleActions
+                item={item}
+                busy={busy}
+                onStatus={onStatus}
+                onDoneNext={onDoneNext}
+                onNext={onNext}
+                showDone={false}
+              />
             </div>
           </div>
         </div>
@@ -3462,7 +4125,12 @@ function FocusPanel({
   dateTo?: string | null;
   busy: string | null;
   currentUserId: number | null;
-  onStatus: (item: ActionCenterItem, status: string, next?: boolean) => void;
+  onStatus: (
+    item: ActionCenterItem,
+    status: string,
+    next?: boolean,
+    options?: { deadline_at?: string; comment?: string },
+  ) => void;
   onDoneNext: (item: ActionCenterItem) => void;
   onRecheck: (item: ActionCenterItem) => void;
   onChanged: () => Promise<void> | void;
@@ -3542,16 +4210,6 @@ function FocusPanel({
         </div>
       </div>
 
-      <InlineResolutionPanel
-        item={item}
-        accountId={accountId}
-        dateFrom={dateFrom}
-        dateTo={dateTo}
-        onChanged={onChanged}
-        onRecheck={onRecheck}
-        onNext={onNext}
-      />
-
       {manualTask ? (
         <ManualTaskResolutionPanel
           item={item}
@@ -3560,7 +4218,17 @@ function FocusPanel({
           onDoneNext={onDoneNext}
           onNext={onNext}
         />
-      ) : !inline ? (
+      ) : inline ? (
+        <InlineResolutionPanel
+          item={item}
+          accountId={accountId}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          onChanged={onChanged}
+          onRecheck={onRecheck}
+          onNext={onNext}
+        />
+      ) : (
         <div className="rounded-md border bg-card p-5 shadow-sm">
           <div className="max-w-xl">
             <div className="text-base font-semibold">
@@ -3573,31 +4241,38 @@ function FocusPanel({
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
             <WorkButton href={href} label={workLabel || "Открыть"} />
-            <Button
-              size="sm"
-              disabled={closed || mutationBusy || !item.can_update}
-              onClick={() => onDoneNext(item)}
-            >
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              Готово, далее
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={closed || mutationBusy || !item.can_update}
-              onClick={() => onStatus(item, "ignored", true)}
-            >
-              <SkipForward className="h-3.5 w-3.5" />
-              Пропустить
-            </Button>
+          </div>
+          <div className="mt-3">
+            <TaskLifecycleActions
+              item={item}
+              busy={Boolean(mutationBusy)}
+              onStatus={onStatus}
+              onDoneNext={onDoneNext}
+              onNext={onNext}
+            />
           </div>
         </div>
-      ) : null}
+      )}
+
+      <details className="group overflow-hidden rounded-md border bg-card shadow-sm">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 text-sm font-semibold marker:hidden">
+          <span className="flex items-center gap-2">
+            <ClipboardList className="h-4 w-4 text-muted-foreground" />
+            Детали проверки
+          </span>
+          <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="grid gap-3 border-t bg-muted/10 p-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <EvidencePanel item={item} />
+          <DataFreshness item={item} />
+        </div>
+      </details>
     </div>
   );
 }
 
 function SummaryBar({
+  mode,
   total,
   open,
   closed,
@@ -3608,6 +4283,7 @@ function SummaryBar({
   moneyAtStake,
   filtered,
 }: {
+  mode: TaskBoardMode;
   total: number;
   open: number;
   closed: number;
@@ -3618,9 +4294,23 @@ function SummaryBar({
   moneyAtStake: number;
   filtered: number;
 }) {
-  const percent = total > 0 ? Math.round((closed / total) * 100) : 100;
+  const percent =
+    mode === "active"
+      ? total > 0
+        ? Math.round((closed / total) * 100)
+        : 100
+      : 100;
   const items = [
-    { label: "Открыто", value: open, tone: "text-foreground" },
+    {
+      label:
+        mode === "completed"
+          ? "Выполнено"
+          : mode === "deactivated"
+            ? "Скрыто"
+            : "Открыто",
+      value: mode === "active" ? open : total,
+      tone: "text-foreground",
+    },
     {
       label: "Срочно",
       value: urgent,
@@ -3661,7 +4351,7 @@ function SummaryBar({
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm font-semibold">
               <Gauge className="h-4 w-4 text-primary" />
-              Очередь
+              {taskBoardModeTitle(mode)}
             </div>
             <span className="text-sm font-semibold">{percent}%</span>
           </div>
@@ -3705,28 +4395,240 @@ function GroupRowMetric({
   );
 }
 
+function GroupHeaderMetric({
+  label,
+  value,
+  tone = "text-foreground",
+}: {
+  label: string;
+  value: React.ReactNode;
+  tone?: string;
+}) {
+  return (
+    <div className="rounded-md border bg-background px-3 py-2">
+      <div className="truncate text-[11px] leading-tight text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-0.5 truncate text-sm font-semibold ${tone}`}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function TaskMonitoringTabs({
+  mode,
+  counts,
+  onChange,
+}: {
+  mode: TaskBoardMode;
+  counts: Record<TaskBoardMode, number>;
+  onChange: (mode: TaskBoardMode) => void;
+}) {
+  const tabs: Array<{
+    value: TaskBoardMode;
+    label: string;
+    icon: React.ReactNode;
+  }> = [
+    {
+      value: "active",
+      label: "Активные",
+      icon: <Activity className="h-4 w-4" />,
+    },
+    {
+      value: "completed",
+      label: "Выполненные",
+      icon: <CheckCircle2 className="h-4 w-4" />,
+    },
+    {
+      value: "deactivated",
+      label: "Деактивированные",
+      icon: <SkipForward className="h-4 w-4" />,
+    },
+  ];
+  return (
+    <div className="rounded-md border bg-card px-2 py-2 shadow-sm">
+      <div className="flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {tabs.map((tab) => {
+          const active = mode === tab.value;
+          return (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => onChange(tab.value)}
+              className={`flex h-9 shrink-0 items-center gap-2 rounded-md px-3 text-sm font-semibold transition-colors ${
+                active
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
+            >
+              {tab.icon}
+              <span>{tab.label}</span>
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs ${
+                  active
+                    ? "bg-primary-foreground/18 text-primary-foreground"
+                    : "bg-muted text-foreground"
+                }`}
+              >
+                {counts[tab.value] ?? 0}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TaskDomainCatalog({
+  groups,
+  onOpen,
+}: {
+  groups: ProblemGroupSummary[];
+  onOpen: (key: ProblemGroupKey) => void;
+}) {
+  if (!groups.length) return null;
+  return (
+    <div className="rounded-md border bg-card shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/20 px-3 py-2">
+        <div>
+          <div className="text-sm font-semibold">Направления задач</div>
+          <div className="text-xs text-muted-foreground">
+            Как в рабочей сводке: финансы, логистика, продвижение, контент и
+            ручные поручения.
+          </div>
+        </div>
+        <Badge variant="outline">{groups.length} направл.</Badge>
+      </div>
+      <div className="grid divide-y lg:grid-cols-3 lg:divide-x lg:divide-y-0">
+        {groups.slice(0, 6).map((group) => {
+          const catalog = TASK_DOMAIN_CATALOG[group.key];
+          return (
+            <button
+              key={group.key}
+              type="button"
+              onClick={() => onOpen(group.key)}
+              className="group min-w-0 px-3 py-2.5 text-left transition-colors hover:bg-muted/30"
+            >
+              <div className="flex items-start gap-2.5">
+                <span
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${group.tone}`}
+                >
+                  {group.icon}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center justify-between gap-2">
+                    <div className="truncate text-sm font-semibold">
+                      {catalog.direction}
+                    </div>
+                    <Badge variant="secondary" className="h-5 rounded-full">
+                      {group.open || group.items.length}
+                    </Badge>
+                  </div>
+                  <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                    {catalog.short}
+                  </div>
+                  <div className="mt-2 flex min-w-0 flex-wrap gap-1">
+                    {catalog.taskTypes.slice(0, 3).map((task) => (
+                      <span
+                        key={task}
+                        className="max-w-full truncate rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                      >
+                        {task}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function GroupWorkBrief({ group }: { group: ProblemGroupSummary }) {
+  const catalog = TASK_DOMAIN_CATALOG[group.key];
+  if (!catalog) return null;
+  return (
+    <div className="grid gap-2 rounded-md border bg-card p-2 shadow-sm md:grid-cols-3">
+      <div className="rounded-md bg-muted/25 px-3 py-2">
+        <div className="text-[11px] font-medium uppercase text-muted-foreground">
+          Направление
+        </div>
+        <div className="mt-1 text-sm font-semibold">{catalog.direction}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">
+          {catalog.short}
+        </div>
+      </div>
+      <div className="rounded-md bg-muted/25 px-3 py-2">
+        <div className="text-[11px] font-medium uppercase text-muted-foreground">
+          Что решаем
+        </div>
+        <div className="mt-1 flex flex-wrap gap-1">
+          {catalog.taskTypes.slice(0, 4).map((task) => (
+            <Badge key={task} variant="secondary" className="text-[10px]">
+              {task}
+            </Badge>
+          ))}
+        </div>
+      </div>
+      <div className="rounded-md bg-muted/25 px-3 py-2">
+        <div className="text-[11px] font-medium uppercase text-muted-foreground">
+          Очередность
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-1 text-xs">
+          {catalog.workflow.map((step, index) => (
+            <span key={step} className="flex items-center gap-1">
+              <span className="rounded-full bg-background px-2 py-0.5 font-medium">
+                {index + 1}. {step}
+              </span>
+              {index < catalog.workflow.length - 1 ? (
+                <ChevronRight className="h-3 w-3 text-muted-foreground" />
+              ) : null}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProblemGroupRow({
   group,
+  mode,
   selected,
   onOpen,
 }: {
   group: ProblemGroupSummary;
+  mode: TaskBoardMode;
   selected?: boolean;
   onOpen: () => void;
 }) {
   const firstOpen =
     group.items.find((item) => !isClosedAction(item)) ?? group.items[0];
+  const primaryCount =
+    mode === "active" ? group.open : group.items.length || group.open;
+  const primaryLabel =
+    mode === "completed"
+      ? "Выполнено"
+      : mode === "deactivated"
+        ? "Скрыто"
+        : "Открыто";
   return (
     <button
       type="button"
       onClick={onOpen}
-      className={`group grid w-full gap-2 border-b bg-card px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-muted/35 lg:min-h-[66px] lg:grid-cols-[minmax(340px,1fr)_56px_56px_64px_104px_118px_160px] lg:items-center ${
+      className={`group grid w-full gap-1.5 border-b bg-card px-3 py-1.5 text-left transition-colors last:border-b-0 hover:bg-muted/35 lg:min-h-[56px] lg:grid-cols-[minmax(340px,1fr)_56px_56px_64px_104px_118px_150px] lg:items-center ${
         selected ? "bg-primary/5 ring-1 ring-inset ring-primary/25" : ""
       }`}
     >
       <div className="flex min-w-0 items-center gap-2.5">
         <span
-          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${group.tone}`}
+          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md border ${group.tone}`}
         >
           {group.icon}
         </span>
@@ -3738,7 +4640,7 @@ function ProblemGroupRow({
             {group.blockers ? (
               <Badge
                 variant="outline"
-                className="h-5 shrink-0 rounded-full border-amber-500/35 bg-amber-500/10 px-2 text-[10px] text-amber-800 dark:text-amber-300"
+                className="h-5 shrink-0 rounded-full border-amber-500/35 bg-amber-500/10 px-1.5 text-[10px] text-amber-800 dark:text-amber-300"
               >
                 {group.blockers} блокер
               </Badge>
@@ -3749,7 +4651,7 @@ function ProblemGroupRow({
                     <Badge
                       key={item.code}
                       variant="secondary"
-                      className="h-5 max-w-[150px] truncate rounded-full bg-muted/70 px-2 text-[9px]"
+                      className="h-5 max-w-[140px] truncate rounded-full bg-muted/70 px-1.5 text-[9px]"
                     >
                       {item.label} · {item.count}
                     </Badge>
@@ -3757,7 +4659,7 @@ function ProblemGroupRow({
                 : null}
             </div>
           </div>
-          <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] leading-tight text-muted-foreground">
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] leading-tight text-muted-foreground">
             <span className="min-w-0 truncate">{group.subtitle}</span>
             <span className="hidden shrink-0 text-muted-foreground/70 lg:inline">
               ·
@@ -3773,7 +4675,7 @@ function ProblemGroupRow({
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:contents">
-        <GroupRowMetric label="Открыто" value={group.open} />
+        <GroupRowMetric label={primaryLabel} value={primaryCount} />
         <GroupRowMetric
           label="Срочно"
           value={group.urgent}
@@ -3808,7 +4710,7 @@ function ProblemGroupRow({
       </div>
 
       <div className="flex items-center justify-between gap-2 lg:justify-end">
-        <span className="whitespace-nowrap rounded-full bg-primary/5 px-2.5 py-1 text-xs font-semibold text-primary transition-colors group-hover:bg-primary/10">
+        <span className="whitespace-nowrap rounded-full bg-primary/5 px-2 py-0.5 text-xs font-semibold text-primary transition-colors group-hover:bg-primary/10">
           {group.actionLabel}
         </span>
         <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />
@@ -3819,9 +4721,11 @@ function ProblemGroupRow({
 
 function ProblemGroupsOverview({
   groups,
+  mode,
   onOpen,
 }: {
   groups: ProblemGroupSummary[];
+  mode: TaskBoardMode;
   onOpen: (key: ProblemGroupKey) => void;
 }) {
   if (!groups.length) {
@@ -3831,8 +4735,8 @@ function ProblemGroupsOverview({
           <ShieldCheck className="mx-auto h-10 w-10 text-emerald-600" />
           <div className="text-lg font-semibold">Групп проблем нет</div>
           <div className="text-sm text-muted-foreground">
-            По текущим фильтрам задач нет. Сбросьте фильтр или дождитесь
-            следующей синхронизации.
+            В разделе «{taskBoardModeTitle(mode).toLowerCase()}» по текущим
+            фильтрам задач нет.
           </div>
         </div>
       </div>
@@ -3844,7 +4748,7 @@ function ProblemGroupsOverview({
         <div>
           <div className="text-base font-semibold">Группы проблем</div>
           <div className="text-xs text-muted-foreground">
-            Выберите группу, затем закрывайте задачи внутри неё по очереди.
+            {taskBoardModeHint(mode)}
           </div>
         </div>
         <Badge variant="outline">{groups.length} групп</Badge>
@@ -3852,7 +4756,13 @@ function ProblemGroupsOverview({
       <div className="overflow-hidden rounded-md border bg-card shadow-sm">
         <div className="hidden border-b bg-muted/35 px-3 py-1.5 text-[10px] font-medium uppercase text-muted-foreground lg:grid lg:grid-cols-[minmax(340px,1fr)_56px_56px_64px_104px_118px_160px]">
           <span>Группа и первый шаг</span>
-          <span>Открыто</span>
+          <span>
+            {mode === "completed"
+              ? "Выполнено"
+              : mode === "deactivated"
+                ? "Скрыто"
+                : "Открыто"}
+          </span>
           <span>Срочно</span>
           <span>Можно</span>
           <span>Риск</span>
@@ -3863,6 +4773,7 @@ function ProblemGroupsOverview({
           <ProblemGroupRow
             key={group.key}
             group={group}
+            mode={mode}
             onOpen={() => onOpen(group.key)}
           />
         ))}
@@ -3978,7 +4889,7 @@ function CommandFilter({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className={`h-9 min-w-[136px] max-w-[220px] justify-between rounded-full border-border/70 bg-background px-3 shadow-sm ${
+          className={`h-10 min-w-[140px] max-w-[220px] justify-between rounded-md border-border/70 bg-background px-3 shadow-sm ${
             isActive ? "border-primary/45 bg-primary/5 text-primary" : ""
           }`}
         >
@@ -4049,7 +4960,7 @@ function MoreFiltersMenu({
         <Button
           type="button"
           variant="outline"
-          className={`h-9 rounded-full border-border/70 px-3 shadow-sm ${
+          className={`h-10 rounded-md border-border/70 px-3 shadow-sm ${
             count
               ? "border-primary/45 bg-primary/5 text-primary"
               : "bg-background"
@@ -4115,16 +5026,16 @@ function ActionCenterFilterDock({
 }) {
   const count = activeFilterCount(filters);
   return (
-    <div className="rounded-md border bg-card p-2 shadow-sm">
+    <div className="rounded-md border bg-card shadow-sm">
       <div className="flex flex-col gap-2">
-        <div className="flex flex-col gap-1.5 xl:flex-row xl:items-center">
+        <div className="flex flex-col gap-2 p-2 xl:flex-row xl:items-center">
           <div className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
             <Input
               value={filters.q}
               onChange={(event) => updateFilters({ q: event.target.value })}
               placeholder="Поиск по nm, артикулу, причине или коду"
-              className="h-10 rounded-full border-border/70 bg-muted/20 pl-9 pr-9 text-sm shadow-sm"
+              className="h-10 rounded-md border-border/70 bg-muted/20 pl-9 pr-9 text-sm shadow-sm"
             />
             {filters.q ? (
               <Button
@@ -4176,7 +5087,7 @@ function ActionCenterFilterDock({
           </div>
         </div>
 
-        <div className="flex min-w-0 items-center gap-1.5 border-t border-dashed pt-2">
+        <div className="flex min-w-0 items-center gap-1.5 border-t bg-muted/15 px-2 py-2">
           <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
             Вид
           </span>
@@ -4189,7 +5100,7 @@ function ActionCenterFilterDock({
                   type="button"
                   size="sm"
                   variant={active ? "default" : "outline"}
-                  className={`h-7 shrink-0 rounded-full px-2.5 text-xs ${
+                  className={`h-8 shrink-0 rounded-md px-2.5 text-xs ${
                     active ? "shadow-sm" : "border-border/70 bg-background"
                   }`}
                   onClick={() => updateFilters({ view: view.value })}
@@ -4204,7 +5115,7 @@ function ActionCenterFilterDock({
               <Button
                 size="sm"
                 variant={filters.include_beta ? "default" : "outline"}
-                className="h-8 rounded-full border-border/70"
+                className="h-8 rounded-md border-border/70"
                 onClick={() =>
                   updateFilters({ include_beta: !filters.include_beta })
                 }
@@ -4216,7 +5127,7 @@ function ActionCenterFilterDock({
             <Button
               size="sm"
               variant="ghost"
-              className="h-8 rounded-full px-3"
+              className="h-8 rounded-md px-3"
               onClick={resetFilters}
             >
               <X className="h-3.5 w-3.5" />
@@ -4283,11 +5194,11 @@ function ManualTaskStepper({
     },
   ];
   return (
-    <div className="grid gap-2 sm:grid-cols-5">
+    <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] sm:grid sm:grid-cols-5 sm:overflow-visible sm:pb-0 [&::-webkit-scrollbar]:hidden">
       {steps.map((step, index) => (
         <div
           key={step.label}
-          className={`relative overflow-hidden rounded-lg border px-3 py-2 ${
+          className={`relative min-w-[132px] overflow-hidden rounded-lg border px-2.5 py-1.5 sm:min-w-0 sm:px-3 sm:py-2 ${
             step.done
               ? "border-primary/30 bg-primary/5"
               : "border-border bg-muted/20"
@@ -4298,13 +5209,17 @@ function ManualTaskStepper({
           ) : null}
           <div className="flex items-center gap-2">
             <span
-              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${
+              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md sm:h-7 sm:w-7 ${
                 step.done
                   ? "bg-primary text-primary-foreground"
                   : "bg-background text-muted-foreground"
               }`}
             >
-              {step.done ? <Check className="h-4 w-4" /> : step.icon}
+              {step.done ? (
+                <Check className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              ) : (
+                step.icon
+              )}
             </span>
             <div className="min-w-0">
               <div className="truncate text-xs font-semibold">{step.label}</div>
@@ -4438,43 +5353,27 @@ function ManualTaskSummaryPanel({
 }) {
   const previewProducts = selectedProducts.slice(0, 8);
   return (
-    <div className="mx-auto w-full max-w-5xl p-5">
-      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
-              <ClipboardCheck className="h-5 w-5" />
-            </span>
-            <div>
-              <div className="text-xl font-semibold tracking-tight">
-                Проверка перед созданием
-              </div>
-              <div className="text-sm text-muted-foreground">
-                Проверьте задачу, исполнителя, срок и выбранные товары.
-              </div>
-            </div>
-          </div>
-        </div>
-        <Badge variant="secondary" className="w-fit rounded-full px-3 py-1">
-          Приоритет {priority}
-        </Badge>
-      </div>
-
+    <div className="mx-auto w-full max-w-5xl p-4 sm:p-5">
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">
-          <div className="rounded-2xl border bg-card p-4 shadow-sm">
-            <div className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
-              Задача
+          <div className="rounded-md border bg-card p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="text-xs font-semibold uppercase text-muted-foreground">
+                Brief
+              </div>
+              <Badge variant="secondary" className="rounded-full px-3 py-1">
+                {priority}
+              </Badge>
             </div>
             <div className="text-lg font-semibold leading-tight">
               {title.trim() || "Название задачи не заполнено"}
             </div>
-            <div className="mt-3 whitespace-pre-wrap rounded-xl border bg-muted/25 p-4 text-sm leading-relaxed">
+            <div className="mt-3 whitespace-pre-wrap rounded-md border bg-muted/25 p-4 text-sm leading-relaxed">
               {description.trim() || "Инструкция не заполнена"}
             </div>
           </div>
 
-          <div className="rounded-2xl border bg-card p-4 shadow-sm">
+          <div className="rounded-md border bg-card p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold">Товары</div>
@@ -4491,7 +5390,7 @@ function ManualTaskSummaryPanel({
                 {previewProducts.map((product) => (
                   <div
                     key={product.nm_id}
-                    className="flex min-w-0 items-center gap-3 rounded-xl border bg-background p-2"
+                    className="flex min-w-0 items-center gap-3 rounded-md border bg-background p-2"
                   >
                     <ProductThumb
                       candidates={productRowImageCandidates(product)}
@@ -4523,10 +5422,10 @@ function ManualTaskSummaryPanel({
         </div>
 
         <div className="space-y-4">
-          <div className="rounded-2xl border bg-card p-4 shadow-sm">
+          <div className="rounded-md border bg-card p-4 shadow-sm">
             <div className="text-sm font-semibold">Исполнение</div>
             <div className="mt-3 space-y-2">
-              <div className="rounded-xl border bg-background px-3 py-3">
+              <div className="rounded-md border bg-background px-3 py-3">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <UserRound className="h-3.5 w-3.5" />
                   Ответственный
@@ -4535,7 +5434,7 @@ function ManualTaskSummaryPanel({
                   {selectedUserName || "Не выбран"}
                 </div>
               </div>
-              <div className="rounded-xl border bg-background px-3 py-3">
+              <div className="rounded-md border bg-background px-3 py-3">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Clock3 className="h-3.5 w-3.5" />
                   Срок
@@ -4544,7 +5443,7 @@ function ManualTaskSummaryPanel({
                   {deadline ? compactDateTime(deadline) : "Не указан"}
                 </div>
               </div>
-              <div className="rounded-xl border bg-background px-3 py-3">
+              <div className="rounded-md border bg-background px-3 py-3">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Gauge className="h-3.5 w-3.5" />
                   Приоритет
@@ -4554,7 +5453,7 @@ function ManualTaskSummaryPanel({
             </div>
           </div>
 
-          <div className="rounded-2xl border bg-muted/20 p-4">
+          <div className="rounded-md border bg-muted/20 p-4">
             <div className="text-sm font-semibold">Что произойдёт дальше</div>
             <div className="mt-3 space-y-3">
               {[
@@ -4595,9 +5494,7 @@ function ManualTaskEditFooter({
     <div className="shrink-0 border-t bg-card px-4 py-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 flex-1 text-xs text-muted-foreground">
-          {canSubmit
-            ? "Следующий шаг: проверка перед созданием."
-            : createDisabledReason}
+          {canSubmit ? "Следующий шаг: проверка задачи." : createDisabledReason}
         </div>
         <div className="flex gap-2">
           <Button
@@ -4636,7 +5533,7 @@ function ManualTaskReviewFooter({
     <div className="shrink-0 border-t bg-card px-4 py-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 flex-1 text-xs text-muted-foreground">
-          Проверьте данные. После создания задача попадёт в очередь.
+          Проверьте данные. После подтверждения задача попадёт в очередь.
         </div>
         <div className="flex gap-2">
           <Button
@@ -4658,9 +5555,9 @@ function ManualTaskReviewFooter({
             {isCreating ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <Plus className="h-4 w-4" />
+              <CheckCircle2 className="h-4 w-4" />
             )}
-            Создать задачу
+            Далее
           </Button>
         </div>
       </div>
@@ -4803,7 +5700,7 @@ function ManualTaskDialog({
       });
     },
     onSuccess: async () => {
-      toast.success("Ручная задача создана");
+      toast.success("Задача поставлена в очередь");
       await queryClient.invalidateQueries({ queryKey: ["portal-actions"] });
       await onCreated?.();
       resetForm();
@@ -4811,7 +5708,7 @@ function ManualTaskDialog({
       onOpenChange(false);
     },
     onError: (error: any) => {
-      toast.error(error?.message ?? "Не удалось создать задачу");
+      toast.error(error?.message ?? "Не удалось поставить задачу");
     },
   });
 
@@ -4863,41 +5760,27 @@ function ManualTaskDialog({
         onOpenChange(value);
       }}
     >
-      <DialogContent className="flex h-[min(860px,94vh)] max-w-6xl flex-col overflow-hidden rounded-2xl border bg-background p-0 shadow-2xl">
-        <div className="shrink-0 border-b bg-card">
-          <DialogHeader className="px-5 py-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <DialogTitle className="flex items-center gap-2 text-lg">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
-                    <Plus className="h-4 w-4" />
-                  </span>
-                  Создать ручную задачу
-                </DialogTitle>
-                <DialogDescription className="mt-1">
-                  {reviewing
-                    ? "Проверьте всё перед созданием задачи."
-                    : "Выберите товары, опишите конкретный результат, назначьте исполнителя и срок."}
-                </DialogDescription>
-              </div>
-              <Badge variant="outline" className="h-7 rounded-full">
-                Action Center
-              </Badge>
-            </div>
-          </DialogHeader>
-          <div className="px-5 pb-4">
-            <ManualTaskStepper
-              productCount={selectedProducts.length}
-              hasTitle={title.trim().length >= 3}
-              assigneeName={selectedUserName}
-              deadline={deadline}
-              reviewing={reviewing}
-            />
-          </div>
-        </div>
-
+      <DialogContent
+        className={`flex w-[calc(100vw-24px)] flex-col overflow-hidden border bg-background p-0 shadow-2xl ${
+          reviewing
+            ? "h-[min(760px,92vh)] max-w-4xl rounded-xl"
+            : "h-[min(840px,94vh)] max-w-7xl rounded-xl"
+        }`}
+      >
         {reviewing ? (
           <>
+            <DialogHeader className="shrink-0 border-b bg-card px-4 py-4 pr-12 sm:px-5">
+              <DialogTitle className="flex items-center gap-2 text-lg">
+                <span className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-sm">
+                  <ClipboardCheck className="h-4 w-4" />
+                </span>
+                Проверка задачи
+              </DialogTitle>
+              <DialogDescription>
+                Убедитесь, что товары, исполнитель, срок и brief указаны
+                правильно.
+              </DialogDescription>
+            </DialogHeader>
             <ScrollArea className="min-h-0 flex-1 bg-muted/10">
               <ManualTaskSummaryPanel
                 selectedProducts={selectedProducts}
@@ -4915,290 +5798,322 @@ function ManualTaskDialog({
             />
           </>
         ) : (
-          <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_430px]">
-            <div className="flex min-h-0 flex-col border-r bg-muted/10">
-              <div className="border-b bg-background px-4 py-3">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-semibold">
-                      Товары для задачи
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      Можно выбрать один товар или сразу группу.
-                    </div>
-                  </div>
-                  <Badge
-                    variant={selectedProducts.length ? "default" : "secondary"}
-                    className="rounded-full"
-                  >
-                    {selectedProducts.length} выбрано
-                  </Badge>
-                </div>
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    value={productSearch}
-                    onChange={(event) => setProductSearch(event.target.value)}
-                    placeholder="Найдите товар по nm, артикулу или названию"
-                    className="h-11 rounded-xl border-border/70 bg-muted/20 pl-9 pr-3 text-sm shadow-sm"
-                  />
-                </div>
-                {selectedProducts.length ? (
-                  <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    {selectedProducts.slice(0, 6).map((product) => (
-                      <div
-                        key={product.nm_id}
-                        className="flex max-w-[210px] shrink-0 items-center gap-2 rounded-full border bg-card py-1 pl-1 pr-2 text-left shadow-sm hover:border-primary/40"
-                      >
-                        <ProductThumb
-                          candidates={productRowImageCandidates(product)}
-                          label={productRowTitle(product)}
-                          className="h-7 w-7 rounded-full"
-                        />
-                        <span className="min-w-0 truncate text-xs font-medium">
-                          {productRowTitle(product)}
-                        </span>
-                        <button
-                          type="button"
-                          className="shrink-0 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            toggleProduct(product);
-                          }}
-                          aria-label="Убрать товар"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
+          <>
+            <div className="shrink-0 border-b bg-card">
+              <DialogHeader className="px-4 py-3 pr-12 sm:px-5 sm:py-4">
+                <DialogTitle className="flex items-center gap-2 text-lg">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-sm">
+                    <Plus className="h-4 w-4" />
+                  </span>
+                  Поставить ручную задачу
+                </DialogTitle>
+                <DialogDescription className="mt-1">
+                  Выберите товары, brief, исполнителя и срок.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="px-4 pb-3 sm:px-5 sm:pb-4">
+                <ManualTaskStepper
+                  productCount={selectedProducts.length}
+                  hasTitle={title.trim().length >= 3}
+                  assigneeName={selectedUserName}
+                  deadline={deadline}
+                  reviewing={reviewing}
+                />
+              </div>
+            </div>
+
+            <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_420px]">
+              <div className="flex min-h-0 flex-col border-r bg-muted/10">
+                <div className="border-b bg-background px-4 py-3">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold">
+                        Товары для задачи
                       </div>
-                    ))}
-                    {selectedProducts.length > 6 ? (
-                      <Badge
-                        variant="secondary"
-                        className="h-9 shrink-0 rounded-full px-3"
-                      >
-                        +{selectedProducts.length - 6}
-                      </Badge>
-                    ) : null}
+                      <div className="text-xs text-muted-foreground">
+                        Можно выбрать один товар или сразу группу.
+                      </div>
+                    </div>
+                    <Badge
+                      variant={
+                        selectedProducts.length ? "default" : "secondary"
+                      }
+                      className="rounded-full"
+                    >
+                      {selectedProducts.length} выбрано
+                    </Badge>
                   </div>
-                ) : null}
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      value={productSearch}
+                      onChange={(event) => setProductSearch(event.target.value)}
+                      placeholder="Найдите товар по nm, артикулу или названию"
+                      className="h-11 rounded-xl border-border/70 bg-muted/20 pl-9 pr-3 text-sm shadow-sm"
+                    />
+                  </div>
+                  {selectedProducts.length ? (
+                    <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                      {selectedProducts.slice(0, 6).map((product) => (
+                        <div
+                          key={product.nm_id}
+                          className="flex max-w-[210px] shrink-0 items-center gap-2 rounded-full border bg-card py-1 pl-1 pr-2 text-left shadow-sm hover:border-primary/40"
+                        >
+                          <ProductThumb
+                            candidates={productRowImageCandidates(product)}
+                            label={productRowTitle(product)}
+                            className="h-7 w-7 rounded-full"
+                          />
+                          <span className="min-w-0 truncate text-xs font-medium">
+                            {productRowTitle(product)}
+                          </span>
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleProduct(product);
+                            }}
+                            aria-label="Убрать товар"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                      {selectedProducts.length > 6 ? (
+                        <Badge
+                          variant="secondary"
+                          className="h-9 shrink-0 rounded-full px-3"
+                        >
+                          +{selectedProducts.length - 6}
+                        </Badge>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+
+                <ScrollArea className="min-h-0 flex-1">
+                  <div className="grid gap-2.5 p-4">
+                    {productsQuery.isLoading ? (
+                      Array.from({ length: 6 }).map((_, index) => (
+                        <Skeleton key={index} className="h-[82px] rounded-lg" />
+                      ))
+                    ) : productsQuery.data?.items?.length ? (
+                      productsQuery.data.items.map((product) => {
+                        const active = selectedIds.has(Number(product.nm_id));
+                        return (
+                          <ManualProductPickRow
+                            key={product.nm_id}
+                            product={product}
+                            active={active}
+                            onToggle={() => toggleProduct(product)}
+                          />
+                        );
+                      })
+                    ) : (
+                      <div className="flex min-h-[360px] items-center justify-center rounded-xl border border-dashed bg-background p-6 text-center">
+                        <div className="max-w-xs space-y-2">
+                          <PackageSearch className="mx-auto h-9 w-9 text-muted-foreground" />
+                          <div className="font-semibold">Товары не найдены</div>
+                          <div className="text-sm text-muted-foreground">
+                            Попробуйте nm ID, артикул продавца или часть
+                            названия.
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
               </div>
 
-              <ScrollArea className="min-h-0 flex-1">
-                <div className="grid gap-2.5 p-4">
-                  {productsQuery.isLoading ? (
-                    Array.from({ length: 6 }).map((_, index) => (
-                      <Skeleton key={index} className="h-[82px] rounded-lg" />
-                    ))
-                  ) : productsQuery.data?.items?.length ? (
-                    productsQuery.data.items.map((product) => {
-                      const active = selectedIds.has(Number(product.nm_id));
-                      return (
-                        <ManualProductPickRow
-                          key={product.nm_id}
-                          product={product}
-                          active={active}
-                          onToggle={() => toggleProduct(product)}
-                        />
-                      );
-                    })
-                  ) : (
-                    <div className="flex min-h-[360px] items-center justify-center rounded-xl border border-dashed bg-background p-6 text-center">
-                      <div className="max-w-xs space-y-2">
-                        <PackageSearch className="mx-auto h-9 w-9 text-muted-foreground" />
-                        <div className="font-semibold">Товары не найдены</div>
-                        <div className="text-sm text-muted-foreground">
-                          Попробуйте nm ID, артикул продавца или часть названия.
+              <div className="flex min-h-0 flex-col bg-background">
+                <ScrollArea className="min-h-0 flex-1">
+                  <div className="space-y-4 p-4">
+                    <div className="rounded-xl border bg-card p-3">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold">
+                            Тип работы
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Выберите шаблон, потом поправьте текст.
+                          </div>
                         </div>
+                        <Badge variant="outline" className="rounded-full">
+                          {preset.label}
+                        </Badge>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {MANUAL_TASK_PRESETS.map((item) => (
+                          <ManualPresetButton
+                            key={item.key}
+                            item={item}
+                            active={taskKind === item.key}
+                            onClick={() => choosePreset(item.key)}
+                          />
+                        ))}
                       </div>
                     </div>
-                  )}
-                </div>
-              </ScrollArea>
-            </div>
 
-            <div className="flex min-h-0 flex-col bg-background">
-              <ScrollArea className="min-h-0 flex-1">
-                <div className="space-y-4 p-4">
-                  <div className="rounded-xl border bg-card p-3">
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold">Тип работы</div>
+                    <div className="rounded-xl border bg-card p-3">
+                      <div className="mb-3">
+                        <div className="text-sm font-semibold">
+                          Содержание задачи
+                        </div>
                         <div className="text-xs text-muted-foreground">
-                          Выберите шаблон, потом поправьте текст.
+                          Пишите как поручение человеку: результат должен быть
+                          понятен без созвона.
                         </div>
                       </div>
-                      <Badge variant="outline" className="rounded-full">
-                        {preset.label}
-                      </Badge>
+                      <div className="space-y-3">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="manual-task-title">Название</Label>
+                          <Input
+                            id="manual-task-title"
+                            value={title}
+                            onChange={(event) => setTitle(event.target.value)}
+                            placeholder="Например: изменить title для летних костюмов"
+                            className="h-11 rounded-xl"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="manual-task-description">
+                            Инструкция
+                          </Label>
+                          <Textarea
+                            id="manual-task-description"
+                            value={description}
+                            onChange={(event) =>
+                              setDescription(event.target.value)
+                            }
+                            rows={5}
+                            placeholder="Что проверить, что изменить, где взять данные, какой результат считается готовым."
+                            className="min-h-[130px] rounded-xl"
+                          />
+                        </div>
+                      </div>
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {MANUAL_TASK_PRESETS.map((item) => (
-                        <ManualPresetButton
-                          key={item.key}
-                          item={item}
-                          active={taskKind === item.key}
-                          onClick={() => choosePreset(item.key)}
-                        />
-                      ))}
-                    </div>
-                  </div>
 
-                  <div className="rounded-xl border bg-card p-3">
-                    <div className="mb-3">
-                      <div className="text-sm font-semibold">
-                        Содержание задачи
+                    <div className="rounded-xl border bg-card p-3">
+                      <div className="mb-3">
+                        <div className="text-sm font-semibold">Исполнение</div>
+                        <div className="text-xs text-muted-foreground">
+                          Кто делает, когда нужно закончить и насколько срочно.
+                        </div>
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        Пишите как поручение человеку: результат должен быть
-                        понятен без созвона.
-                      </div>
-                    </div>
-                    <div className="space-y-3">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="manual-task-title">Название</Label>
-                        <Input
-                          id="manual-task-title"
-                          value={title}
-                          onChange={(event) => setTitle(event.target.value)}
-                          placeholder="Например: изменить title для летних костюмов"
-                          className="h-11 rounded-xl"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="manual-task-description">
-                          Инструкция
-                        </Label>
-                        <Textarea
-                          id="manual-task-description"
-                          value={description}
-                          onChange={(event) =>
-                            setDescription(event.target.value)
-                          }
-                          rows={5}
-                          placeholder="Что проверить, что изменить, где взять данные, какой результат считается готовым."
-                          className="min-h-[130px] rounded-xl"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border bg-card p-3">
-                    <div className="mb-3">
-                      <div className="text-sm font-semibold">Исполнение</div>
-                      <div className="text-xs text-muted-foreground">
-                        Кто делает, когда нужно закончить и насколько срочно.
-                      </div>
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="space-y-1.5 sm:col-span-2">
-                        <Label>Ответственный</Label>
-                        <Popover
-                          open={assigneeOpen}
-                          onOpenChange={setAssigneeOpen}
-                        >
-                          <PopoverTrigger asChild>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              role="combobox"
-                              className="h-11 w-full justify-between rounded-xl"
-                            >
-                              <span className="flex min-w-0 items-center gap-2">
-                                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                                  <UserRound className="h-4 w-4" />
-                                </span>
-                                <span className="truncate">
-                                  {selectedUserName ||
-                                    "Выберите ответственного"}
-                                </span>
-                              </span>
-                              <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent
-                            align="start"
-                            className="w-[360px] p-0"
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-1.5 sm:col-span-2">
+                          <Label>Ответственный</Label>
+                          <Popover
+                            open={assigneeOpen}
+                            onOpenChange={setAssigneeOpen}
                           >
-                            <Command>
-                              <CommandInput placeholder="Найти сотрудника" />
-                              <CommandList>
-                                <CommandEmpty>Никого не найдено</CommandEmpty>
-                                <CommandGroup>
-                                  {(users ?? []).map((item) => {
-                                    const active = item.id === assigneeId;
-                                    return (
-                                      <CommandItem
-                                        key={item.id}
-                                        value={`${item.display_name} ${item.full_name} ${item.email}`}
-                                        onSelect={() => {
-                                          setAssigneeId(item.id);
-                                          setAssigneeOpen(false);
-                                        }}
-                                      >
-                                        <Check
-                                          className={`h-4 w-4 ${active ? "opacity-100" : "opacity-0"}`}
-                                        />
-                                        <div className="min-w-0">
-                                          <div className="truncate text-sm font-medium">
-                                            {item.display_name ||
-                                              item.full_name ||
-                                              item.email}
-                                          </div>
-                                          <div className="truncate text-xs text-muted-foreground">
-                                            {item.email}
-                                          </div>
-                                        </div>
-                                      </CommandItem>
-                                    );
-                                  })}
-                                </CommandGroup>
-                              </CommandList>
-                            </Command>
-                          </PopoverContent>
-                        </Popover>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="manual-task-deadline">Срок</Label>
-                        <Input
-                          id="manual-task-deadline"
-                          type="datetime-local"
-                          value={deadline}
-                          onChange={(event) => setDeadline(event.target.value)}
-                          className="h-11 rounded-xl"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Приоритет</Label>
-                        <div className="grid h-11 grid-cols-4 gap-1 rounded-xl border bg-muted/30 p-1">
-                          {(["P1", "P2", "P3", "P4"] as const).map((item) => (
-                            <Button
-                              key={item}
-                              type="button"
-                              variant={
-                                priority === item ? "default" : "outline"
-                              }
-                              size="sm"
-                              className="h-full rounded-lg border-0 px-0 shadow-none"
-                              onClick={() => setPriority(item)}
+                            <PopoverTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                role="combobox"
+                                className="h-11 w-full justify-between rounded-xl"
+                              >
+                                <span className="flex min-w-0 items-center gap-2">
+                                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                                    <UserRound className="h-4 w-4" />
+                                  </span>
+                                  <span className="truncate">
+                                    {selectedUserName ||
+                                      "Выберите ответственного"}
+                                  </span>
+                                </span>
+                                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                              align="start"
+                              className="w-[360px] p-0"
                             >
-                              {item}
-                            </Button>
-                          ))}
+                              <Command>
+                                <CommandInput placeholder="Найти сотрудника" />
+                                <CommandList>
+                                  <CommandEmpty>Никого не найдено</CommandEmpty>
+                                  <CommandGroup>
+                                    {(users ?? []).map((item) => {
+                                      const active = item.id === assigneeId;
+                                      return (
+                                        <CommandItem
+                                          key={item.id}
+                                          value={`${item.display_name} ${item.full_name} ${item.email}`}
+                                          onSelect={() => {
+                                            setAssigneeId(item.id);
+                                            setAssigneeOpen(false);
+                                          }}
+                                        >
+                                          <Check
+                                            className={`h-4 w-4 ${active ? "opacity-100" : "opacity-0"}`}
+                                          />
+                                          <div className="min-w-0">
+                                            <div className="truncate text-sm font-medium">
+                                              {item.display_name ||
+                                                item.full_name ||
+                                                item.email}
+                                            </div>
+                                            <div className="truncate text-xs text-muted-foreground">
+                                              {item.email}
+                                            </div>
+                                          </div>
+                                        </CommandItem>
+                                      );
+                                    })}
+                                  </CommandGroup>
+                                </CommandList>
+                              </Command>
+                            </PopoverContent>
+                          </Popover>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="manual-task-deadline">Срок</Label>
+                          <Input
+                            id="manual-task-deadline"
+                            type="datetime-local"
+                            value={deadline}
+                            onChange={(event) =>
+                              setDeadline(event.target.value)
+                            }
+                            className="h-11 rounded-xl"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Приоритет</Label>
+                          <div className="grid h-11 grid-cols-4 gap-1 rounded-xl border bg-muted/30 p-1">
+                            {(["P1", "P2", "P3", "P4"] as const).map((item) => (
+                              <Button
+                                key={item}
+                                type="button"
+                                variant={
+                                  priority === item ? "default" : "outline"
+                                }
+                                size="sm"
+                                className="h-full rounded-lg border-0 px-0 shadow-none"
+                                onClick={() => setPriority(item)}
+                              >
+                                {item}
+                              </Button>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              </ScrollArea>
+                </ScrollArea>
 
-              <ManualTaskEditFooter
-                canSubmit={canSubmit}
-                createDisabledReason={createDisabledReason}
-                onCancel={() => onOpenChange(false)}
-                onNext={() => setManualTaskStage("review")}
-              />
+                <ManualTaskEditFooter
+                  canSubmit={canSubmit}
+                  createDisabledReason={createDisabledReason}
+                  onCancel={() => onOpenChange(false)}
+                  onNext={() => setManualTaskStage("review")}
+                />
+              </div>
             </div>
-          </div>
+          </>
         )}
       </DialogContent>
     </Dialog>
@@ -5216,6 +6131,10 @@ export function ActionCenterPageContainer({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const routeFilters = useActionCenterFilters(routeSearch);
+  const routeGroupKey = useMemo(
+    () => normalizeProblemGroupKey(routeSearch.group),
+    [routeSearch.group],
+  );
   const routeFilterKey = useMemo(
     () => JSON.stringify(routeSearch ?? {}),
     [routeSearch],
@@ -5223,7 +6142,8 @@ export function ActionCenterPageContainer({
   const [filters, setFilters] = useState<ActionCenterFilterState>(routeFilters);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedGroupKey, setSelectedGroupKey] =
-    useState<ProblemGroupKey | null>(null);
+    useState<ProblemGroupKey | null>(() => routeGroupKey);
+  const [taskBoardMode, setTaskBoardMode] = useState<TaskBoardMode>("active");
   const [busy, setBusy] = useState<string | null>(null);
   const [recheckBusy, setRecheckBusy] = useState<string | null>(null);
   const [manualTaskOpen, setManualTaskOpen] = useState(false);
@@ -5240,7 +6160,48 @@ export function ActionCenterPageContainer({
     });
   }, [canUseBeta, routeFilterKey]);
 
-  const updateFilters = (patch: Partial<ActionCenterFilterState>) => {
+  useEffect(() => {
+    setSelectedGroupKey(routeGroupKey);
+    setSelectedId(null);
+  }, [routeGroupKey]);
+
+  const navigateActionCenter = (
+    nextFilters: ActionCenterFilterState,
+    groupKey: ProblemGroupKey | null,
+    replace = true,
+  ) => {
+    navigate({
+      to: "/action-center",
+      search: {
+        ...actionCenterSearchFromState(nextFilters),
+        group: groupKey ?? undefined,
+      } as ActionCenterSearch,
+      replace,
+    });
+  };
+
+  useEffect(() => {
+    const status = norm(filters.status);
+    if (COMPLETED_TASK_STATUSES.has(status) && taskBoardMode !== "completed") {
+      setTaskBoardMode("completed");
+      setSelectedGroupKey(null);
+      setSelectedId(null);
+      navigateActionCenter(filters, null);
+    } else if (
+      DEACTIVATED_TASK_STATUSES.has(status) &&
+      taskBoardMode !== "deactivated"
+    ) {
+      setTaskBoardMode("deactivated");
+      setSelectedGroupKey(null);
+      setSelectedId(null);
+      navigateActionCenter(filters, null);
+    }
+  }, [filters.status, taskBoardMode]);
+
+  const updateFilters = (
+    patch: Partial<ActionCenterFilterState>,
+    options: { groupKey?: ProblemGroupKey | null; replace?: boolean } = {},
+  ) => {
     const next = {
       ...filters,
       ...patch,
@@ -5248,12 +6209,10 @@ export function ActionCenterPageContainer({
         ? (patch.include_beta ?? filters.include_beta)
         : false,
     };
+    const nextGroupKey =
+      "groupKey" in options ? (options.groupKey ?? null) : selectedGroupKey;
     setFilters(next);
-    navigate({
-      to: "/action-center",
-      search: actionCenterSearchFromState(next) as ActionCenterSearch,
-      replace: true,
-    });
+    navigateActionCenter(next, nextGroupKey, options.replace ?? true);
   };
 
   const resetFilters = () => {
@@ -5261,15 +6220,25 @@ export function ActionCenterPageContainer({
       ...ACTION_CENTER_DEFAULT_FILTERS,
       include_beta: canUseBeta && filters.include_beta,
     };
+    setTaskBoardMode("active");
     setSelectedGroupKey(null);
     setSelectedId(null);
-    updateFilters(next);
+    updateFilters(next, { groupKey: null });
   };
+
+  const boardStatusForQuery =
+    taskBoardMode === "completed"
+      ? COMPLETED_TASK_QUERY_STATUS
+      : taskBoardMode === "deactivated"
+        ? DEACTIVATED_TASK_QUERY_STATUS
+        : ACTIVE_TASK_QUERY_STATUS;
+
+  const queryStatus =
+    filters.status !== "all" ? filters.status : boardStatusForQuery;
 
   const queryFilters = useMemo(
     () => ({
-      limit: MAX_QUEUE_ITEMS,
-      ...(filters.status !== "all" ? { status: filters.status } : {}),
+      ...(queryStatus ? { status: queryStatus } : {}),
       ...(filters.source_module !== "all"
         ? { source_module: [filters.source_module] }
         : {}),
@@ -5287,7 +6256,7 @@ export function ActionCenterPageContainer({
       ...(routeSearch.nm_id ? { nm_id: routeSearch.nm_id } : {}),
       ...(canUseBeta && filters.include_beta ? { include_beta: true } : {}),
     }),
-    [canUseBeta, filters, routeSearch.nm_id],
+    [canUseBeta, filters, queryStatus, routeSearch.nm_id],
   );
 
   const { actionsQuery, usersQuery } = useActionCenterData({
@@ -5296,6 +6265,24 @@ export function ActionCenterPageContainer({
     dateFrom,
     dateTo,
     queryFilters,
+  });
+  const missingCostRevenueQuery = useQuery({
+    queryKey: [
+      "action-center-missing-cost-revenue",
+      activeId,
+      dateFrom,
+      dateTo,
+    ],
+    queryFn: () =>
+      fetchCostsMissing(activeId!, {
+        limit: 1,
+        offset: 0,
+        dateFrom: dateFrom ?? undefined,
+        dateTo: dateTo ?? undefined,
+        onlyRevenue: true,
+      }),
+    enabled: !!activeId,
+    staleTime: 60_000,
   });
   const { data, isLoading, error, refetch } = actionsQuery;
   const mutation = useActionCenterMutations({
@@ -5345,15 +6332,49 @@ export function ActionCenterPageContainer({
     );
     return sortActionCenterItems(matched, filters.sort);
   }, [currentUserId, filters, now, visibleItems]);
+  const missingCostRevenueValue = numberFromUnknown(
+    missingCostRevenueQuery.data?.summary?.affected_revenue,
+  );
+  const displayItems = useMemo(
+    () =>
+      applyActionDisplayMoney(filteredItems, {
+        missingCostRevenue: missingCostRevenueValue,
+      }),
+    [filteredItems, missingCostRevenueValue],
+  );
+  const taskBoardCounts = useMemo(
+    () =>
+      displayItems.reduce(
+        (acc, item) => {
+          acc[taskBoardModeForItem(item)] += 1;
+          return acc;
+        },
+        { active: 0, completed: 0, deactivated: 0 } as Record<
+          TaskBoardMode,
+          number
+        >,
+      ),
+    [displayItems],
+  );
+  const boardItems = useMemo(
+    () =>
+      displayItems.filter(
+        (item) => taskBoardModeForItem(item) === taskBoardMode,
+      ),
+    [displayItems, taskBoardMode],
+  );
 
   const problemGroups = useMemo(
-    () => buildProblemGroups(filteredItems),
-    [filteredItems],
+    () =>
+      buildProblemGroups(boardItems, {
+        missingCostRevenue: missingCostRevenueValue,
+      }),
+    [boardItems, missingCostRevenueValue],
   );
   const selectedGroup = selectedGroupKey
     ? (problemGroups.find((group) => group.key === selectedGroupKey) ?? null)
     : null;
-  const workItems = selectedGroup ? selectedGroup.items : filteredItems;
+  const workItems = selectedGroup ? selectedGroup.items : boardItems;
 
   useEffect(() => {
     if (
@@ -5362,18 +6383,50 @@ export function ActionCenterPageContainer({
     ) {
       setSelectedGroupKey(null);
       setSelectedId(null);
+      navigateActionCenter(filters, null);
     }
   }, [problemGroups, selectedGroupKey]);
 
+  const switchTaskBoardMode = (mode: TaskBoardMode) => {
+    setTaskBoardMode(mode);
+    setSelectedGroupKey(null);
+    setSelectedId(null);
+    const status = norm(filters.status);
+    const statusForcesCompleted = COMPLETED_TASK_STATUSES.has(status);
+    const statusForcesDeactivated = DEACTIVATED_TASK_STATUSES.has(status);
+    if (
+      (mode === "active" &&
+        (statusForcesCompleted || statusForcesDeactivated)) ||
+      (mode === "completed" && statusForcesDeactivated) ||
+      (mode === "deactivated" && statusForcesCompleted)
+    ) {
+      updateFilters({ status: "all" }, { groupKey: null });
+    } else {
+      navigateActionCenter(filters, null);
+    }
+  };
+
   const queueItems = workItems.slice(0, MAX_QUEUE_ITEMS);
-  const openItems = workItems.filter((item) => !isClosedAction(item));
-  const closedItems = workItems.filter(isClosedAction);
-  const urgentItems = openItems.filter(isUrgentAction);
-  const blockerItems = openItems.filter(isDataBlockerAction);
-  const overdueItems = openItems.filter((item) => isOverdueAction(item, now));
-  const actionableItems = openItems.filter(isActionable);
-  const moneyAtStake = openItems.reduce(
-    (sum, item) => sum + Math.abs(Number(item.money_impact_amount ?? 0)),
+  const openItems =
+    taskBoardMode === "active"
+      ? workItems.filter((item) => taskBoardModeForItem(item) === "active")
+      : workItems;
+  const closedItems =
+    taskBoardMode === "completed"
+      ? workItems
+      : workItems.filter(isClosedAction);
+  const urgentItems =
+    taskBoardMode === "active" ? openItems.filter(isUrgentAction) : [];
+  const blockerItems =
+    taskBoardMode === "active" ? openItems.filter(isDataBlockerAction) : [];
+  const overdueItems =
+    taskBoardMode === "active"
+      ? openItems.filter((item) => isOverdueAction(item, now))
+      : [];
+  const actionableItems =
+    taskBoardMode === "active" ? openItems.filter(isActionable) : [];
+  const overviewMoneyAtStake = problemGroups.reduce(
+    (sum, group) => sum + moneyFromUnknown(group.money),
     0,
   );
 
@@ -5399,11 +6452,17 @@ export function ActionCenterPageContainer({
     selectedIndex >= 0
       ? (queueItems
           .slice(selectedIndex + 1)
-          .find((item) => !isClosedAction(item)) ??
+          .find((item) =>
+            taskBoardMode === "active" ? !isClosedAction(item) : true,
+          ) ??
         queueItems.find(
-          (item) => !isClosedAction(item) && item.id !== selected?.id,
+          (item) =>
+            (taskBoardMode === "active" ? !isClosedAction(item) : true) &&
+            item.id !== selected?.id,
         ))
-      : queueItems.find((item) => !isClosedAction(item));
+      : queueItems.find((item) =>
+          taskBoardMode === "active" ? !isClosedAction(item) : true,
+        );
 
   const goNext = () => {
     if (nextItem) setSelectedId(nextItem.id);
@@ -5413,18 +6472,28 @@ export function ActionCenterPageContainer({
     item: ActionCenterItem,
     status: string,
     moveNext = false,
+    options: { deadline_at?: string; comment?: string } = {},
   ) => {
+    const effectiveDeadline =
+      options?.deadline_at ??
+      (status === "done" ? postponeUntilIso(1) : undefined);
+    const defaultComment =
+      status === "ignored"
+        ? "Пропущено из очереди Центра действий"
+        : status === "done"
+          ? "Выполнено из Центра действий. Скрыто из активной очереди до следующей ежедневной проверки."
+          : status === "postponed"
+            ? "Отложено из очереди Центра действий"
+            : status === "reopened"
+              ? "Возвращено в активные задачи"
+              : "";
     setBusy(`${item.id}:${status}`);
     mutation.mutate(
       {
         a: item,
         status,
-        last_comment:
-          status === "ignored"
-            ? "Пропущено из очереди Центра действий"
-            : status === "done"
-              ? "Отмечено выполненным из очереди Центра действий"
-              : "",
+        deadline_at: effectiveDeadline,
+        last_comment: options?.comment ?? defaultComment,
       },
       {
         onSuccess: () => {
@@ -5464,6 +6533,18 @@ export function ActionCenterPageContainer({
     }
   };
 
+  const openProblemGroup = (key: ProblemGroupKey) => {
+    setSelectedGroupKey(key);
+    setSelectedId(null);
+    navigateActionCenter(filters, key, false);
+  };
+
+  const closeProblemGroup = () => {
+    setSelectedGroupKey(null);
+    setSelectedId(null);
+    navigateActionCenter(filters, null);
+  };
+
   if (!activeId) {
     return (
       <PageShell>
@@ -5488,10 +6569,10 @@ export function ActionCenterPageContainer({
         title="Центр действий"
         description={
           selectedGroup
-            ? `${selectedGroup.title}: осталось ${openItems.length}, срочно ${urgentItems.length}.`
+            ? `${selectedGroup.title}: ${taskBoardModeTitle(taskBoardMode).toLowerCase()} ${workItems.length}, срочно ${urgentItems.length}.`
             : serverTotal > rawItems.length
-              ? `Показано ${filteredItems.length} из ${serverTotal} задач текущей выборки.`
-              : `Выберите группу проблем. Всего в текущей выборке ${filteredItems.length}.`
+              ? `Показано ${filteredItems.length} из ${serverTotal} задач. Сейчас: ${taskBoardModeTitle(taskBoardMode).toLowerCase()} ${boardItems.length}.`
+              : `${taskBoardModeTitle(taskBoardMode)}: ${boardItems.length}. Выберите группу проблем и закрывайте задачи по очереди.`
         }
         actions={
           <div className="flex flex-wrap gap-2">
@@ -5504,7 +6585,7 @@ export function ActionCenterPageContainer({
               }
             >
               <Plus className="h-3.5 w-3.5" />
-              Создать задачу
+              Поставить задачу
             </Button>
             <Button variant="outline" size="sm" onClick={() => refetch()}>
               <RefreshCw className="h-3.5 w-3.5" />
@@ -5529,7 +6610,11 @@ export function ActionCenterPageContainer({
         users={usersQuery.data}
         currentUserId={currentUserId}
         onCreated={async () => {
-          updateFilters({ view: "all", source_module: "manual" });
+          setTaskBoardMode("active");
+          updateFilters(
+            { view: "all", source_module: "manual" },
+            { groupKey: "manual_tasks", replace: false },
+          );
           setSelectedGroupKey("manual_tasks");
           setSelectedId(null);
           await refetch();
@@ -5540,15 +6625,30 @@ export function ActionCenterPageContainer({
         {!selectedGroup ? (
           <>
             <SummaryBar
-              total={workItems.length}
+              mode={taskBoardMode}
+              total={
+                taskBoardMode === "active"
+                  ? taskBoardCounts.active + taskBoardCounts.completed
+                  : workItems.length
+              }
               open={openItems.length}
-              closed={closedItems.length}
+              closed={
+                taskBoardMode === "active"
+                  ? taskBoardCounts.completed
+                  : closedItems.length
+              }
               urgent={urgentItems.length}
               overdue={overdueItems.length}
               actionable={actionableItems.length}
               blocked={blockerItems.length}
-              moneyAtStake={moneyAtStake}
+              moneyAtStake={overviewMoneyAtStake}
               filtered={workItems.length}
+            />
+
+            <TaskMonitoringTabs
+              mode={taskBoardMode}
+              counts={taskBoardCounts}
+              onChange={switchTaskBoardMode}
             />
 
             <ActionCenterFilterDock
@@ -5563,18 +6663,33 @@ export function ActionCenterPageContainer({
         {!selectedGroup ? (
           <ProblemGroupsOverview
             groups={problemGroups}
-            onOpen={(key) => {
-              setSelectedGroupKey(key);
-              setSelectedId(null);
-            }}
+            mode={taskBoardMode}
+            onOpen={openProblemGroup}
           />
         ) : (
           <>
-            <div className="rounded-md border bg-card px-4 py-3 shadow-sm">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="overflow-hidden rounded-md border bg-card shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/20 px-3 py-2">
+                <button
+                  type="button"
+                  onClick={closeProblemGroup}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-sm font-semibold text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  Группы
+                </button>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>{taskBoardModeTitle(taskBoardMode)}</span>
+                  <ChevronRight className="h-3.5 w-3.5" />
+                  <span className="font-medium text-foreground">
+                    {selectedGroup.title}
+                  </span>
+                </div>
+              </div>
+              <div className="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
                 <div className="flex min-w-0 items-start gap-3">
                   <span
-                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md border ${selectedGroup.tone}`}
+                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md border ${selectedGroup.tone}`}
                   >
                     {selectedGroup.icon}
                   </span>
@@ -5583,64 +6698,87 @@ export function ActionCenterPageContainer({
                       <h2 className="text-lg font-semibold leading-tight">
                         {selectedGroup.title}
                       </h2>
-                      <Badge variant="outline">
-                        {selectedGroup.open} открыто
+                      <Badge variant="secondary" className="rounded-full">
+                        {taskBoardMode === "active"
+                          ? `${selectedGroup.open} открыто`
+                          : `${selectedGroup.items.length} ${taskBoardModeTitle(taskBoardMode).toLowerCase()}`}
                       </Badge>
-                      {selectedGroup.urgent ? (
-                        <Badge
-                          variant="outline"
-                          className="border-red-500/35 bg-red-500/10 text-red-700 dark:text-red-300"
-                        >
-                          {selectedGroup.urgent} срочно
-                        </Badge>
-                      ) : null}
                     </div>
-                    <div className="mt-1 text-sm text-muted-foreground">
+                    <div className="mt-1 max-w-3xl text-sm text-muted-foreground">
                       {selectedGroup.subtitle}
                     </div>
-                    <div className="mt-3 flex max-w-md items-center gap-3">
-                      <Progress
-                        value={selectedGroup.progress}
-                        className="h-2"
+                    <div className="mt-3 grid max-w-3xl grid-cols-2 gap-2 sm:grid-cols-4">
+                      <GroupHeaderMetric
+                        label="Осталось"
+                        value={openItems.length}
                       />
-                      <span className="w-12 shrink-0 text-right text-sm font-semibold">
-                        {selectedGroup.progress}%
-                      </span>
+                      <GroupHeaderMetric
+                        label="Срочно"
+                        value={urgentItems.length}
+                        tone={
+                          urgentItems.length
+                            ? "text-red-700 dark:text-red-300"
+                            : "text-muted-foreground"
+                        }
+                      />
+                      <GroupHeaderMetric
+                        label="Можно сейчас"
+                        value={actionableItems.length}
+                        tone="text-sky-700 dark:text-sky-300"
+                      />
+                      <GroupHeaderMetric
+                        label="Риск"
+                        value={
+                          selectedGroup.money
+                            ? formatMoney(selectedGroup.money)
+                            : "—"
+                        }
+                        tone={
+                          selectedGroup.money
+                            ? "text-red-700 dark:text-red-300"
+                            : "text-muted-foreground"
+                        }
+                      />
                     </div>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    size="sm"
-                    onClick={applyGroupRecalculate}
-                    disabled={Boolean(recheckBusy)}
-                    className="h-9 shadow-sm"
-                  >
-                    {recheckBusy ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <RotateCw className="h-3.5 w-3.5" />
-                    )}
-                    Применить и пересчитать
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-9"
-                    onClick={() => {
-                      setSelectedGroupKey(null);
-                      setSelectedId(null);
-                    }}
-                  >
-                    <ArrowRight className="h-3.5 w-3.5 rotate-180" />
-                    Все группы
-                  </Button>
+                <div className="flex flex-col gap-2 lg:min-w-[280px]">
+                  <div className="flex items-center gap-3">
+                    <Progress value={selectedGroup.progress} className="h-2" />
+                    <span className="w-11 shrink-0 text-right text-sm font-semibold">
+                      {selectedGroup.progress}%
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
+                    <Button
+                      size="sm"
+                      onClick={applyGroupRecalculate}
+                      disabled={Boolean(recheckBusy)}
+                      className="h-9 shadow-sm"
+                    >
+                      {recheckBusy ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RotateCw className="h-3.5 w-3.5" />
+                      )}
+                      {taskBoardMode === "active" ? "Пересчитать" : "Обновить"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-9"
+                      onClick={closeProblemGroup}
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" />
+                      Все группы
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
-              <div className="rounded-md border bg-muted/20 shadow-sm xl:sticky xl:top-4 xl:self-start">
+            <div className="grid gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
+              <div className="order-2 rounded-md border bg-muted/20 shadow-sm xl:sticky xl:top-4 xl:order-1 xl:self-start">
                 <div className="flex items-center justify-between gap-3 border-b bg-card px-4 py-3">
                   <div>
                     <div className="flex items-center gap-2 text-sm font-semibold">
@@ -5648,12 +6786,18 @@ export function ActionCenterPageContainer({
                       Очередь решения
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {queueItems.length} показано, {openItems.length} всего
-                      осталось
+                      {queueItems.length} показано,{" "}
+                      {taskBoardMode === "active"
+                        ? `${openItems.length} всего осталось`
+                        : `${workItems.length} всего в разделе`}
                     </div>
                   </div>
+                  <Badge variant="outline" className="rounded-full">
+                    {selectedIndex >= 0 ? selectedIndex + 1 : 0}/
+                    {queueItems.length}
+                  </Badge>
                 </div>
-                <ScrollArea className="h-[calc(100vh-300px)] min-h-[440px]">
+                <ScrollArea className="max-h-[360px] xl:h-[calc(100vh-300px)] xl:max-h-none xl:min-h-[440px]">
                   <div className="space-y-2 p-3">
                     {queueItems.length ? (
                       queueItems.map((item, index) => (
@@ -5681,25 +6825,27 @@ export function ActionCenterPageContainer({
                 </ScrollArea>
               </div>
 
-              <FocusPanel
-                item={selected}
-                accountId={activeId}
-                dateFrom={dateFrom}
-                dateTo={dateTo}
-                busy={busy || recheckBusy}
-                currentUserId={currentUserId}
-                onStatus={saveStatus}
-                onDoneNext={(item) => saveStatus(item, "done", true)}
-                onRecheck={recheck}
-                onChanged={async () => {
-                  await queryClient.invalidateQueries({
-                    queryKey: ["portal-actions"],
-                  });
-                  await refetch();
-                }}
-                onNext={goNext}
-                hasNext={Boolean(nextItem)}
-              />
+              <div className="order-1 xl:order-2">
+                <FocusPanel
+                  item={selected}
+                  accountId={activeId}
+                  dateFrom={dateFrom}
+                  dateTo={dateTo}
+                  busy={busy || recheckBusy}
+                  currentUserId={currentUserId}
+                  onStatus={saveStatus}
+                  onDoneNext={(item) => saveStatus(item, "done", true)}
+                  onRecheck={recheck}
+                  onChanged={async () => {
+                    await queryClient.invalidateQueries({
+                      queryKey: ["portal-actions"],
+                    });
+                    await refetch();
+                  }}
+                  onNext={goNext}
+                  hasNext={Boolean(nextItem)}
+                />
+              </div>
             </div>
           </>
         )}

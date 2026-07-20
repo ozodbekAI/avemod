@@ -147,6 +147,7 @@ ISSUE_DISPLAY_MESSAGES: dict[str, str] = {
     "vendor_code_multiple_nm_id": "Один артикул продавца привязан к нескольким артикулам WB",
     "missing_chrt_id": "У позиции не заполнен идентификатор размера",
     "missed_load": "Данные по одному из разделов давно не обновлялись",
+    "sync_date_mismatch": "Даты WB-источников расходятся между собой",
     "stocks_task_not_ready": "Загрузка остатков еще не завершилась",
     "stocks_task_failed": "Загрузка остатков завершилась с ошибкой",
     "manual_cost_overlap": "По одной карточке загружено несколько пересекающихся строк себестоимости",
@@ -711,7 +712,12 @@ def _target_href_for_code(code: str, payload: dict | None = None) -> str:
         return f"/products/{nm_id}" if nm_id else "/products"
     if code in {"price_jump", "price_zero_or_too_low"}:
         return "/pricing"
-    if code in {"failed_sync_domains", "missed_load", "scheduler_job_failed"}:
+    if code in {
+        "failed_sync_domains",
+        "missed_load",
+        "scheduler_job_failed",
+        "sync_date_mismatch",
+    }:
         return "/admin?domain=sync"
     return f"/data-fix?code={code}" if code else "/data-fix"
 
@@ -801,6 +807,7 @@ def issue_fixability_contract(
         "failed_sync_domains",
         "missed_load",
         "scheduler_job_failed",
+        "sync_date_mismatch",
     }
 
     if (
@@ -1390,6 +1397,7 @@ def build_problem_resolver(
         "stocks_task_not_ready",
         "stocks_task_failed",
         "missed_load",
+        "sync_date_mismatch",
     }:
         owner = "system"
         component = "sync_recheck"

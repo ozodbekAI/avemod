@@ -16,6 +16,7 @@ from app.modules.exports.router import router as exports_router
 from app.modules.finance.router import router as finance_router
 from app.modules.core_sku.router import router as core_sku_router
 from app.modules.health.router import router as health_router
+from app.modules.logistics.router import router as logistics_router
 from app.modules.manual_costs.router import router as manual_costs_router
 from app.modules.marts.router import router as marts_router
 from app.modules.meta.router import router as meta_router
@@ -52,6 +53,7 @@ api_router.include_router(manual_costs_router)
 api_router.include_router(marts_router)
 api_router.include_router(data_quality_router)
 api_router.include_router(core_sku_router)
+api_router.include_router(logistics_router)
 api_router.include_router(product_cards_router)
 api_router.include_router(prices_router)
 api_router.include_router(orders_router)

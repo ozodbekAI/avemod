@@ -132,9 +132,7 @@ class ModuleRegistryService:
             )
             or db_states.get("reputation")
             or await self._reputation_health(account),
-            claims=db_states.get("claims")
-            or await self._local_claims_health(session=session, account=account)
-            or self._external_config_health(
+            claims=db_states.get("claims") or await self._local_claims_health(session=session, account=account) or self._external_config_health(
                 module="claims",
                 enabled=self.settings.claims_enabled,
                 base_url=self.settings.claims_base_url,

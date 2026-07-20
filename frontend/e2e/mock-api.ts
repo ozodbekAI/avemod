@@ -218,22 +218,42 @@ const resultEvent = {
   },
 };
 
+const actionCompletedEvent = {
+  ...resultEvent,
+  id: "result-42-action-completed",
+  event_type: "action_completed",
+  outcome: "pending_data",
+  result_status: "pending_data",
+  message: "Действие выполнено, ждём свежие данные после изменения.",
+};
+
+const recheckResultEvent = {
+  ...resultEvent,
+  id: "result-42-recheck",
+  event_type: "recheck_result",
+  outcome: "not_enough_data",
+  result_status: "not_enough_data",
+  message:
+    "Повторная проверка выполнена, данных для финального результата пока мало.",
+};
+
 const resultEventsPage = {
   status: "ok",
-  items: [resultEvent],
-  recent_events: [resultEvent],
-  total: 1,
+  items: [resultEvent, actionCompletedEvent, recheckResultEvent],
+  recent_events: [resultEvent, actionCompletedEvent, recheckResultEvent],
+  total: 3,
   limit: 10,
   offset: 0,
   summary: {
-    total: 1,
+    total: 3,
     improved: 0,
     worse: 0,
     neutral: 0,
-    not_enough_data: 1,
+    not_enough_data: 2,
+    pending_data: 1,
   },
-  by_module: { problem_engine: 1 },
-  by_outcome: { not_enough_data: 1 },
+  by_module: { problem_engine: 3 },
+  by_outcome: { not_enough_data: 2, pending_data: 1 },
   pending_followups: [],
   finance_windows: {},
 };
@@ -304,11 +324,159 @@ const agentResponse = {
   audit: { planner: "ai" },
 };
 
+function agentResponseFor(body: Record<string, unknown>) {
+  const message = String(body.message || "").toLowerCase();
+  if (
+    (message.includes("отзывы") || message.includes("репутац")) &&
+    !message.includes("сценар")
+  ) {
+    return {
+      status: "ok",
+      mode: "ai",
+      intent: "reputation_agent",
+      message:
+        "Открыл раздел репутации: там можно работать с отзывами, вопросами и задачами по ответам покупателям.",
+      actions: [
+        { type: "navigate", title: "Репутация", href: "/reputation" },
+        { type: "navigate", title: "История задач", href: "/action-center" },
+      ],
+      products: [],
+      suggestions: ["Создай сценарий ответов"],
+      warnings: [],
+      audit: { planner: "ai", direct_marketplace_writes: false },
+    };
+  }
+  if (message.includes("умные цены") || message.includes("марж")) {
+    return {
+      status: "ok",
+      mode: "ai",
+      intent: "pricing_agent",
+      message:
+        "Открыл контур цен. Изменения цен готовятся только через безопасную проверку маржи и ручное подтверждение.",
+      actions: [
+        { type: "navigate", title: "Цены", href: "/pricing" },
+        { type: "navigate", title: "Центр действий", href: "/action-center" },
+      ],
+      products: [],
+      suggestions: ["Создай сценарий умных цен"],
+      warnings: [],
+      audit: { planner: "ai", direct_marketplace_writes: false },
+    };
+  }
+  if (message.includes("реклам")) {
+    return {
+      status: "ok",
+      mode: "ai",
+      intent: "module_navigate",
+      message:
+        "Открыл раздел «Реклама»: там можно смотреть кампании, статистику и эффективность.",
+      actions: [{ type: "navigate", title: "Реклама", href: "/ads" }],
+      products: [],
+      suggestions: ["Открой аналитику"],
+      warnings: [],
+      audit: {
+        planner: "ai",
+        direct_marketplace_writes: false,
+        module_key: "ads",
+      },
+    };
+  }
+  if (message.includes("качеств") || message.includes("dq")) {
+    return {
+      status: "ok",
+      mode: "ai",
+      intent: "api_action",
+      message:
+        "Готов запустить проверку качества данных. Перед выполнением потребуется подтверждение.",
+      actions: [
+        {
+          type: "api_request",
+          title: "Запустить проверку данных",
+          description:
+            "Запустить проверку качества данных по выбранному аккаунту.",
+          href: "/dq/run",
+          method: "POST",
+          confirm_required: true,
+          payload: {
+            api_action_key: "data_quality.run",
+            body: { account_id: 1 },
+            success_message: "Проверка качества данных запущена.",
+          },
+        },
+        { type: "navigate", title: "Качество данных", href: "/data-fix" },
+      ],
+      products: [],
+      suggestions: ["Открой качество данных"],
+      warnings: [
+        "Прямые записи в Wildberries не выполняются без отдельного подтверждения, аудита и прав пользователя.",
+      ],
+      audit: {
+        planner: "ai",
+        direct_marketplace_writes: false,
+        api_action_key: "data_quality.run",
+      },
+    };
+  }
+  if (message.includes("сценар")) {
+    if (body.selected_nm_id) {
+      return {
+        status: "ok",
+        mode: "ai",
+        intent: "scenario_create",
+        message:
+          "Сценарий подготовлен как безопасная задача. Я не публикую ответы и не меняю WB автоматически.",
+        actions: [
+          {
+            type: "create_manual_task",
+            title: "Создать задачу",
+            payload: {
+              account_id: 1,
+              title: "AI-сценарий для проверки",
+              products: products.items,
+            },
+          },
+          { type: "navigate", title: "Центр действий", href: "/action-center" },
+        ],
+        products: products.items,
+        suggestions: ["Создать задачу"],
+        warnings: [],
+        audit: { planner: "ai", direct_marketplace_writes: false },
+      };
+    }
+    return {
+      status: "needs_input",
+      mode: "ai",
+      intent: "scenario_create",
+      message:
+        "С каким товаром работаем? Выберите товар из списка или уточните поисковый запрос.",
+      actions: [
+        {
+          type: "open_product_picker",
+          title: "Выбрать товар",
+          payload: {
+            intent: "scenario_create",
+            search_query: "",
+            draft_message: body.message,
+          },
+        },
+      ],
+      products: products.items,
+      suggestions: [],
+      warnings: [],
+      audit: { planner: "ai", direct_marketplace_writes: false },
+    };
+  }
+  return agentResponse;
+}
+
 export async function installMockApi(page: Page) {
   await page.route("**/api/v1/**", async (route: Route) => {
     const request = route.request();
     const url = new URL(request.url());
-    const path = url.pathname.replace(/^\/api\/v1/, "");
+    const apiPrefix = "/api/v1";
+    const path = url.pathname.startsWith(apiPrefix)
+      ? url.pathname.slice(apiPrefix.length)
+      : url.pathname;
 
     if (path === "/auth/login" || path === "/auth/refresh") {
       await route.fulfill(json(tokenPair));
@@ -382,7 +550,26 @@ export async function installMockApi(page: Page) {
       return;
     }
     if (path === "/portal/agent/message") {
-      await route.fulfill(json(agentResponse));
+      let body: Record<string, unknown> = {};
+      try {
+        const parsed = request.postDataJSON();
+        body = parsed && typeof parsed === "object" ? parsed : {};
+      } catch {
+        body = {};
+      }
+      await route.fulfill(json(agentResponseFor(body)));
+      return;
+    }
+    if (path === "/dq/run") {
+      await route.fulfill(
+        json({
+          checked_accounts: 1,
+          opened_count: 2,
+          updated_count: 1,
+          resolved_count: 0,
+          active_count: 2,
+        }),
+      );
       return;
     }
     if (path === "/portal/assignable-users") {

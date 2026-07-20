@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, TypeVar, cast
 
 from pydantic import BaseModel
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,10 +21,14 @@ from app.models.accounts import WBAccount
 from app.models.response_snapshots import APIResponseSnapshot
 from app.schemas.money_management import (
     DataBlockersRead,
+    ExpenseBreakdownSummaryRead,
     MoneyArticleDetailRead,
     MoneyArticlePage,
+    MoneyCardDetailRead,
     MoneyCardPage,
+    MoneyExpenseLogisticsRead,
     MoneySummaryRead,
+    ProfitCascadeRead,
     TodayActionsPage,
 )
 from app.services.money_management import MoneyManagementService
@@ -188,12 +192,23 @@ class MoneyEndpointSnapshotService:
         if row is None or not isinstance(row.payload, dict) or not row.payload:
             return None
         now = utcnow()
-        if row.computed_at + self.max_stale_interval < now:
-            return None
+        try:
+            computed_stale = row.computed_at + self.max_stale_interval < now
+        except TypeError:
+            computed_stale = row.computed_at.replace(
+                tzinfo=None
+            ) + self.max_stale_interval < now.replace(tzinfo=None)
+        try:
+            expired = row.expires_at is None or row.expires_at <= now
+        except TypeError:
+            expired = row.expires_at.replace(tzinfo=None) <= now.replace(tzinfo=None)
         payload = model_cls.model_validate(row.payload)
-        cache_status = "db_snapshot_hit"
-        if row.expires_at is None or row.expires_at < now:
-            cache_status = "db_snapshot_stale"
+        cache_status = (
+            "db_snapshot_stale" if computed_stale or expired else "db_snapshot_hit"
+        )
+        row_id = getattr(row, "id", None)
+        if row_id is not None:
+            await self._touch_snapshot_access(snapshot_id=int(row_id))
         return payload.model_copy(
             deep=True,
             update={
@@ -201,6 +216,22 @@ class MoneyEndpointSnapshotService:
                 "cache_status": cache_status,
             },
         )
+
+    async def _touch_snapshot_access(self, *, snapshot_id: int) -> None:
+        try:
+            async with SessionLocal() as touch_session:
+                await touch_session.execute(
+                    update(APIResponseSnapshot)
+                    .where(APIResponseSnapshot.id == snapshot_id)
+                    .values(
+                        last_accessed_at=utcnow(),
+                        access_count=APIResponseSnapshot.access_count + 1,
+                        updated_at=func.now(),
+                    )
+                )
+                await touch_session.commit()
+        except Exception:
+            return
 
     async def _save_snapshot(
         self,
@@ -335,8 +366,10 @@ class MoneyEndpointSnapshotService:
         account_id: int | None = None,
         endpoint_keys: set[str] | None = None,
     ) -> None:
-        stmt = delete(APIResponseSnapshot).where(
-            APIResponseSnapshot.namespace == self.NAMESPACE
+        stmt = (
+            update(APIResponseSnapshot)
+            .where(APIResponseSnapshot.namespace == self.NAMESPACE)
+            .values(expires_at=utcnow(), updated_at=func.now())
         )
         if account_id is not None:
             stmt = stmt.where(APIResponseSnapshot.account_id == account_id)
@@ -366,6 +399,96 @@ class MoneyEndpointSnapshotService:
                 account_id=account_id,
                 date_from=actual_from,
                 date_to=actual_to,
+            ),
+        )
+
+    async def profit_cascade(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> ProfitCascadeRead:
+        return await self._get_or_compute(
+            session,
+            endpoint_key="money_profit_cascade",
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            params={"formula_version": self.money.SUMMARY_FORMULA_VERSION},
+            model_cls=ProfitCascadeRead,
+            compute=lambda actual_from, actual_to: self.money.profit_cascade(
+                session,
+                account_id=account_id,
+                date_from=actual_from,
+                date_to=actual_to,
+            ),
+        )
+
+    async def expense_breakdown(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        group_by: str = "category",
+        include_unallocated: bool = True,
+    ) -> ExpenseBreakdownSummaryRead:
+        params = {
+            "formula_version": self.money.SUMMARY_FORMULA_VERSION,
+            "group_by": group_by,
+            "include_unallocated": include_unallocated,
+        }
+        return await self._get_or_compute(
+            session,
+            endpoint_key="money_expense_breakdown",
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            params=params,
+            model_cls=ExpenseBreakdownSummaryRead,
+            compute=lambda actual_from, actual_to: self.money.expense_breakdown(
+                session,
+                account_id=account_id,
+                date_from=actual_from,
+                date_to=actual_to,
+                group_by=group_by,
+                include_unallocated=include_unallocated,
+            ),
+        )
+
+    async def expense_logistics(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        include_unallocated: bool = True,
+        top_n: int = 100,
+    ) -> MoneyExpenseLogisticsRead:
+        params = {
+            "formula_version": self.money.SUMMARY_FORMULA_VERSION,
+            "include_unallocated": include_unallocated,
+            "top_n": top_n,
+        }
+        return await self._get_or_compute(
+            session,
+            endpoint_key="money_expense_logistics",
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            params=params,
+            model_cls=MoneyExpenseLogisticsRead,
+            compute=lambda actual_from, actual_to: self.money.expense_logistics(
+                session,
+                account_id=account_id,
+                date_from=actual_from,
+                date_to=actual_to,
+                include_unallocated=include_unallocated,
+                top_n=top_n,
             ),
         )
 
@@ -425,6 +548,35 @@ class MoneyEndpointSnapshotService:
             ),
         )
 
+    async def card_detail(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        sku_id: int,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> MoneyCardDetailRead:
+        params = {
+            "sku_id": int(sku_id),
+        }
+        return await self._get_or_compute(
+            session,
+            endpoint_key="money_card_detail",
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            params=params,
+            model_cls=MoneyCardDetailRead,
+            compute=lambda actual_from, actual_to: self.money.card_detail(
+                session,
+                account_id=account_id,
+                sku_id=sku_id,
+                date_from=actual_from,
+                date_to=actual_to,
+            ),
+        )
+
     async def articles(
         self,
         session: AsyncSession,
@@ -443,6 +595,7 @@ class MoneyEndpointSnapshotService:
         offset: int = 0,
     ) -> MoneyArticlePage:
         params = {
+            "summary_version": 2,
             "search": search,
             "status": status,
             "trust_state": trust_state,
@@ -597,37 +750,98 @@ class MoneyEndpointSnapshotService:
             specs.extend(
                 [
                     MoneySnapshotSpec(
-                        "money_summary", account_id, window_from, window_to, {}
+                        "money_summary",
+                        account_id,
+                        window_from,
+                        window_to,
+                        {"formula_version": self.money.SUMMARY_FORMULA_VERSION},
+                    ),
+                    MoneySnapshotSpec(
+                        "money_profit_cascade",
+                        account_id,
+                        window_from,
+                        window_to,
+                        {"formula_version": self.money.SUMMARY_FORMULA_VERSION},
+                    ),
+                    MoneySnapshotSpec(
+                        "money_expense_breakdown",
+                        account_id,
+                        window_from,
+                        window_to,
+                        {
+                            "formula_version": self.money.SUMMARY_FORMULA_VERSION,
+                            "group_by": "category",
+                            "include_unallocated": True,
+                        },
+                    ),
+                    MoneySnapshotSpec(
+                        "money_expense_logistics",
+                        account_id,
+                        window_from,
+                        window_to,
+                        {
+                            "formula_version": self.money.SUMMARY_FORMULA_VERSION,
+                            "include_unallocated": True,
+                            "top_n": 100,
+                        },
                     ),
                     MoneySnapshotSpec(
                         "money_data_blockers", account_id, window_from, window_to, {}
                     ),
+                ]
+            )
+            for limit in (10, 20, 100):
+                specs.append(
                     MoneySnapshotSpec(
                         "money_actions_today",
                         account_id,
                         window_from,
                         window_to,
                         {
-                            "limit": 12,
-                            "offset": 0,
+                            "priority": None,
+                            "status": None,
+                            "action_type": None,
                             "group_by": "article",
                             "focus_limit": 10,
-                        },
-                    ),
-                    MoneySnapshotSpec(
-                        "money_cards",
-                        account_id,
-                        window_from,
-                        window_to,
-                        {
-                            "limit": 8,
+                            "limit": limit,
                             "offset": 0,
-                            "sort_by": "priority_score",
-                            "sort_dir": "desc",
                         },
-                    ),
-                ]
-            )
+                    )
+                )
+            for endpoint_key, limits in {
+                "money_cards": (8, 10, 50),
+                "money_articles": (8, 10, 50, 200),
+            }.items():
+                for limit in limits:
+                    specs.append(
+                        MoneySnapshotSpec(
+                            endpoint_key,
+                            account_id,
+                            window_from,
+                            window_to,
+                            {
+                                **(
+                                    {"summary_version": 2}
+                                    if endpoint_key == "money_articles"
+                                    else {}
+                                ),
+                                "search": None,
+                                "status": None,
+                                "trust_state": None,
+                                "subject_name": None,
+                                "brand": None,
+                                "sort_by": "priority_score",
+                                "sort_dir": "desc",
+                                "limit": limit,
+                                "offset": 0,
+                                **(
+                                    {"next_action": None}
+                                    if endpoint_key == "money_cards"
+                                    else {}
+                                ),
+                            },
+                        )
+                    )
         return specs
 
     def _spec_from_row(self, row: APIResponseSnapshot) -> MoneySnapshotSpec | None:
@@ -635,10 +849,15 @@ class MoneyEndpointSnapshotService:
         endpoint_key = str(row.endpoint_key or "")
         if endpoint_key not in {
             "money_summary",
+            "money_profit_cascade",
+            "money_expense_breakdown",
+            "money_expense_logistics",
             "money_data_blockers",
             "money_actions_today",
             "money_cards",
+            "money_card_detail",
             "money_articles",
+            "money_article_detail",
         }:
             return None
         if row.date_from is None or row.date_to is None:
@@ -678,6 +897,31 @@ class MoneyEndpointSnapshotService:
                 date_from=spec.date_from,
                 date_to=spec.date_to,
             )
+        elif spec.endpoint_key == "money_profit_cascade":
+            response = await self.money.profit_cascade(
+                session,
+                account_id=spec.account_id,
+                date_from=spec.date_from,
+                date_to=spec.date_to,
+            )
+        elif spec.endpoint_key == "money_expense_breakdown":
+            response = await self.money.expense_breakdown(
+                session,
+                account_id=spec.account_id,
+                date_from=spec.date_from,
+                date_to=spec.date_to,
+                group_by=str(spec.params.get("group_by") or "category"),
+                include_unallocated=bool(spec.params.get("include_unallocated", True)),
+            )
+        elif spec.endpoint_key == "money_expense_logistics":
+            response = await self.money.expense_logistics(
+                session,
+                account_id=spec.account_id,
+                date_from=spec.date_from,
+                date_to=spec.date_to,
+                include_unallocated=bool(spec.params.get("include_unallocated", True)),
+                top_n=int(spec.params.get("top_n") or 100),
+            )
         elif spec.endpoint_key == "money_data_blockers":
             response = await self.money.data_blockers(
                 session,
@@ -716,6 +960,17 @@ class MoneyEndpointSnapshotService:
                 limit=int(spec.params.get("limit") or 50),
                 offset=int(spec.params.get("offset") or 0),
             )
+        elif spec.endpoint_key == "money_card_detail":
+            sku_id = spec.params.get("sku_id")
+            if sku_id is None:
+                return
+            response = await self.money.card_detail(
+                session,
+                account_id=spec.account_id,
+                sku_id=int(sku_id),
+                date_from=spec.date_from,
+                date_to=spec.date_to,
+            )
         elif spec.endpoint_key == "money_articles":
             response = await self.money.articles(
                 session,
@@ -731,6 +986,18 @@ class MoneyEndpointSnapshotService:
                 sort_dir=str(spec.params.get("sort_dir") or "desc"),
                 limit=int(spec.params.get("limit") or 50),
                 offset=int(spec.params.get("offset") or 0),
+            )
+        elif spec.endpoint_key == "money_article_detail":
+            nm_id = spec.params.get("nm_id")
+            if nm_id is None:
+                return
+            response = await self.money.article_detail(
+                session,
+                account_id=spec.account_id,
+                nm_id=int(nm_id),
+                date_from=spec.date_from,
+                date_to=spec.date_to,
+                include_audit=bool(spec.params.get("include_audit") or False),
             )
         else:
             return

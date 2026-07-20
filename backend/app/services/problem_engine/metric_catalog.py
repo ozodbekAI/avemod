@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +15,7 @@ from app.models.manual_costs import ManualCost
 from app.models.marts import MartSKUDaily, MartStockDaily
 from app.models.prices import WBPrice, WBPriceSize
 from app.models.problem_engine import MetricCatalog
+from app.models.reputation import ReputationItem
 from app.models.sync import WBSyncCursor
 from app.schemas.problem_engine import (
     MetricSourceReference,
@@ -304,6 +305,78 @@ INITIAL_METRIC_DEFINITIONS: tuple[MetricCatalogSeed, ...] = (
         trust_state="confirmed",
     ),
     MetricCatalogSeed(
+        "ad_views_7d",
+        "Ad views, 7 days",
+        "Promotion impressions for the product over the latest seven-day window.",
+        "count",
+        "views",
+        "product_period",
+        "product",
+        "ads",
+        source_tables_json=["wb_ad_stats_daily"],
+        source_endpoints_json=["GET /api/v1/ads/stats"],
+        trust_state="confirmed",
+    ),
+    MetricCatalogSeed(
+        "ad_clicks_7d",
+        "Ad clicks, 7 days",
+        "Promotion clicks for the product over the latest seven-day window.",
+        "count",
+        "clicks",
+        "product_period",
+        "product",
+        "ads",
+        source_tables_json=["wb_ad_stats_daily"],
+        source_endpoints_json=["GET /api/v1/ads/stats"],
+        trust_state="confirmed",
+    ),
+    MetricCatalogSeed(
+        "ad_orders_7d",
+        "Ad orders, 7 days",
+        "Orders attributed to product ads over the latest seven-day window.",
+        "count",
+        "pcs",
+        "product_period",
+        "product",
+        "ads",
+        source_tables_json=["wb_ad_stats_daily"],
+        source_endpoints_json=["GET /api/v1/ads/stats"],
+        trust_state="confirmed",
+    ),
+    MetricCatalogSeed(
+        "ad_ctr_7d",
+        "Ad CTR, 7 days",
+        "Ad clicks divided by ad views over the latest seven-day window.",
+        "percent",
+        "%",
+        "product_period",
+        "product",
+        "ads",
+        formula_json={
+            "*": [
+                {"/": [{"metric": "ad_clicks_7d"}, {"metric": "ad_views_7d"}]},
+                100,
+            ]
+        },
+        source_tables_json=["wb_ad_stats_daily"],
+        required_metrics_json=["ad_views_7d", "ad_clicks_7d"],
+        trust_state="confirmed",
+    ),
+    MetricCatalogSeed(
+        "ad_cpo_7d",
+        "Ad cost per order, 7 days",
+        "Ad spend divided by attributed ad orders over the latest seven-day window.",
+        "money",
+        "RUB/order",
+        "product_period",
+        "product",
+        "ads",
+        formula_json={"/": [{"metric": "ad_spend_7d"}, {"metric": "ad_orders_7d"}]},
+        source_tables_json=["wb_ad_stats_daily"],
+        required_metrics_json=["ad_spend_7d", "ad_orders_7d"],
+        trust_state="confirmed",
+    ),
+    MetricCatalogSeed(
         "ad_spend_30d",
         "Ad spend, 30 days",
         "Promotion spend for the product over the latest thirty-day window.",
@@ -403,6 +476,58 @@ INITIAL_METRIC_DEFINITIONS: tuple[MetricCatalogSeed, ...] = (
         "analytics",
         source_tables_json=["wb_card_funnel_daily"],
         source_endpoints_json=["GET /api/v1/analytics/card-funnel"],
+        trust_state="confirmed",
+    ),
+    MetricCatalogSeed(
+        "avg_rating_30d",
+        "Average review rating, 30 days",
+        "Average product review rating received over the latest thirty-day window.",
+        "number",
+        "stars",
+        "product_period",
+        "product",
+        "reputation",
+        source_tables_json=["reputation_items"],
+        source_endpoints_json=["GET /api/v1/feedbacks"],
+        trust_state="confirmed",
+    ),
+    MetricCatalogSeed(
+        "negative_reviews_30d",
+        "Negative reviews, 30 days",
+        "Product reviews rated 1-3 stars or marked negative over the latest thirty-day window.",
+        "count",
+        "reviews",
+        "product_period",
+        "product",
+        "reputation",
+        source_tables_json=["reputation_items"],
+        source_endpoints_json=["GET /api/v1/feedbacks"],
+        trust_state="confirmed",
+    ),
+    MetricCatalogSeed(
+        "unanswered_negative_reviews_30d",
+        "Unanswered negative reviews, 30 days",
+        "Negative product reviews that still need a reply over the latest thirty-day window.",
+        "count",
+        "reviews",
+        "product_period",
+        "product",
+        "reputation",
+        source_tables_json=["reputation_items"],
+        source_endpoints_json=["GET /api/v1/feedbacks"],
+        trust_state="confirmed",
+    ),
+    MetricCatalogSeed(
+        "unanswered_questions_30d",
+        "Unanswered questions, 30 days",
+        "Product questions that still need a reply over the latest thirty-day window.",
+        "count",
+        "questions",
+        "product_period",
+        "product",
+        "reputation",
+        source_tables_json=["reputation_items"],
+        source_endpoints_json=["GET /api/v1/questions"],
         trust_state="confirmed",
     ),
     MetricCatalogSeed(
@@ -612,6 +737,20 @@ class ProductMetricResolver:
         date_to: date,
     ) -> dict[str, Any]:
         freshness = await self._sync_freshness(session, account_id=account_id)
+        try:
+            reputation_30d = await self._reputation_aggregate(
+                session,
+                account_id=account_id,
+                nm_id=nm_id,
+                date_from=date_from,
+                date_to=date_to,
+                days=30,
+            )
+        except SQLAlchemyError:
+            reputation_30d = self._empty_reputation_aggregate(
+                date_from=date_from, date_to=date_to, days=30
+            )
+
         source_data = {
             "freshness": freshness,
             "sku_7d": await self._sku_aggregate(
@@ -683,6 +822,7 @@ class ProductMetricResolver:
                 date_to=date_to,
                 days=30,
             ),
+            "reputation_30d": reputation_30d,
         }
         for value in source_data.values():
             if isinstance(value, dict):
@@ -945,7 +1085,11 @@ class ProductMetricResolver:
                         func.sum(WBAdStatsDaily.sum).label("spend"),
                         func.count(WBAdStatsDaily.sum).label("spend_count"),
                         func.sum(WBAdStatsDaily.views).label("views"),
+                        func.count(WBAdStatsDaily.views).label("views_count"),
+                        func.sum(WBAdStatsDaily.clicks).label("clicks"),
+                        func.count(WBAdStatsDaily.clicks).label("clicks_count"),
                         func.sum(WBAdStatsDaily.orders).label("orders"),
+                        func.count(WBAdStatsDaily.orders).label("orders_count"),
                         func.max(WBAdStatsDaily.stat_date).label("latest_date"),
                         func.max(WBAdStatsDaily.updated_at).label("latest_updated_at"),
                     ).where(
@@ -997,6 +1141,76 @@ class ProductMetricResolver:
             .one()
         )
         return {**dict(row), "window_start": window_start, "window_end": date_to}
+
+    async def _reputation_aggregate(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        nm_id: int,
+        date_from: date,
+        date_to: date,
+        days: int,
+    ) -> dict[str, Any]:
+        window_start = self._window_start(
+            date_from=date_from, date_to=date_to, days=days
+        )
+        window_start_at = datetime.combine(window_start, time.min)
+        window_end_at = datetime.combine(date_to, time.max)
+        is_review = ReputationItem.item_type == "review"
+        is_question = ReputationItem.item_type == "question"
+        is_negative = is_review & (
+            (ReputationItem.rating <= 3) | (ReputationItem.sentiment == "negative")
+        )
+        needs_reply = ReputationItem.needs_reply.is_(True)
+        row = (
+            (
+                await session.execute(
+                    select(
+                        func.count(ReputationItem.id).label("row_count"),
+                        func.max(ReputationItem.received_at).label("latest_date"),
+                        func.max(ReputationItem.updated_at).label("latest_updated_at"),
+                        func.avg(
+                            case((is_review, ReputationItem.rating), else_=None)
+                        ).label("avg_rating"),
+                        func.sum(case((is_negative, 1), else_=0)).label(
+                            "negative_reviews"
+                        ),
+                        func.sum(case((is_negative & needs_reply, 1), else_=0)).label(
+                            "unanswered_negative_reviews"
+                        ),
+                        func.sum(case((is_question & needs_reply, 1), else_=0)).label(
+                            "unanswered_questions"
+                        ),
+                    ).where(
+                        ReputationItem.account_id == account_id,
+                        ReputationItem.nm_id == nm_id,
+                        ReputationItem.received_at >= window_start_at,
+                        ReputationItem.received_at <= window_end_at,
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+        return {**dict(row), "window_start": window_start, "window_end": date_to}
+
+    def _empty_reputation_aggregate(
+        self, *, date_from: date, date_to: date, days: int
+    ) -> dict[str, Any]:
+        return {
+            "row_count": 0,
+            "latest_date": None,
+            "latest_updated_at": None,
+            "avg_rating": None,
+            "negative_reviews": 0,
+            "unanswered_negative_reviews": 0,
+            "unanswered_questions": 0,
+            "window_start": self._window_start(
+                date_from=date_from, date_to=date_to, days=days
+            ),
+            "window_end": date_to,
+        }
 
     def _resolve_metric(
         self,
@@ -1240,6 +1454,76 @@ class ProductMetricResolver:
                     account_id=account_id,
                     nm_id=nm_id,
                 )
+            case "ad_views_7d":
+                return self._from_source(
+                    metric_code,
+                    catalog=catalog,
+                    value=source_data["ad_7d"].get("views"),
+                    source_data=source_data["ad_7d"],
+                    source_table="wb_ad_stats_daily",
+                    sync_domain="ads",
+                    count_field="views_count",
+                    date_from=date_from,
+                    date_to=date_to,
+                    account_id=account_id,
+                    nm_id=nm_id,
+                )
+            case "ad_clicks_7d":
+                return self._from_source(
+                    metric_code,
+                    catalog=catalog,
+                    value=source_data["ad_7d"].get("clicks"),
+                    source_data=source_data["ad_7d"],
+                    source_table="wb_ad_stats_daily",
+                    sync_domain="ads",
+                    count_field="clicks_count",
+                    date_from=date_from,
+                    date_to=date_to,
+                    account_id=account_id,
+                    nm_id=nm_id,
+                )
+            case "ad_orders_7d":
+                return self._from_source(
+                    metric_code,
+                    catalog=catalog,
+                    value=source_data["ad_7d"].get("orders"),
+                    source_data=source_data["ad_7d"],
+                    source_table="wb_ad_stats_daily",
+                    sync_domain="ads",
+                    count_field="orders_count",
+                    date_from=date_from,
+                    date_to=date_to,
+                    account_id=account_id,
+                    nm_id=nm_id,
+                )
+            case "ad_ctr_7d":
+                return self._ad_ratio_metric(
+                    metric_code,
+                    catalog=catalog,
+                    ad=source_data["ad_7d"],
+                    numerator_field="clicks",
+                    denominator_field="views",
+                    multiplier=Decimal("100"),
+                    unit_sync_domain="ads",
+                    date_from=date_from,
+                    date_to=date_to,
+                    account_id=account_id,
+                    nm_id=nm_id,
+                )
+            case "ad_cpo_7d":
+                return self._ad_ratio_metric(
+                    metric_code,
+                    catalog=catalog,
+                    ad=source_data["ad_7d"],
+                    numerator_field="spend",
+                    denominator_field="orders",
+                    multiplier=Decimal("1"),
+                    unit_sync_domain="ads",
+                    date_from=date_from,
+                    date_to=date_to,
+                    account_id=account_id,
+                    nm_id=nm_id,
+                )
             case "ad_spend_30d":
                 return self._from_source(
                     metric_code,
@@ -1328,6 +1612,60 @@ class ProductMetricResolver:
                     source_data=source_data["funnel_30d"],
                     source_table="wb_card_funnel_daily",
                     sync_domain="analytics",
+                    date_from=date_from,
+                    date_to=date_to,
+                    account_id=account_id,
+                    nm_id=nm_id,
+                )
+            case "avg_rating_30d":
+                return self._from_source(
+                    metric_code,
+                    catalog=catalog,
+                    value=source_data["reputation_30d"].get("avg_rating"),
+                    source_data=source_data["reputation_30d"],
+                    source_table="reputation_items",
+                    sync_domain="reputation",
+                    date_from=date_from,
+                    date_to=date_to,
+                    account_id=account_id,
+                    nm_id=nm_id,
+                )
+            case "negative_reviews_30d":
+                return self._from_source(
+                    metric_code,
+                    catalog=catalog,
+                    value=source_data["reputation_30d"].get("negative_reviews"),
+                    source_data=source_data["reputation_30d"],
+                    source_table="reputation_items",
+                    sync_domain="reputation",
+                    date_from=date_from,
+                    date_to=date_to,
+                    account_id=account_id,
+                    nm_id=nm_id,
+                )
+            case "unanswered_negative_reviews_30d":
+                return self._from_source(
+                    metric_code,
+                    catalog=catalog,
+                    value=source_data["reputation_30d"].get(
+                        "unanswered_negative_reviews"
+                    ),
+                    source_data=source_data["reputation_30d"],
+                    source_table="reputation_items",
+                    sync_domain="reputation",
+                    date_from=date_from,
+                    date_to=date_to,
+                    account_id=account_id,
+                    nm_id=nm_id,
+                )
+            case "unanswered_questions_30d":
+                return self._from_source(
+                    metric_code,
+                    catalog=catalog,
+                    value=source_data["reputation_30d"].get("unanswered_questions"),
+                    source_data=source_data["reputation_30d"],
+                    source_table="reputation_items",
+                    sync_domain="reputation",
                     date_from=date_from,
                     date_to=date_to,
                     account_id=account_id,
@@ -1504,6 +1842,41 @@ class ProductMetricResolver:
             source_table="mart_sku_daily",
             sync_domain="finance",
             count_field=count_field,
+            date_from=date_from,
+            date_to=date_to,
+            account_id=account_id,
+            nm_id=nm_id,
+        )
+
+    def _ad_ratio_metric(
+        self,
+        metric_code: str,
+        *,
+        catalog: MetricCatalog,
+        ad: dict[str, Any],
+        numerator_field: str,
+        denominator_field: str,
+        multiplier: Decimal,
+        unit_sync_domain: str,
+        date_from: date,
+        date_to: date,
+        account_id: int,
+        nm_id: int,
+    ) -> ResolvedMetricValue:
+        numerator = self._decimal_or_none(ad.get(numerator_field))
+        denominator = self._decimal_or_none(ad.get(denominator_field))
+        value = (
+            None
+            if numerator is None or denominator is None or denominator <= 0
+            else (numerator / denominator) * multiplier
+        )
+        return self._from_source(
+            metric_code,
+            catalog=catalog,
+            value=value,
+            source_data=ad,
+            source_table="wb_ad_stats_daily",
+            sync_domain=unit_sync_domain,
             date_from=date_from,
             date_to=date_to,
             account_id=account_id,

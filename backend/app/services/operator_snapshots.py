@@ -5,10 +5,10 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any, TypeVar, cast
+from typing import Any, Callable, TypeVar, cast
 
 from pydantic import BaseModel
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,9 +38,12 @@ from app.schemas.data_quality import (
     DataQualityIssueSummaryRow,
 )
 from app.schemas.marts import (
+    MartAccountExpenseDailyRead,
     MartBusinessDailyRead,
+    MartFinanceReconciliationRead,
     MartReconciliationDailyRead,
     MartSKUDailyRead,
+    MartStockDailyRead,
 )
 from app.services.control_tower import ControlTowerService
 from app.services.dashboard import DashboardService
@@ -55,6 +58,9 @@ SKUProfitabilityPage = Page[SKUProfitabilityRow]
 MartReconciliationDailyPage = Page[MartReconciliationDailyRead]
 MartSKUDailyPage = Page[MartSKUDailyRead]
 MartBusinessDailyPage = Page[MartBusinessDailyRead]
+MartStockDailyPage = Page[MartStockDailyRead]
+MartFinanceReconciliationPage = Page[MartFinanceReconciliationRead]
+MartAccountExpenseDailyPage = Page[MartAccountExpenseDailyRead]
 
 
 @dataclass(frozen=True)
@@ -71,6 +77,11 @@ class OperatorEndpointSnapshotService:
     SUPPORTED_NAMESPACES = ("dashboard", "data_quality", "control_tower", "marts")
     DEADLOCK_RETRIES = 3
     MEMORY_CACHE_TTL_SECONDS = 30
+    PAYLOAD_VERSION_BY_ENDPOINT = {
+        # v2 separates owner dashboard snapshots that carry dense WB/Ads daily
+        # funnel fields from older cached payloads.
+        "dashboard_owner": 2,
+    }
     _shared_response_cache: TTLMemoryCache[BaseModel] = TTLMemoryCache(
         default_ttl_seconds=MEMORY_CACHE_TTL_SECONDS
     )
@@ -133,6 +144,10 @@ class OperatorEndpointSnapshotService:
             return [str(item) for item in value]
         return [str(value)]
 
+    @classmethod
+    def _payload_version(cls, endpoint_key: str) -> int:
+        return int(cls.PAYLOAD_VERSION_BY_ENDPOINT.get(endpoint_key, 1))
+
     @staticmethod
     def _with_snapshot_meta(
         payload: SnapshotModelT, *, computed_at: datetime, cache_status: str
@@ -163,6 +178,13 @@ class OperatorEndpointSnapshotService:
             "marts_business_daily": self._page_model(MartBusinessDailyRead),
             "marts_reconciliation_daily": self._page_model(MartReconciliationDailyRead),
             "marts_sku_daily": self._page_model(MartSKUDailyRead),
+            "marts_stock_daily": self._page_model(MartStockDailyRead),
+            "marts_finance_reconciliation": self._page_model(
+                MartFinanceReconciliationRead
+            ),
+            "marts_account_expense_daily": self._page_model(
+                MartAccountExpenseDailyRead
+            ),
         }
         return mapping.get(endpoint_key)
 
@@ -182,6 +204,9 @@ class OperatorEndpointSnapshotService:
             "date_to": date_to.isoformat() if date_to else None,
             "params": self._normalize_param_value(params),
         }
+        payload_version = self._payload_version(endpoint_key)
+        if payload_version > 1:
+            payload["payload_version"] = payload_version
         encoded = json.dumps(
             payload, sort_keys=True, ensure_ascii=True, separators=(",", ":")
         )
@@ -266,15 +291,42 @@ class OperatorEndpointSnapshotService:
         if row is None or not isinstance(row.payload, dict) or not row.payload:
             return None
         now = utcnow()
-        if row.computed_at + self.max_stale_interval < now:
-            return None
+        try:
+            computed_stale = row.computed_at + self.max_stale_interval < now
+        except TypeError:
+            computed_stale = row.computed_at.replace(
+                tzinfo=None
+            ) + self.max_stale_interval < now.replace(tzinfo=None)
+        try:
+            expired = row.expires_at is None or row.expires_at <= now
+        except TypeError:
+            expired = row.expires_at.replace(tzinfo=None) <= now.replace(tzinfo=None)
         payload = model_cls.model_validate(row.payload)
-        cache_status = "db_snapshot_hit"
-        if row.expires_at is None or row.expires_at < now:
-            cache_status = "db_snapshot_stale"
+        cache_status = (
+            "db_snapshot_stale" if computed_stale or expired else "db_snapshot_hit"
+        )
+        row_id = getattr(row, "id", None)
+        if row_id is not None:
+            await self._touch_snapshot_access(snapshot_id=int(row_id))
         return self._with_snapshot_meta(
             payload, computed_at=row.computed_at, cache_status=cache_status
         )
+
+    async def _touch_snapshot_access(self, *, snapshot_id: int) -> None:
+        try:
+            async with SessionLocal() as touch_session:
+                await touch_session.execute(
+                    update(APIResponseSnapshot)
+                    .where(APIResponseSnapshot.id == snapshot_id)
+                    .values(
+                        last_accessed_at=utcnow(),
+                        access_count=APIResponseSnapshot.access_count + 1,
+                        updated_at=func.now(),
+                    )
+                )
+                await touch_session.commit()
+        except Exception:
+            return
 
     async def _save_snapshot(
         self,
@@ -368,6 +420,8 @@ class OperatorEndpointSnapshotService:
         model_cls: type[SnapshotModelT],
         compute: Any,
         normalize_window: bool = False,
+        validate_snapshot: Callable[[SnapshotModelT, date | None, date | None], bool]
+        | None = None,
     ) -> SnapshotModelT:
         actual_from: date | None
         actual_to: date | None
@@ -385,7 +439,12 @@ class OperatorEndpointSnapshotService:
         )
         cached = self._response_cache.get(response_cache_key)
         if cached is not None:
-            return cast(SnapshotModelT, cached)
+            cached_model = cast(SnapshotModelT, cached)
+            if validate_snapshot is None or validate_snapshot(
+                cached_model, actual_from, actual_to
+            ):
+                return cached_model
+            self._response_cache.clear()
         snapshot = await self._load_snapshot(
             session,
             namespace=namespace,
@@ -397,8 +456,12 @@ class OperatorEndpointSnapshotService:
             model_cls=model_cls,
         )
         if snapshot is not None:
-            self._response_cache.set(response_cache_key, snapshot)
-            return snapshot
+            if validate_snapshot is None or validate_snapshot(
+                snapshot, actual_from, actual_to
+            ):
+                self._response_cache.set(response_cache_key, snapshot)
+                return snapshot
+            self._response_cache.clear()
         response = await compute(actual_from, actual_to)
         response = model_cls.model_validate(response)
         await self._save_snapshot(
@@ -414,6 +477,45 @@ class OperatorEndpointSnapshotService:
         self._response_cache.set(response_cache_key, response)
         return response
 
+    @staticmethod
+    def _owner_dashboard_has_dense_daily(
+        snapshot: OwnerDashboardRead, date_from: date | None, date_to: date | None
+    ) -> bool:
+        window_from = date_from or getattr(snapshot, "date_from", None)
+        window_to = date_to or getattr(snapshot, "date_to", None)
+        if window_from is None or window_to is None:
+            return True
+        expected_days = (window_to - window_from).days + 1
+        if expected_days <= 1:
+            return True
+        wb_daily = list(getattr(snapshot.wb_summary, "daily", []) or [])
+        ads_daily = list(getattr(snapshot.ads_summary, "daily", []) or [])
+        if len(wb_daily) < expected_days or len(ads_daily) < expected_days:
+            return False
+
+        wb_orders_total = int(getattr(snapshot.wb_summary, "funnel_orders_count", 0) or 0)
+        wb_daily_orders_total = sum(
+            int(getattr(item, "order_count", 0) or 0) for item in wb_daily
+        )
+        if wb_orders_total > 0 and wb_daily_orders_total <= 0:
+            return False
+
+        wb_buyout_total = int(getattr(snapshot.wb_summary, "buyout_count", 0) or 0)
+        wb_daily_buyout_total = sum(
+            int(getattr(item, "buyout_count", 0) or 0) for item in wb_daily
+        )
+        if wb_buyout_total > 0 and wb_daily_buyout_total <= 0:
+            return False
+
+        ads_orders_amount = float(getattr(snapshot.ads_summary, "orders_amount", 0) or 0)
+        ads_daily_orders_total = sum(
+            int(getattr(item, "orders_count", 0) or 0) for item in ads_daily
+        )
+        if ads_orders_amount > 0 and ads_daily_orders_total <= 0:
+            return False
+
+        return True
+
     async def invalidate_snapshots(
         self,
         session: AsyncSession,
@@ -422,10 +524,14 @@ class OperatorEndpointSnapshotService:
         namespaces: set[str] | None = None,
         endpoint_keys: set[str] | None = None,
     ) -> None:
-        stmt = delete(APIResponseSnapshot).where(
-            APIResponseSnapshot.namespace.in_(
-                list(namespaces or self.SUPPORTED_NAMESPACES)
+        stmt = (
+            update(APIResponseSnapshot)
+            .where(
+                APIResponseSnapshot.namespace.in_(
+                    list(namespaces or self.SUPPORTED_NAMESPACES)
+                )
             )
+            .values(expires_at=utcnow(), updated_at=func.now())
         )
         if account_id is not None:
             stmt = stmt.where(APIResponseSnapshot.account_id == account_id)
@@ -609,6 +715,7 @@ class OperatorEndpointSnapshotService:
                 date_from=actual_from,
                 date_to=actual_to,
             ),
+            validate_snapshot=self._owner_dashboard_has_dense_daily,
         )
 
     async def control_skus(
@@ -1092,6 +1199,154 @@ class OperatorEndpointSnapshotService:
             ),
         )
 
+    async def stock_daily(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        sku_id: int | None = None,
+        nm_id: int | None = None,
+        barcode: str | None = None,
+        warehouse_name: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        sort_by: str | None = None,
+        sort_dir: str = "desc",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> MartStockDailyPage:
+        params = {
+            "sku_id": sku_id,
+            "nm_id": nm_id,
+            "barcode": barcode,
+            "warehouse_name": warehouse_name,
+            "sort_by": sort_by,
+            "sort_dir": sort_dir,
+            "limit": limit,
+            "offset": offset,
+        }
+        return await self._get_or_compute(
+            session,
+            namespace="marts",
+            endpoint_key="marts_stock_daily",
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            params=params,
+            model_cls=self._page_model(MartStockDailyRead),
+            compute=lambda actual_from, actual_to: self.marts.list_stock_daily(
+                session,
+                account_id=account_id,
+                sku_id=sku_id,
+                nm_id=nm_id,
+                barcode=barcode,
+                warehouse_name=warehouse_name,
+                date_from=actual_from,
+                date_to=actual_to,
+                sort_by=sort_by,
+                sort_dir=sort_dir,
+                limit=limit,
+                offset=offset,
+            ),
+        )
+
+    async def finance_reconciliation(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        nm_id: int | None = None,
+        srid: str | None = None,
+        barcode: str | None = None,
+        status: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        only_diff: bool = False,
+        sort_by: str | None = None,
+        sort_dir: str = "desc",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> MartFinanceReconciliationPage:
+        params = {
+            "nm_id": nm_id,
+            "srid": srid,
+            "barcode": barcode,
+            "status": status,
+            "only_diff": only_diff,
+            "sort_by": sort_by,
+            "sort_dir": sort_dir,
+            "limit": limit,
+            "offset": offset,
+        }
+        return await self._get_or_compute(
+            session,
+            namespace="marts",
+            endpoint_key="marts_finance_reconciliation",
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            params=params,
+            model_cls=self._page_model(MartFinanceReconciliationRead),
+            compute=lambda actual_from, actual_to: (
+                self.marts.list_finance_reconciliation(
+                    session,
+                    account_id=account_id,
+                    nm_id=nm_id,
+                    srid=srid,
+                    barcode=barcode,
+                    status=status,
+                    date_from=actual_from,
+                    date_to=actual_to,
+                    only_diff=only_diff,
+                    sort_by=sort_by,
+                    sort_dir=sort_dir,
+                    limit=limit,
+                    offset=offset,
+                )
+            ),
+        )
+
+    async def account_expense_daily(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        sort_by: str | None = None,
+        sort_dir: str = "desc",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> MartAccountExpenseDailyPage:
+        params = {
+            "sort_by": sort_by,
+            "sort_dir": sort_dir,
+            "limit": limit,
+            "offset": offset,
+        }
+        return await self._get_or_compute(
+            session,
+            namespace="marts",
+            endpoint_key="marts_account_expense_daily",
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            params=params,
+            model_cls=self._page_model(MartAccountExpenseDailyRead),
+            compute=lambda actual_from, actual_to: (
+                self.marts.list_account_expense_daily(
+                    session,
+                    account_id=account_id,
+                    date_from=actual_from,
+                    date_to=actual_to,
+                    sort_by=sort_by,
+                    sort_dir=sort_dir,
+                    limit=limit,
+                    offset=offset,
+                )
+            ),
+        )
+
     async def _build_dq_issue_summary(
         self,
         session: AsyncSession,
@@ -1144,7 +1399,49 @@ class OperatorEndpointSnapshotService:
                 account_id,
                 None,
                 None,
-                {"only_open": True, "limit": 10, "offset": 0, "sort_dir": "desc"},
+                {
+                    "only_open": True,
+                    "code": None,
+                    "issue_type": None,
+                    "severity": None,
+                    "domain": None,
+                    "source_table": None,
+                    "financial_final_blocker": None,
+                    "classification_status": None,
+                    "age_bucket": None,
+                    "status": None,
+                    "sku_id": None,
+                    "nm_id": None,
+                    "sort_by": None,
+                    "sort_dir": "desc",
+                    "limit": 10,
+                    "offset": 0,
+                },
+            ),
+            OperatorSnapshotSpec(
+                "data_quality",
+                "dq_issues",
+                account_id,
+                None,
+                None,
+                {
+                    "only_open": False,
+                    "code": None,
+                    "issue_type": None,
+                    "severity": None,
+                    "domain": None,
+                    "source_table": None,
+                    "financial_final_blocker": None,
+                    "classification_status": None,
+                    "age_bucket": None,
+                    "status": None,
+                    "sku_id": None,
+                    "nm_id": None,
+                    "sort_by": None,
+                    "sort_dir": "desc",
+                    "limit": 100,
+                    "offset": 0,
+                },
             ),
         ]
         for window_from, window_to in sorted(windows):
@@ -1173,7 +1470,15 @@ class OperatorEndpointSnapshotService:
                         window_from,
                         window_to,
                         {
+                            "search": None,
+                            "vendor_code": None,
+                            "barcode": None,
+                            "brand": None,
+                            "subject_name": None,
+                            "has_manual_cost": None,
+                            "business_trusted": None,
                             "sort": "profit_desc",
+                            "sort_by": None,
                             "limit": 50,
                             "offset": 0,
                             "sort_dir": "desc",
@@ -1185,7 +1490,17 @@ class OperatorEndpointSnapshotService:
                         account_id,
                         window_from,
                         window_to,
-                        {"limit": 50, "offset": 0, "sort_dir": "desc"},
+                        {
+                            "search": None,
+                            "sku_status": None,
+                            "trust_state": None,
+                            "sort_by": None,
+                            "sort_dir": "desc",
+                            "preset": None,
+                            "has_open_actions": None,
+                            "limit": 50,
+                            "offset": 0,
+                        },
                     ),
                     OperatorSnapshotSpec(
                         "control_tower",
@@ -1196,9 +1511,15 @@ class OperatorEndpointSnapshotService:
                         {
                             "group_by": "article",
                             "include_blocked": True,
+                            "sort_by": None,
+                            "sort_dir": "desc",
+                            "status_filter": None,
+                            "search": None,
+                            "profit_filter": None,
+                            "data_filter": None,
+                            "stock_filter": None,
                             "limit": 100,
                             "offset": 0,
-                            "sort_dir": "desc",
                         },
                     ),
                     OperatorSnapshotSpec(
@@ -1207,7 +1528,15 @@ class OperatorEndpointSnapshotService:
                         account_id,
                         window_from,
                         window_to,
-                        {"only_risk": False, "limit": 100, "offset": 0},
+                        {
+                            "only_risk": False,
+                            "search": None,
+                            "status": None,
+                            "sort_by": None,
+                            "sort_dir": "asc",
+                            "limit": 100,
+                            "offset": 0,
+                        },
                     ),
                     OperatorSnapshotSpec(
                         "control_tower",
@@ -1215,7 +1544,15 @@ class OperatorEndpointSnapshotService:
                         account_id,
                         window_from,
                         window_to,
-                        {"limit": 100, "offset": 0, "sort_dir": "desc"},
+                        {
+                            "campaign_id": None,
+                            "min_drr_percent": None,
+                            "max_drr_percent": None,
+                            "sort_by": None,
+                            "sort_dir": "desc",
+                            "limit": 100,
+                            "offset": 0,
+                        },
                     ),
                     OperatorSnapshotSpec(
                         "marts",
@@ -1223,7 +1560,82 @@ class OperatorEndpointSnapshotService:
                         account_id,
                         window_from,
                         window_to,
-                        {"limit": 200, "offset": 0},
+                        {
+                            "snapshot_schema": "ads_api_fallback_v1",
+                            "limit": 200,
+                            "offset": 0,
+                        },
+                    ),
+                    OperatorSnapshotSpec(
+                        "marts",
+                        "marts_sku_daily",
+                        account_id,
+                        window_from,
+                        window_to,
+                        {
+                            "sku_id": None,
+                            "nm_id": None,
+                            "vendor_code": None,
+                            "barcode": None,
+                            "brand": None,
+                            "subject_name": None,
+                            "search": None,
+                            "has_manual_cost": None,
+                            "has_open_issues": None,
+                            "aggregate": None,
+                            "sort_by": None,
+                            "sort_dir": "desc",
+                            "limit": 50,
+                            "offset": 0,
+                        },
+                    ),
+                    OperatorSnapshotSpec(
+                        "marts",
+                        "marts_stock_daily",
+                        account_id,
+                        window_from,
+                        window_to,
+                        {
+                            "sku_id": None,
+                            "nm_id": None,
+                            "barcode": None,
+                            "warehouse_name": None,
+                            "sort_by": None,
+                            "sort_dir": "desc",
+                            "limit": 50,
+                            "offset": 0,
+                        },
+                    ),
+                    OperatorSnapshotSpec(
+                        "marts",
+                        "marts_finance_reconciliation",
+                        account_id,
+                        window_from,
+                        window_to,
+                        {
+                            "nm_id": None,
+                            "srid": None,
+                            "barcode": None,
+                            "status": None,
+                            "only_diff": False,
+                            "sort_by": None,
+                            "sort_dir": "desc",
+                            "limit": 50,
+                            "offset": 0,
+                        },
+                    ),
+                    OperatorSnapshotSpec(
+                        "marts",
+                        "marts_account_expense_daily",
+                        account_id,
+                        window_from,
+                        window_to,
+                        {
+                            "sort_by": None,
+                            "sort_dir": "desc",
+                            "limit": 50,
+                            "offset": 0,
+                        },
                     ),
                     OperatorSnapshotSpec(
                         "marts",
@@ -1231,7 +1643,20 @@ class OperatorEndpointSnapshotService:
                         account_id,
                         window_from,
                         window_to,
-                        {"flag": "any", "limit": 50, "offset": 0, "sort_dir": "desc"},
+                        {
+                            "sku_id": None,
+                            "nm_id": None,
+                            "vendor_code": None,
+                            "barcode": None,
+                            "search": None,
+                            "flag": None,
+                            "status_bucket": None,
+                            "aggregate": None,
+                            "sort_by": None,
+                            "sort_dir": "desc",
+                            "limit": 50,
+                            "offset": 0,
+                        },
                     ),
                 ]
             )
@@ -1281,6 +1706,9 @@ class OperatorEndpointSnapshotService:
             "marts_business_daily",
             "marts_reconciliation_daily",
             "marts_sku_daily",
+            "marts_stock_daily",
+            "marts_finance_reconciliation",
+            "marts_account_expense_daily",
         }
         if endpoint_key not in supported:
             return None
@@ -1408,6 +1836,11 @@ class OperatorEndpointSnapshotService:
                 include_blocked=bool(spec.params.get("include_blocked", True)),
                 sort_by=spec.params.get("sort_by"),
                 sort_dir=str(spec.params.get("sort_dir") or "desc"),
+                status_filter=spec.params.get("status_filter"),
+                search=spec.params.get("search"),
+                profit_filter=spec.params.get("profit_filter"),
+                data_filter=spec.params.get("data_filter"),
+                stock_filter=spec.params.get("stock_filter"),
                 limit=int(spec.params.get("limit") or 100),
                 offset=int(spec.params.get("offset") or 0),
             )
@@ -1483,6 +1916,48 @@ class OperatorEndpointSnapshotService:
                 date_from=spec.date_from,
                 date_to=spec.date_to,
                 aggregate=spec.params.get("aggregate"),
+                sort_by=spec.params.get("sort_by"),
+                sort_dir=str(spec.params.get("sort_dir") or "desc"),
+                limit=int(spec.params.get("limit") or 50),
+                offset=int(spec.params.get("offset") or 0),
+            )
+        elif spec.endpoint_key == "marts_stock_daily":
+            response = await self.marts.list_stock_daily(
+                session,
+                account_id=spec.account_id,
+                sku_id=spec.params.get("sku_id"),
+                nm_id=spec.params.get("nm_id"),
+                barcode=spec.params.get("barcode"),
+                warehouse_name=spec.params.get("warehouse_name"),
+                date_from=spec.date_from,
+                date_to=spec.date_to,
+                sort_by=spec.params.get("sort_by"),
+                sort_dir=str(spec.params.get("sort_dir") or "desc"),
+                limit=int(spec.params.get("limit") or 50),
+                offset=int(spec.params.get("offset") or 0),
+            )
+        elif spec.endpoint_key == "marts_finance_reconciliation":
+            response = await self.marts.list_finance_reconciliation(
+                session,
+                account_id=spec.account_id,
+                nm_id=spec.params.get("nm_id"),
+                srid=spec.params.get("srid"),
+                barcode=spec.params.get("barcode"),
+                status=spec.params.get("status"),
+                date_from=spec.date_from,
+                date_to=spec.date_to,
+                only_diff=bool(spec.params.get("only_diff") or False),
+                sort_by=spec.params.get("sort_by"),
+                sort_dir=str(spec.params.get("sort_dir") or "desc"),
+                limit=int(spec.params.get("limit") or 50),
+                offset=int(spec.params.get("offset") or 0),
+            )
+        elif spec.endpoint_key == "marts_account_expense_daily":
+            response = await self.marts.list_account_expense_daily(
+                session,
+                account_id=spec.account_id,
+                date_from=spec.date_from,
+                date_to=spec.date_to,
                 sort_by=spec.params.get("sort_by"),
                 sort_dir=str(spec.params.get("sort_dir") or "desc"),
                 limit=int(spec.params.get("limit") or 50),

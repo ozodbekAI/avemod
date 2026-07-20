@@ -19,6 +19,7 @@ class WBAPICategory(StrEnum):
     BUYER_CHAT = "buyer_chat"
     BUYER_RETURNS = "buyer_returns"
     SUPPLIES = "supplies"
+    MARKETPLACE = "marketplace"
     DOCUMENTS = "documents"
     TARIFFS = "tariffs"
     USERS = "users"

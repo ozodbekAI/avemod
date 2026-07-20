@@ -28,7 +28,7 @@ export const Route = createFileRoute("/_authenticated/admin")({
   errorComponent: ({ error, reset }) => <EndpointError error={error} reset={reset} />,
 });
 
-const DOMAINS = ["products","prices","orders","sales","stocks","finance","ads","analytics","supplies","tariffs","documents"];
+const DOMAINS = ["product_cards","prices","orders","sales","stocks","finance","ads","analytics","supplies","tariffs","documents"];
 
 function AdminPage() {
   return (
@@ -325,7 +325,7 @@ function SyncTab() {
     queryFn: () => apiList<SyncRun>("/sync/runs"),
     refetchInterval: 5000,
   });
-  const [domain, setDomain] = useState("products");
+  const [domain, setDomain] = useState("product_cards");
   const [forceFull, setForceFull] = useState(false);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");

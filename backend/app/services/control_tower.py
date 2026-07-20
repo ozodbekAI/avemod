@@ -25,7 +25,8 @@ from app.core.issue_refs import extract_issue_refs
 from app.core.pagination import Page
 from app.core.stock_fallback import latest_stock_snapshot
 from app.core.time import utcnow
-from app.models.ads import WBAdCampaign, WBAdStatsDaily
+from app.models.ads import WBAdCampaign, WBAdClusterStat, WBAdStatsDaily
+from app.models.analytics import WBCardFunnelDaily
 from app.models.control_tower import (
     ActionRecommendation,
     ActionRecommendationHistory,
@@ -35,7 +36,7 @@ from app.models.control_tower import (
     UserBusinessSettingAudit,
 )
 from app.models.data_quality import DataQualityIssue
-from app.models.marts import MartSKUDaily, MartStockDaily
+from app.models.marts import MartReconciliationDaily, MartSKUDaily, MartStockDaily
 from app.models.prices import WBPrice, WBPriceQuarantine, WBPriceSize
 from app.models.product_cards import CoreSKU, WBProductCard
 from app.models.promotions import WBPromotionCalendar, WBPromotionNomenclature
@@ -59,7 +60,11 @@ from app.schemas.control_tower import (
     OwnerDashboardItem,
     OwnerDashboardTrust,
     OwnerDashboardRead,
+    OwnerAdsSummary,
+    OwnerAdsDailyPoint,
     OwnerMessage,
+    OwnerWbSummary,
+    OwnerWbDailyPoint,
     PriceSafetyPage,
     PriceSafetyPromotion,
     PriceSafetyRow,
@@ -240,6 +245,15 @@ class ControlTowerService:
     def _date_range(date_from: date | None, date_to: date | None) -> tuple[date, date]:
         today = utcnow().date()
         return date_from or (today - timedelta(days=29)), date_to or today
+
+    @staticmethod
+    def _days_between(date_from: date, date_to: date) -> list[date]:
+        days: list[date] = []
+        current = date_from
+        while current <= date_to:
+            days.append(current)
+            current += timedelta(days=1)
+        return days
 
     @staticmethod
     def _float(value: Decimal | None) -> float | None:
@@ -591,6 +605,8 @@ class ControlTowerService:
         account_id: int,
         items: list[PriceSafetyRow],
     ) -> None:
+        if not hasattr(session, "execute"):
+            return
         nm_ids = sorted({int(item.nm_id) for item in items if item.nm_id is not None})
         if not nm_ids:
             return
@@ -723,6 +739,8 @@ class ControlTowerService:
         account_id: int,
         items: list[PriceSafetyRow],
     ) -> None:
+        if not hasattr(session, "execute"):
+            return
         nm_ids = sorted({int(item.nm_id) for item in items if item.nm_id is not None})
         if not nm_ids:
             return
@@ -4918,6 +4936,397 @@ class ControlTowerService:
             expected_effect_amount=getattr(action, "expected_effect_amount", None),
         )
 
+    def _empty_owner_wb_summary(self, *, date_from: date, date_to: date) -> OwnerWbSummary:
+        return OwnerWbSummary(
+            daily=[OwnerWbDailyPoint(date=day) for day in self._days_between(date_from, date_to)]
+        )
+
+    def _empty_owner_ads_summary(self, *, date_from: date, date_to: date) -> OwnerAdsSummary:
+        return OwnerAdsSummary(
+            daily=[OwnerAdsDailyPoint(date=day) for day in self._days_between(date_from, date_to)]
+        )
+
+    async def _owner_wb_summary(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        date_from: date,
+        date_to: date,
+    ) -> OwnerWbSummary:
+        if not hasattr(session, "execute"):
+            return self._empty_owner_wb_summary(date_from=date_from, date_to=date_to)
+        mart_stmt = select(
+            func.count(MartSKUDaily.id).label("rows_count"),
+            func.count(func.distinct(MartSKUDaily.sku_id)).label("sku_count"),
+            func.count(func.distinct(MartSKUDaily.nm_id)).label("nm_count"),
+            func.coalesce(func.sum(MartSKUDaily.final_revenue), 0).label(
+                "sales_amount"
+            ),
+            func.coalesce(func.sum(MartSKUDaily.final_sales_qty), 0).label(
+                "sales_count"
+            ),
+            func.coalesce(func.sum(MartSKUDaily.final_return_qty), 0).label(
+                "returns_count"
+            ),
+            func.coalesce(
+                func.sum(MartSKUDaily.net_profit_after_all_expenses), 0
+            ).label("margin_amount"),
+            func.coalesce(func.sum(MartSKUDaily.seller_cogs), 0).label("cogs"),
+            func.coalesce(func.sum(MartSKUDaily.total_wb_expenses), 0).label(
+                "wb_expenses_total"
+            ),
+            func.coalesce(func.sum(MartSKUDaily.wb_commission), 0).label(
+                "wb_commission"
+            ),
+            func.coalesce(func.sum(MartSKUDaily.wb_logistics), 0).label("logistics"),
+            func.coalesce(func.sum(MartSKUDaily.wb_logistics_rebill), 0).label(
+                "logistics_rebill"
+            ),
+            func.coalesce(func.sum(MartSKUDaily.acceptance), 0).label("acceptance"),
+            func.coalesce(func.sum(MartSKUDaily.penalty), 0).label("penalties"),
+            func.coalesce(func.sum(MartSKUDaily.storage), 0).label("storage"),
+        ).where(
+            MartSKUDaily.account_id == account_id,
+            MartSKUDaily.stat_date >= date_from,
+            MartSKUDaily.stat_date <= date_to,
+        )
+        mart = (await session.execute(mart_stmt)).mappings().one()
+
+        reconciliation_stmt = select(
+            func.coalesce(func.sum(MartReconciliationDaily.orders_amount), 0).label(
+                "orders_amount"
+            ),
+            func.coalesce(func.sum(MartReconciliationDaily.orders_qty), 0).label(
+                "orders_count"
+            ),
+            func.coalesce(
+                func.sum(MartReconciliationDaily.orders_amount).filter(
+                    MartReconciliationDaily.has_order_without_sale.is_(True)
+                ),
+                0,
+            ).label("missed_orders_amount"),
+            func.coalesce(
+                func.sum(MartReconciliationDaily.orders_qty).filter(
+                    MartReconciliationDaily.has_order_without_sale.is_(True)
+                ),
+                0,
+            ).label("missed_orders_count"),
+        ).where(
+            MartReconciliationDaily.account_id == account_id,
+            MartReconciliationDaily.stat_date >= date_from,
+            MartReconciliationDaily.stat_date <= date_to,
+        )
+        reconciliation = (await session.execute(reconciliation_stmt)).mappings().one()
+
+        funnel_stmt = select(
+            func.coalesce(func.sum(WBCardFunnelDaily.open_count), 0).label(
+                "open_count"
+            ),
+            func.coalesce(func.sum(WBCardFunnelDaily.cart_count), 0).label(
+                "cart_count"
+            ),
+            func.coalesce(func.sum(WBCardFunnelDaily.order_count), 0).label(
+                "funnel_orders_count"
+            ),
+            func.coalesce(func.sum(WBCardFunnelDaily.buyout_count), 0).label(
+                "buyout_count"
+            ),
+        ).where(
+            WBCardFunnelDaily.account_id == account_id,
+            WBCardFunnelDaily.stat_date >= date_from,
+            WBCardFunnelDaily.stat_date <= date_to,
+        )
+        funnel = (await session.execute(funnel_stmt)).mappings().one()
+
+        latest_stock_date = (
+            await session.execute(
+                select(func.max(MartStockDaily.stat_date)).where(
+                    MartStockDaily.account_id == account_id,
+                    MartStockDaily.stat_date >= date_from,
+                    MartStockDaily.stat_date <= date_to,
+                )
+            )
+        ).scalar_one_or_none()
+        stock_qty = Decimal("0")
+        turnover_days: float | None = None
+        if latest_stock_date is not None:
+            stock_stmt = select(
+                func.coalesce(func.sum(MartStockDaily.quantity), 0).label("stock_qty"),
+                func.avg(MartStockDaily.days_of_stock).label("turnover_days"),
+            ).where(
+                MartStockDaily.account_id == account_id,
+                MartStockDaily.stat_date == latest_stock_date,
+            )
+            stock = (await session.execute(stock_stmt)).mappings().one()
+            stock_qty = self._decimal(stock["stock_qty"])
+            if stock["turnover_days"] is not None:
+                turnover_days = self._float0(stock["turnover_days"])
+
+        mart_daily_stmt = (
+            select(
+                MartSKUDaily.stat_date.label("date"),
+                func.coalesce(func.sum(MartSKUDaily.final_revenue), 0).label(
+                    "sales_amount"
+                ),
+                func.coalesce(func.sum(MartSKUDaily.total_wb_expenses), 0).label(
+                    "wb_expenses_total"
+                ),
+            )
+            .where(
+                MartSKUDaily.account_id == account_id,
+                MartSKUDaily.stat_date >= date_from,
+                MartSKUDaily.stat_date <= date_to,
+            )
+            .group_by(MartSKUDaily.stat_date)
+        )
+        reconciliation_daily_stmt = (
+            select(
+                MartReconciliationDaily.stat_date.label("date"),
+                func.coalesce(
+                    func.sum(MartReconciliationDaily.orders_amount), 0
+                ).label("orders_amount"),
+            )
+            .where(
+                MartReconciliationDaily.account_id == account_id,
+                MartReconciliationDaily.stat_date >= date_from,
+                MartReconciliationDaily.stat_date <= date_to,
+            )
+            .group_by(MartReconciliationDaily.stat_date)
+        )
+        funnel_daily_stmt = (
+            select(
+                WBCardFunnelDaily.stat_date.label("date"),
+                func.coalesce(func.sum(WBCardFunnelDaily.open_count), 0).label(
+                    "open_count"
+                ),
+                func.coalesce(func.sum(WBCardFunnelDaily.cart_count), 0).label(
+                    "cart_count"
+                ),
+                func.coalesce(func.sum(WBCardFunnelDaily.order_count), 0).label(
+                    "orders_count"
+                ),
+                func.coalesce(func.sum(WBCardFunnelDaily.buyout_count), 0).label(
+                    "buyout_count"
+                ),
+            )
+            .where(
+                WBCardFunnelDaily.account_id == account_id,
+                WBCardFunnelDaily.stat_date >= date_from,
+                WBCardFunnelDaily.stat_date <= date_to,
+            )
+            .group_by(WBCardFunnelDaily.stat_date)
+        )
+        mart_daily = {
+            row["date"]: row
+            for row in (await session.execute(mart_daily_stmt)).mappings().all()
+        }
+        reconciliation_daily = {
+            row["date"]: row
+            for row in (
+                await session.execute(reconciliation_daily_stmt)
+            ).mappings().all()
+        }
+        funnel_daily = {
+            row["date"]: row
+            for row in (await session.execute(funnel_daily_stmt)).mappings().all()
+        }
+        daily: list[OwnerWbDailyPoint] = []
+        for day in self._days_between(date_from, date_to):
+            mart_day = mart_daily.get(day, {})
+            reconciliation_day = reconciliation_daily.get(day, {})
+            funnel_day = funnel_daily.get(day, {})
+            day_open_count = self._int0(funnel_day.get("open_count"))
+            day_cart_count = self._int0(funnel_day.get("cart_count"))
+            day_order_count = self._int0(funnel_day.get("orders_count"))
+            day_buyout_count = self._int0(funnel_day.get("buyout_count"))
+            daily.append(
+                OwnerWbDailyPoint(
+                    date=day,
+                    orders_amount=self._float0(
+                        reconciliation_day.get("orders_amount")
+                    ),
+                    sales_amount=self._float0(mart_day.get("sales_amount")),
+                    open_count=day_open_count,
+                    cart_count=day_cart_count,
+                    order_count=day_order_count,
+                    buyout_count=day_buyout_count,
+                    cart_conversion_percent=self._safe_percent(
+                        day_cart_count, day_open_count
+                    ),
+                    order_conversion_percent=self._safe_percent(
+                        day_order_count, day_cart_count
+                    ),
+                    buyout_percent=self._safe_percent(
+                        day_buyout_count, day_order_count
+                    ),
+                    wb_expenses_total=abs(
+                        self._float0(mart_day.get("wb_expenses_total"))
+                    ),
+                )
+            )
+
+        sales_amount = self._decimal(mart["sales_amount"])
+        margin_amount = self._decimal(mart["margin_amount"])
+        open_count = self._int0(funnel["open_count"])
+        cart_count = self._int0(funnel["cart_count"])
+        funnel_orders_count = self._int0(funnel["funnel_orders_count"])
+        buyout_count = self._int0(funnel["buyout_count"])
+        logistics_total = self._decimal(mart["logistics"]) + self._decimal(
+            mart["logistics_rebill"]
+        )
+        return OwnerWbSummary(
+            rows_count=self._int0(mart["rows_count"]),
+            sku_count=self._int0(mart["sku_count"]),
+            nm_count=self._int0(mart["nm_count"]),
+            orders_amount=self._float0(reconciliation["orders_amount"]),
+            orders_count=self._int0(reconciliation["orders_count"]),
+            sales_amount=self._float0(sales_amount),
+            sales_count=self._int0(mart["sales_count"]),
+            returns_count=self._int0(mart["returns_count"]),
+            buyout_count=buyout_count,
+            funnel_orders_count=funnel_orders_count,
+            open_count=open_count,
+            cart_count=cart_count,
+            cart_conversion_percent=self._safe_percent(cart_count, open_count),
+            order_conversion_percent=self._safe_percent(
+                funnel_orders_count, cart_count
+            ),
+            buyout_percent=self._safe_percent(buyout_count, funnel_orders_count),
+            margin_amount=self._float0(margin_amount),
+            margin_percent=self._safe_percent(margin_amount, sales_amount),
+            cogs=self._float0(mart["cogs"]),
+            wb_expenses_total=abs(self._float0(mart["wb_expenses_total"])),
+            wb_commission=abs(self._float0(mart["wb_commission"])),
+            logistics=abs(self._float0(logistics_total)),
+            acceptance=abs(self._float0(mart["acceptance"])),
+            penalties=abs(self._float0(mart["penalties"])),
+            storage=abs(self._float0(mart["storage"])),
+            missed_orders_amount=abs(
+                self._float0(reconciliation["missed_orders_amount"])
+            ),
+            missed_orders_count=self._int0(reconciliation["missed_orders_count"]),
+            card_views=open_count,
+            turnover_days=turnover_days,
+            stock_qty=self._float0(stock_qty),
+            daily=daily,
+        )
+
+    async def _owner_ads_summary(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        date_from: date,
+        date_to: date,
+    ) -> OwnerAdsSummary:
+        if not hasattr(session, "execute"):
+            return self._empty_owner_ads_summary(date_from=date_from, date_to=date_to)
+        stmt = select(
+            func.count(WBAdStatsDaily.id).label("rows_count"),
+            func.count(func.distinct(WBAdStatsDaily.advert_id)).label("campaign_count"),
+            func.coalesce(func.sum(WBAdStatsDaily.views), 0).label("impressions"),
+            func.coalesce(func.sum(WBAdStatsDaily.clicks), 0).label("card_views"),
+            func.coalesce(func.sum(WBAdStatsDaily.sum), 0).label("spend"),
+            func.coalesce(func.sum(WBAdStatsDaily.orders), 0).label("orders_count"),
+            func.coalesce(func.sum(WBAdStatsDaily.sum_price), 0).label("orders_amount"),
+        ).where(
+            WBAdStatsDaily.account_id == account_id,
+            WBAdStatsDaily.stat_date >= date_from,
+            WBAdStatsDaily.stat_date <= date_to,
+        )
+        row = (await session.execute(stmt)).mappings().one()
+        spend = self._decimal(row["spend"])
+        impressions = self._int0(row["impressions"])
+        card_views = self._int0(row["card_views"])
+        orders_amount = self._decimal(row["orders_amount"])
+        daily_stmt = (
+            select(
+                WBAdStatsDaily.stat_date.label("date"),
+                func.coalesce(func.sum(WBAdStatsDaily.sum), 0).label("source_spend"),
+                func.coalesce(func.sum(WBAdStatsDaily.views), 0).label("impressions"),
+                func.coalesce(func.sum(WBAdStatsDaily.clicks), 0).label("card_views"),
+                func.coalesce(func.sum(WBAdStatsDaily.orders), 0).label(
+                    "orders_count"
+                ),
+                func.coalesce(func.sum(WBAdStatsDaily.sum_price), 0).label(
+                    "orders_amount"
+                ),
+            )
+            .where(
+                WBAdStatsDaily.account_id == account_id,
+                WBAdStatsDaily.stat_date >= date_from,
+                WBAdStatsDaily.stat_date <= date_to,
+            )
+            .group_by(WBAdStatsDaily.stat_date)
+        )
+        daily_by_date = {
+            item["date"]: item
+            for item in (await session.execute(daily_stmt)).mappings().all()
+        }
+        position_daily_stmt = (
+            select(
+                WBAdClusterStat.stat_date.label("date"),
+                func.avg(WBAdClusterStat.avg_position).label("avg_position"),
+            )
+            .where(
+                WBAdClusterStat.account_id == account_id,
+                WBAdClusterStat.stat_date >= date_from,
+                WBAdClusterStat.stat_date <= date_to,
+                WBAdClusterStat.avg_position.is_not(None),
+            )
+            .group_by(WBAdClusterStat.stat_date)
+        )
+        position_by_date = {
+            item["date"]: item
+            for item in (await session.execute(position_daily_stmt)).mappings().all()
+        }
+        daily: list[OwnerAdsDailyPoint] = []
+        for day in self._days_between(date_from, date_to):
+            item = daily_by_date.get(day, {})
+            position_item = position_by_date.get(day, {})
+            day_source_spend = self._decimal(item.get("source_spend"))
+            day_impressions = self._int0(item.get("impressions"))
+            day_card_views = self._int0(item.get("card_views"))
+            day_orders_count = self._int0(item.get("orders_count"))
+            day_orders_amount = self._decimal(item.get("orders_amount"))
+            daily.append(
+                OwnerAdsDailyPoint(
+                    date=day,
+                    source_spend=self._float0(day_source_spend),
+                    impressions=day_impressions,
+                    card_views=day_card_views,
+                    ctr_percent=self._safe_percent(day_card_views, day_impressions),
+                    orders_count=day_orders_count,
+                    orders_amount=self._float0(day_orders_amount),
+                    source_drr_percent=self._safe_percent(
+                        day_source_spend, day_orders_amount
+                    ),
+                    avg_position=self._float(position_item.get("avg_position")),
+                )
+            )
+        return OwnerAdsSummary(
+            rows_count=self._int0(row["rows_count"]),
+            campaign_count=self._int0(row["campaign_count"]),
+            impressions=impressions,
+            card_views=card_views,
+            ctr_percent=self._safe_percent(card_views, impressions),
+            spend=self._float0(spend),
+            profit_spend=self._float0(spend),
+            source_spend=self._float0(spend),
+            drr_percent=self._safe_percent(spend, orders_amount),
+            source_drr_percent=self._safe_percent(spend, orders_amount),
+            orders_amount=self._float0(orders_amount),
+            orders_count=self._int0(row["orders_count"]),
+            cpc=self._float(spend / Decimal(str(card_views)))
+            if card_views > 0 and spend > 0
+            else None,
+            roas=self._float(orders_amount / spend)
+            if spend > 0 and orders_amount > 0
+            else None,
+            daily=daily,
+        )
+
     async def owner_dashboard(
         self,
         session: AsyncSession,
@@ -4955,6 +5364,18 @@ class ControlTowerService:
             group_by="article",
             limit=100,
             offset=0,
+        )
+        wb_summary = await self._owner_wb_summary(
+            session,
+            account_id=account_id,
+            date_from=actual_from,
+            date_to=actual_to,
+        )
+        ads_summary = await self._owner_ads_summary(
+            session,
+            account_id=account_id,
+            date_from=actual_from,
+            date_to=actual_to,
         )
         owner_trust = self._owner_trust_from_summary(summary)
         owner_message = OwnerMessage(
@@ -5009,9 +5430,65 @@ class ControlTowerService:
         ad_spend_final = getattr(summary.kpis, "ad_spend_final", None)
         if ad_spend_final is None:
             ad_spend_final = ad_spend_value
+        profit_ad_spend = self._decimal(ad_spend_value)
+        if profit_ad_spend <= 0:
+            profit_ad_spend = self._decimal(ad_spend_final)
         total_seller_costs = getattr(summary.kpis, "total_seller_costs", None)
         if total_seller_costs is None:
             total_seller_costs = getattr(summary.kpis, "total_seller_expenses", 0.0)
+        profit_for_wb_summary = getattr(
+            summary.kpis, "net_profit_after_all_expenses", None
+        )
+        if profit_for_wb_summary is None:
+            profit_for_wb_summary = getattr(
+                summary.kpis, "net_profit_after_overhead", None
+            )
+        wb_updates: dict[str, Any] = {
+            "sales_amount": self._float0(revenue_value),
+            "wb_expenses_total": abs(
+                self._float0(getattr(summary.kpis, "wb_expenses_total", 0.0))
+            ),
+            "wb_commission": abs(
+                self._float0(getattr(summary.kpis, "wb_commission", 0.0))
+            ),
+            "logistics": abs(
+                self._float0(getattr(summary.kpis, "wb_logistics", 0.0))
+                + self._float0(getattr(summary.kpis, "wb_logistics_rebill", 0.0))
+            ),
+            "acceptance": abs(self._float0(getattr(summary.kpis, "acceptance", 0.0))),
+            "penalties": abs(self._float0(getattr(summary.kpis, "penalty", 0.0))),
+            "storage": abs(self._float0(getattr(summary.kpis, "storage", 0.0))),
+            "cogs": self._float0(getattr(summary.kpis, "seller_cogs", 0.0)),
+        }
+        if profit_for_wb_summary is not None:
+            wb_updates["margin_amount"] = self._float0(profit_for_wb_summary)
+            wb_updates["margin_percent"] = self._safe_percent(
+                profit_for_wb_summary, revenue_value
+            )
+        wb_summary = wb_summary.model_copy(update=wb_updates)
+        source_spend = self._decimal(getattr(summary.kpis, "ads_source_spend", 0.0))
+        if source_spend <= 0:
+            source_spend = self._decimal(ads_summary.source_spend)
+        ads_summary = ads_summary.model_copy(
+            update={
+                "spend": self._float0(profit_ad_spend),
+                "profit_spend": self._float0(profit_ad_spend),
+                "source_spend": self._float0(source_spend),
+                "allocation_gap": self._float0(source_spend - profit_ad_spend),
+                "drr_percent": self._safe_percent(profit_ad_spend, revenue_value),
+                "source_drr_percent": self._safe_percent(
+                    source_spend, ads_summary.orders_amount
+                ),
+                "cpc": self._float(source_spend / Decimal(str(ads_summary.card_views)))
+                if ads_summary.card_views > 0 and source_spend > 0
+                else None,
+                "roas": self._float(
+                    Decimal(str(ads_summary.orders_amount)) / source_spend
+                )
+                if source_spend > 0 and ads_summary.orders_amount > 0
+                else None,
+            }
+        )
         result = OwnerDashboardRead(
             computed_at=getattr(summary, "computed_at", None),
             cache_status=str(getattr(summary, "cache_status", "miss") or "miss"),
@@ -5078,6 +5555,8 @@ class ControlTowerService:
             negative_profit_sku_count=int(summary.kpis.negative_profit_sku_count),
             blocked_data_sku_count=int(summary.kpis.blocked_data_sku_count),
             action_summary=action_summary,
+            wb_summary=wb_summary,
+            ads_summary=ads_summary,
             top_risks=[
                 self._owner_dashboard_item_from_action(
                     item, trust_state=owner_trust.status

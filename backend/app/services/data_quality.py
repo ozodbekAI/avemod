@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 from collections import defaultdict
 from io import StringIO
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlencode
 
@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.action_registry import get_action
 from app.core.current_state import orders_current_subquery, sales_current_subquery
 from app.core.issue_refs import extract_issue_refs
+from app.core.parsing import parse_datetime
 from app.core.time import utcnow
 from app.models.accounts import WBAPICategory, WBAPIToken, WBAccount
 from app.models.ads import WBAdStatsDaily
@@ -518,8 +519,39 @@ class DataQualityService:
             "expense_large_logistics_share",
             "expense_no_drilldown_rows",
         },
-        "sync_issues": {"failed_sync_domains", "scheduler_instability"},
+        "sync_issues": {
+            "failed_sync_domains",
+            "missed_load",
+            "scheduler_instability",
+            "sync_date_mismatch",
+        },
     }
+    SYNC_DATE_ALIGNMENT_RULES: tuple[dict[str, object], ...] = (
+        {
+            "key": "sales_orders",
+            "label": "Sales / orders",
+            "domains": ("sales", "orders"),
+            "max_delta_hours": 2,
+        },
+        {
+            "key": "money_sources",
+            "label": "Money sources",
+            "domains": ("sales", "orders", "finance"),
+            "max_delta_hours": 36,
+        },
+        {
+            "key": "stock_sales",
+            "label": "Stock / sales",
+            "domains": ("stocks", "sales"),
+            "max_delta_hours": 12,
+        },
+        {
+            "key": "ads_sales",
+            "label": "Ads / sales",
+            "domains": ("ads", "sales"),
+            "max_delta_hours": 24,
+        },
+    )
     DEFAULT_LARGE_LOGISTICS_SHARE_THRESHOLD_PERCENT = Decimal("70")
 
     def __init__(self) -> None:
@@ -1021,7 +1053,7 @@ class DataQualityService:
         comment: str | None = None,
     ) -> DataQualityIssueRecheckResponse:
         from fastapi import HTTPException
-        from app.models.problem_engine import ProblemInstance, ProblemInstanceHistory
+        from app.models.problem_engine import ProblemInstanceHistory
 
         issue = await self.get_issue(session, issue_id=issue_id)
         if issue is None:
@@ -3326,6 +3358,7 @@ class DataQualityService:
                 "stocks_task_not_ready",
                 "stocks_task_failed",
                 "missed_load",
+                "sync_date_mismatch",
                 "failed_sync_domains",
                 "latest_stocks_not_completed",
             }:
@@ -4384,6 +4417,7 @@ class DataQualityService:
             "vendor_code_multiple_nm_id",
             "missing_chrt_id",
             "missed_load",
+            "sync_date_mismatch",
             "manual_cost_overlap",
             "manual_cost_linked_to_inactive_sku",
             "manual_cost_ambiguous_match",
@@ -4427,6 +4461,7 @@ class DataQualityService:
         await self._check_vendor_code_conflicts(session, account_id=account_id)
         await self._check_missing_chrt_id(session, account_id=account_id)
         await self._check_missed_load(session, account_id=account_id)
+        await self._check_sync_date_alignment(session, account_id=account_id)
         await self._check_pending_stocks_task(session, account_id=account_id)
         await self._check_manual_cost_overlap(session, account_id=account_id)
         await self._check_manual_cost_linkage(session, account_id=account_id)
@@ -4909,8 +4944,14 @@ class DataQualityService:
             "finance": {WBAPICategory.FINANCE.value},
             "supplies": {WBAPICategory.SUPPLIES.value},
             "ads": {WBAPICategory.PROMOTION.value},
+            "promotions": {WBAPICategory.PROMOTION.value},
             "analytics": {WBAPICategory.ANALYTICS.value},
             "tariffs": {WBAPICategory.TARIFFS.value},
+            "logistics": {
+                WBAPICategory.ANALYTICS.value,
+                WBAPICategory.SUPPLIES.value,
+                WBAPICategory.MARKETPLACE.value,
+            },
             "documents": {WBAPICategory.DOCUMENTS.value},
         }
         return {
@@ -4931,8 +4972,10 @@ class DataQualityService:
             "finance": 48,
             "supplies": 48,
             "ads": 24,
+            "promotions": 24,
             "analytics": 6,
             "tariffs": 48,
+            "logistics": 48,
             "documents": 48,
         }
         enabled_domains = await self._enabled_domains(session, account_id=account_id)
@@ -5010,6 +5053,114 @@ class DataQualityService:
                     },
                 )
                 touched += 1
+        return touched
+
+    @staticmethod
+    def _sync_watermark_value(value: object) -> datetime | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            try:
+                parsed = parse_datetime(value)
+            except (TypeError, ValueError):
+                return None
+        if parsed is None:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed
+
+    @classmethod
+    def _sync_watermark_from_cursor(
+        cls, cursor: WBSyncCursor | None
+    ) -> datetime | None:
+        if cursor is None or not isinstance(cursor.cursor_value, dict):
+            return None
+        for key in (
+            "lastChangeDate",
+            "snapshotAt",
+            "completedAt",
+            "dateTo",
+            "endTime",
+            "endDate",
+            "lastRunAt",
+            "syncedAt",
+            "collectedAt",
+            "updatedAt",
+        ):
+            parsed = cls._sync_watermark_value(cursor.cursor_value.get(key))
+            if parsed is not None:
+                return parsed
+        return None
+
+    async def _check_sync_date_alignment(
+        self, session: AsyncSession, *, account_id: int
+    ) -> int:
+        enabled_domains = await self._enabled_domains(session, account_id=account_id)
+        cursors = list(
+            (
+                await session.execute(
+                    select(WBSyncCursor).where(
+                        WBSyncCursor.account_id == account_id,
+                        WBSyncCursor.cursor_key == "default",
+                    )
+                )
+            ).scalars()
+        )
+        cursor_by_domain = {str(cursor.domain): cursor for cursor in cursors}
+        touched = 0
+        for rule in self.SYNC_DATE_ALIGNMENT_RULES:
+            rule_domains = [
+                str(domain)
+                for domain in rule["domains"]  # type: ignore[index]
+                if str(domain) in enabled_domains
+            ]
+            if len(rule_domains) < 2:
+                continue
+            available = [
+                (domain, watermark)
+                for domain in rule_domains
+                if (
+                    watermark := self._sync_watermark_from_cursor(
+                        cursor_by_domain.get(domain)
+                    )
+                )
+                is not None
+            ]
+            if len(available) < 2:
+                continue
+            newest_domain, newest_at = max(available, key=lambda item: item[1])
+            oldest_domain, oldest_at = min(available, key=lambda item: item[1])
+            delta_hours = (newest_at - oldest_at).total_seconds() / 3600
+            threshold_hours = float(rule["max_delta_hours"])
+            if delta_hours <= threshold_hours:
+                continue
+            await self.open_issue(
+                session,
+                account_id=account_id,
+                domain="data_quality",
+                code="sync_date_mismatch",
+                message=(
+                    f"{rule['label']}: даты WB-источников расходятся. "
+                    f"{oldest_domain} отстаёт от {newest_domain} на "
+                    f"{round(delta_hours, 2)} ч."
+                ),
+                severity="warning",
+                entity_key=str(rule["key"]),
+                payload={
+                    "rule": rule["key"],
+                    "domains": rule_domains,
+                    "oldestDomain": oldest_domain,
+                    "oldestAt": oldest_at.isoformat(),
+                    "newestDomain": newest_domain,
+                    "newestAt": newest_at.isoformat(),
+                    "deltaHours": round(delta_hours, 2),
+                    "thresholdHours": threshold_hours,
+                },
+            )
+            touched += 1
         return touched
 
     async def _check_pending_stocks_task(
