@@ -64,11 +64,14 @@ systemctl is-active --quiet "$SERVICE_NAME" || (journalctl -u "$SERVICE_NAME" -n
 nginx -t
 systemctl reload nginx
 
-for _ in $(seq 1 6); do
+for _ in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:8016/api/v1/health --max-time 5 >/dev/null; then
     exit 0
   fi
   sleep 1
 done
 
-echo "backend health check did not respond in time; service is active, deploy continues" >&2
+echo "backend health check did not respond in time" >&2
+systemctl status "$SERVICE_NAME" --no-pager -l || true
+journalctl -u "$SERVICE_NAME" -n 80 --no-pager || true
+exit 1

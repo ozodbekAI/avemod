@@ -69,9 +69,7 @@ exports/live_backend_full_audit_*/
 exports/final_backend_audit_*/
 exports/full_backend_db_audit_*/
 exports/full_endpoint_anomaly_audit_*/
-exports/
-!app/modules/exports/
-!app/modules/exports/**
+/exports/
 reports/
 reports/**/source/
 output/
