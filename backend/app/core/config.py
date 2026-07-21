@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     wb_http_retry_backoff_seconds: int = 1
     analytics_funnel_batch_size: int = 20
     finance_detail_pages_per_run: int = 3
+    finance_detail_page_limit: int = 100_000
+    finance_refresh_marts_after_sync: bool = True
     stocks_pending_task_max_age_hours: int = 6
     sync_running_cursor_stale_hours: int = 6
     checker_base_url: str | None = None

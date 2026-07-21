@@ -30,7 +30,7 @@ class FinanceSyncService(DomainSyncBase):
     domain = "finance"
     category = "finance"
     REQUEST_INTERVAL_SECONDS = 61
-    DETAIL_PAGE_LIMIT = 100000
+    DETAIL_PAGE_LIMIT = get_settings().finance_detail_page_limit
     MAX_DETAIL_PAGES_PER_RUN = get_settings().finance_detail_pages_per_run
     DETAILS_CURSOR_KEY = "realization_details"
     ACQUIRING_CURSOR_KEY = "acquiring_details"
@@ -278,7 +278,7 @@ class FinanceSyncService(DomainSyncBase):
                 date_from=date_from,
                 date_to=date_to,
                 rrd_id=rrd_id,
-                limit=100000,
+                limit=self.DETAIL_PAGE_LIMIT,
             )
             rows = self._as_list(payload, "report", "reports", "data")
             if not rows:
@@ -288,7 +288,7 @@ class FinanceSyncService(DomainSyncBase):
                 break
             all_rows.extend(typed_rows)
             last_rrd_id = typed_rows[-1].get("rrdId") or typed_rows[-1].get("rrd_id")
-            if len(typed_rows) < 100000 or last_rrd_id in (None, rrd_id):
+            if len(typed_rows) < self.DETAIL_PAGE_LIMIT or last_rrd_id in (None, rrd_id):
                 break
             rrd_id = int(last_rrd_id)
             await self._pause()
@@ -312,7 +312,7 @@ class FinanceSyncService(DomainSyncBase):
                 date_from=date_from,
                 date_to=date_to,
                 rrd_id=rrd_id,
-                limit=100000,
+                limit=self.DETAIL_PAGE_LIMIT,
             )
             rows = self._as_list(payload, "report", "reports", "data")
             if not rows:
@@ -329,7 +329,7 @@ class FinanceSyncService(DomainSyncBase):
                 rowsLoaded=len(all_rows),
                 nextRrdId=last_rrd_id,
             )
-            if len(typed_rows) < 100000 or last_rrd_id in (None, rrd_id):
+            if len(typed_rows) < self.DETAIL_PAGE_LIMIT or last_rrd_id in (None, rrd_id):
                 break
             rrd_id = int(last_rrd_id)
             await self._progress(
@@ -650,7 +650,7 @@ class FinanceSyncService(DomainSyncBase):
         acquiring_status = "unsupported_by_wb"
         mart_refresh_status = "skipped"
         mart_refresh_result: dict[str, Any] = {}
-        if details_done:
+        if details_done and get_settings().finance_refresh_marts_after_sync:
             try:
                 await self._progress(
                     stage="finance_rate_limit_wait",
@@ -775,7 +775,7 @@ class FinanceSyncService(DomainSyncBase):
                     severity=issue_severity,
                 )
 
-        if details_done or realization_rows_total > 0:
+        if details_done and get_settings().finance_refresh_marts_after_sync:
             try:
                 await self._progress(
                     stage="finance_marts_refresh",
