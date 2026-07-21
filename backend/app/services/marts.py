@@ -56,7 +56,7 @@ from app.models.ads import WBAdStatsDaily
 from app.models.analytics import WBCardFunnelDaily
 from app.models.accounts import WBAccount
 from app.models.data_quality import DataQualityIssue
-from app.models.finance import WBRealizationReportRow
+from app.models.finance import WBRealizationReport, WBRealizationReportRow
 from app.models.manual_costs import ManualCost
 from app.models.marts import (
     MartAccountExpenseDaily,
@@ -299,6 +299,31 @@ class MartService:
             )
         ).scalar_one_or_none()
         return str(value or self.DEFAULT_FINANCE_TIMEZONE)
+
+    async def _finance_closed_through_date(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        date_from: date,
+        date_to: date,
+    ) -> date | None:
+        return (
+            await session.execute(
+                select(func.max(WBRealizationReport.date_to)).where(
+                    WBRealizationReport.account_id == account_id,
+                    WBRealizationReport.date_to.is_not(None),
+                    WBRealizationReport.date_to >= date_from,
+                    WBRealizationReport.date_to <= date_to,
+                )
+            )
+        ).scalar_one_or_none()
+
+    @staticmethod
+    def _should_use_operational_sale(
+        stat_date: date, closed_finance_date_to: date | None
+    ) -> bool:
+        return closed_finance_date_to is None or stat_date > closed_finance_date_to
 
     @staticmethod
     def _finance_sign(row: WBRealizationReportRow) -> int:
@@ -2144,6 +2169,12 @@ class MartService:
             date_from=date_from,
             date_to=date_to,
         )
+        closed_finance_date_to = await self._finance_closed_through_date(
+            session,
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
         for order in order_rows:
             stat_date = self._mapping_date(order.get("date"))
             if stat_date is None:
@@ -2171,6 +2202,10 @@ class MartService:
         for sale in sale_rows:
             stat_date = self._mapping_date(sale.get("date"))
             if stat_date is None:
+                continue
+            if not self._should_use_operational_sale(
+                stat_date, closed_finance_date_to
+            ):
                 continue
             bucket = get_bucket(
                 stat_date,

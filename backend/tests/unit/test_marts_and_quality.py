@@ -145,6 +145,22 @@ def test_issue_resolution_guide_for_stocks_task_not_ready_is_not_generic() -> No
     assert len(list(guide["step_by_step"])) >= 4
 
 
+def test_operational_sales_are_only_used_after_closed_finance_period() -> None:
+    assert (
+        MartService._should_use_operational_sale(
+            date(2026, 7, 19), date(2026, 7, 19)
+        )
+        is False
+    )
+    assert (
+        MartService._should_use_operational_sale(
+            date(2026, 7, 20), date(2026, 7, 19)
+        )
+        is True
+    )
+    assert MartService._should_use_operational_sale(date(2026, 7, 19), None) is True
+
+
 def test_issue_resolution_guide_for_dead_stock_is_not_generic() -> None:
     guide = issue_resolution_guide("dead_stock", {})
 
