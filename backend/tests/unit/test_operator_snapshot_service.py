@@ -348,6 +348,23 @@ def test_owner_dashboard_hash_uses_payload_version() -> None:
 
 
 @pytest.mark.asyncio
+async def test_operator_invalidate_snapshots_marks_rows_not_ready() -> None:
+    service = OperatorEndpointSnapshotService()
+    session = AsyncMock()
+
+    await service.invalidate_snapshots(session, account_id=1)
+
+    stmt = session.execute.await_args.args[0]
+    compiled = str(
+        stmt.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "snapshot_status" in compiled
+    assert "invalidated" in compiled
+
+
+@pytest.mark.asyncio
 async def test_owner_dashboard_recomputes_snapshot_without_dense_daily(
     monkeypatch,
 ) -> None:

@@ -226,3 +226,20 @@ async def test_save_snapshot_uses_postgres_upsert_without_flush() -> None:
     stmt = session.execute.await_args_list[1].args[0]
     compiled = str(stmt.compile(dialect=postgresql.dialect()))
     assert "ON CONFLICT" in compiled
+
+
+@pytest.mark.asyncio
+async def test_invalidate_snapshots_marks_rows_not_ready() -> None:
+    service = MoneyEndpointSnapshotService()
+    session = AsyncMock()
+
+    await service.invalidate_snapshots(session, account_id=1)
+
+    stmt = session.execute.await_args.args[0]
+    compiled = str(
+        stmt.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "snapshot_status" in compiled
+    assert "invalidated" in compiled

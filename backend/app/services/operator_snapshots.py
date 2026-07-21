@@ -531,7 +531,11 @@ class OperatorEndpointSnapshotService:
                     list(namespaces or self.SUPPORTED_NAMESPACES)
                 )
             )
-            .values(expires_at=utcnow(), updated_at=func.now())
+            .values(
+                snapshot_status="invalidated",
+                expires_at=utcnow(),
+                updated_at=func.now(),
+            )
         )
         if account_id is not None:
             stmt = stmt.where(APIResponseSnapshot.account_id == account_id)
