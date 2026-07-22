@@ -146,8 +146,8 @@ def test_product_row_builds_sku_level_shipment_metrics() -> None:
             "cancelled_orders_qty": 2.0,
             "cancelled_revenue": 2400.0,
             "sales_qty": 10.0,
-            "sales_revenue": 12_000.0,
-            "sales_for_pay": 8_000.0,
+            "sales_revenue": 0.0,
+            "sales_for_pay": 0.0,
             "finance_revenue": 11_000.0,
             "finance_for_pay": 7_400.0,
             "finance_rows": 10,
@@ -172,7 +172,46 @@ def test_product_row_builds_sku_level_shipment_metrics() -> None:
     assert "14 дней" in row.tags
 
 
-def test_warehouse_row_prefers_finance_without_false_missed() -> None:
+def test_product_row_blends_closed_finance_with_open_sales_tail() -> None:
+    service = LogisticsService()
+
+    row = service._product_row(
+        {
+            "warehouse_name": "Тула",
+            "region_name": "Южный федеральный округ",
+            "nm_id": 123456,
+            "vendor_code": "SKU-1",
+            "barcode": "460000000001",
+            "title": "Тестовый товар",
+            "brand": "Brand",
+            "subject_name": "Категория",
+            "stock_units": 20.0,
+            "in_way_to_client": 0.0,
+            "in_way_from_client": 0.0,
+            "orders_qty": 12.0,
+            "cancelled_orders_qty": 0.0,
+            "cancelled_revenue": 0.0,
+            "sales_qty": 10.0,
+            "sales_revenue": 1_000.0,
+            "sales_for_pay": 700.0,
+            "finance_revenue": 9_000.0,
+            "finance_for_pay": 6_300.0,
+            "finance_rows": 9,
+            "finance_money_rows": 9,
+            "logistics_cost": 500.0,
+            "storage_cost": 100.0,
+            "acceptance_cost": 50.0,
+            "return_logistics_cost": 0.0,
+        },
+        day_count=10,
+    )
+
+    assert row.revenue == pytest.approx(10_000)
+    assert row.for_pay == pytest.approx(7_000)
+    assert row.revenue_source == "finance+sales"
+
+
+def test_warehouse_row_uses_finance_without_false_missed() -> None:
     service = LogisticsService()
 
     row = service._warehouse_row(
@@ -183,8 +222,8 @@ def test_warehouse_row_prefers_finance_without_false_missed() -> None:
             cancelled_orders_qty=3,
             cancelled_revenue=300,
             sales_qty=10,
-            sales_revenue=1000,
-            sales_for_pay=700,
+            sales_revenue=0,
+            sales_for_pay=0,
             finance_revenue=900,
             finance_for_pay=620,
             finance_rows=5,
@@ -210,6 +249,31 @@ def test_warehouse_row_prefers_finance_without_false_missed() -> None:
     assert row.region_sales_qty == pytest.approx(50)
 
 
+def test_warehouse_row_blends_closed_finance_with_open_sales_tail() -> None:
+    service = LogisticsService()
+
+    row = service._warehouse_row(
+        _warehouse_item(
+            stock_units=30,
+            orders_qty=12,
+            sales_qty=10,
+            sales_revenue=1000,
+            sales_for_pay=700,
+            finance_revenue=9000,
+            finance_for_pay=6300,
+            finance_rows=9,
+            finance_money_rows=9,
+            logistics_cost=500,
+        ),
+        day_count=10,
+        region_demand={},
+    )
+
+    assert row.revenue == pytest.approx(10_000)
+    assert row.for_pay == pytest.approx(7_000)
+    assert row.revenue_source == "finance+sales"
+
+
 def test_warehouse_row_keeps_zero_net_finance_instead_of_sales_fallback() -> None:
     service = LogisticsService()
 
@@ -218,8 +282,8 @@ def test_warehouse_row_keeps_zero_net_finance_instead_of_sales_fallback() -> Non
             stock_units=10,
             orders_qty=2,
             sales_qty=1,
-            sales_revenue=1000,
-            sales_for_pay=700,
+            sales_revenue=0,
+            sales_for_pay=0,
             finance_revenue=0,
             finance_for_pay=0,
             finance_rows=2,
@@ -263,26 +327,51 @@ def test_finance_return_rows_are_signed_before_logistics_margin_math() -> None:
     service = LogisticsService()
     sale = WBRealizationReportRow(
         doc_type_name="Продажа",
+        is_reconcilable=True,
         retail_amount=Decimal("1000"),
         retail_price_with_disc=Decimal("900"),
         for_pay=Decimal("620"),
     )
     returned = WBRealizationReportRow(
         doc_type_name="Возврат",
+        is_reconcilable=True,
         retail_amount=Decimal("1000"),
         retail_price_with_disc=Decimal("900"),
         for_pay=Decimal("620"),
     )
+    service_row = WBRealizationReportRow(
+        doc_type_name="Логистика",
+        is_reconcilable=False,
+        retail_amount=Decimal("500"),
+        for_pay=Decimal("500"),
+    )
 
     revenue = service._signed_finance_amount(
-        sale, sale.retail_price_with_disc
-    ) + service._signed_finance_amount(returned, returned.retail_price_with_disc)
+        sale, sale.retail_amount
+    ) + service._signed_finance_amount(returned, returned.retail_amount)
     for_pay = service._signed_finance_amount(
         sale, sale.for_pay
     ) + service._signed_finance_amount(returned, returned.for_pay)
 
+    assert service._is_reconcilable_finance_row(sale) is True
+    assert service._is_reconcilable_finance_row(returned) is True
+    assert service._is_reconcilable_finance_row(service_row) is False
     assert revenue == Decimal("0")
     assert for_pay == Decimal("0")
+
+
+def test_operational_sales_start_skips_closed_finance_period() -> None:
+    service = LogisticsService()
+
+    assert service._operational_sales_start(
+        start=date(2026, 7, 1), closed_finance_date_to=None
+    ) == date(2026, 7, 1)
+    assert service._operational_sales_start(
+        start=date(2026, 7, 1), closed_finance_date_to=date(2026, 6, 30)
+    ) == date(2026, 7, 1)
+    assert service._operational_sales_start(
+        start=date(2026, 7, 1), closed_finance_date_to=date(2026, 7, 10)
+    ) == date(2026, 7, 11)
 
 
 def test_acceptance_requires_allow_unload_and_parses_best_slot_details() -> None:

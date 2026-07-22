@@ -195,6 +195,50 @@ class UnifiedAction(BigIntPKMixin, TimestampMixin, Base):
     payload_json: Mapped[dict] = mapped_column(JSONB, default=dict)
 
 
+class ManualTaskItem(BigIntPKMixin, TimestampMixin, Base):
+    __tablename__ = "manual_task_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "action_id", "item_key", name="uq_manual_task_items_action_item_key"
+        ),
+        Index("ix_manual_task_items_account_status", "account_id", "status"),
+        Index("ix_manual_task_items_action_status", "action_id", "status"),
+        Index("ix_manual_task_items_nm_status", "nm_id", "status"),
+    )
+
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("wb_accounts.id", ondelete="CASCADE"), index=True
+    )
+    action_id: Mapped[int] = mapped_column(
+        ForeignKey("unified_actions.id", ondelete="CASCADE"), index=True
+    )
+    item_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    nm_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    sku_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    vendor_code: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    photo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", nullable=False, index=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    completed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("auth_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    skipped_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    skipped_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("auth_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    last_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    product_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
 class OperatorCase(BigIntPKMixin, TimestampMixin, Base):
     __tablename__ = "operator_cases"
     __table_args__ = (

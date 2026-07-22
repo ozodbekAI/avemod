@@ -118,13 +118,24 @@ export const API_ENDPOINTS = {
   portal: {
     modulesHealth: "/portal/modules/health",
     agentMessage: "/portal/agent/message",
+    agentMcp: "/portal/agent/mcp",
     agentTools: "/portal/agent/tools",
     agentToolCall: "/portal/agent/tool-call",
     agentManualTask: "/portal/agent/manual-task",
+    agentScenarioTemplates: "/portal/agent/scenario-templates",
+    agentScenarios: "/portal/agent/scenarios",
+    agentScenarioDetail: (id: number | string) =>
+      `/portal/agent/scenarios/${id}`,
+    agentScenarioRun: (id: number | string) =>
+      `/portal/agent/scenarios/${id}/run`,
+    agentScenarioRuns: "/portal/agent/scenario-runs",
+    agentFinance: "/portal/agent/finance",
     doctor: "/portal/doctor",
     overview: "/portal/overview",
     actions: "/portal/actions",
     manualActionCreate: "/portal/actions/manual",
+    manualTaskItemUpdate: (actionId: number | string, itemKey: string) =>
+      `/portal/actions/${actionId}/manual-items/${encodeURIComponent(itemKey)}`,
     assignableUsers: "/portal/assignable-users",
     actionUpdateBySource: "/portal/actions/by-source",
     problemRecheck: (id: number | string) => `/portal/problems/${id}/recheck`,

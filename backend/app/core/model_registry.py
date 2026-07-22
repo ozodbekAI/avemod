@@ -4,6 +4,7 @@ from __future__ import annotations
 def load_all_models() -> None:
     from app.models import ab_tests as _ab_tests_models  # noqa: F401
     from app.models import accounts as _accounts_models  # noqa: F401
+    from app.models import agent as _agent_models  # noqa: F401
     from app.models import ads as _ads_models  # noqa: F401
     from app.models import analytics as _analytics_models  # noqa: F401
     from app.models import auth as _auth_models  # noqa: F401

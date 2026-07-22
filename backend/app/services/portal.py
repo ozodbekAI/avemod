@@ -31,7 +31,12 @@ from app.models.control_tower import ActionRecommendation
 from app.models.data_quality import DataQualityIssue
 from app.models.experiments import Experiment
 from app.models.manual_costs import ManualCost
-from app.models.operator import OperatorDraft, ResultEvent, UnifiedAction
+from app.models.operator import (
+    ManualTaskItem,
+    OperatorDraft,
+    ResultEvent,
+    UnifiedAction,
+)
 from app.models.photo_studio import PhotoProject, PhotoVersion
 from app.models.problem_engine import (
     ProblemDefinition,
@@ -65,6 +70,7 @@ from app.schemas.portal import (
     PortalActionsPage,
     PortalAssignableUserRead,
     PortalManualActionCreateRequest,
+    PortalManualTaskItemUpdateRequest,
     PortalActionSourceUpdateRequest,
     PortalActionUpdateRequest,
     PortalDataBlock,
@@ -4255,6 +4261,14 @@ class PortalService:
         )
         unified_rows_list = list(unified_rows or [])
         shadow_overrides = self._shadow_status_overrides(unified_rows_list)
+        manual_task_items_by_action = await self._manual_task_items_by_action_ids(
+            session,
+            [
+                int(row.id)
+                for row in unified_rows_list
+                if row.id is not None and self._is_manual_task_action(row)
+            ],
+        )
 
         items: list[PortalActionRead] = []
         if actions_page is not None:
@@ -4270,7 +4284,8 @@ class PortalService:
                             include_beta
                             or self._is_mvp_action_module(row.source_module)
                         )
-                    ]
+                    ],
+                    manual_task_items_by_action=manual_task_items_by_action,
                 )
             )
         if dq_page is not None:
@@ -4714,6 +4729,281 @@ class PortalService:
                 detail="Assigned user does not have access to this account",
             )
 
+    @staticmethod
+    def _manual_task_product_item_key(index: int) -> str:
+        return f"product-{index + 1}"
+
+    @staticmethod
+    def _is_manual_task_action(row: UnifiedAction) -> bool:
+        payload = dict(row.payload_json or {})
+        return str(row.source_module or "").lower() == "manual" or bool(
+            payload.get("manual_task")
+        )
+
+    @staticmethod
+    def _manual_task_product_rows(row: UnifiedAction) -> list[dict[str, Any]]:
+        payload = dict(row.payload_json or {})
+        products = payload.get("selected_products")
+        if isinstance(products, list):
+            return [dict(item) for item in products if isinstance(item, dict)]
+        linked = payload.get("linked_entity")
+        if isinstance(linked, dict):
+            return [dict(linked)]
+        return []
+
+    async def _manual_task_items_for_action(
+        self, session: AsyncSession, action_id: int
+    ) -> list[ManualTaskItem]:
+        result = await session.execute(
+            select(ManualTaskItem)
+            .where(ManualTaskItem.action_id == int(action_id))
+            .order_by(ManualTaskItem.id.asc())
+        )
+        return [item for item in result.scalars() if isinstance(item, ManualTaskItem)]
+
+    async def _manual_task_items_by_action_ids(
+        self, session: AsyncSession, action_ids: list[int]
+    ) -> dict[int, list[ManualTaskItem]]:
+        normalized_ids = [int(value) for value in action_ids if value is not None]
+        if not normalized_ids:
+            return {}
+        result = await session.execute(
+            select(ManualTaskItem)
+            .where(ManualTaskItem.action_id.in_(normalized_ids))
+            .order_by(ManualTaskItem.action_id.asc(), ManualTaskItem.id.asc())
+        )
+        grouped: dict[int, list[ManualTaskItem]] = {}
+        for item in result.scalars():
+            if not isinstance(item, ManualTaskItem):
+                continue
+            grouped.setdefault(int(item.action_id), []).append(item)
+        return grouped
+
+    async def _ensure_manual_task_items(
+        self, session: AsyncSession, row: UnifiedAction
+    ) -> list[ManualTaskItem]:
+        if row.id is None or not self._is_manual_task_action(row):
+            return []
+        existing = await self._manual_task_items_for_action(session, int(row.id))
+        if existing:
+            return existing
+        products = self._manual_task_product_rows(row)
+        if not products:
+            return []
+        payload = dict(row.payload_json or {})
+        enriched_products: list[dict[str, Any]] = []
+        created: list[ManualTaskItem] = []
+        used_keys: set[str] = set()
+        for index, product in enumerate(products):
+            item_key = (
+                str(
+                    product.get("manual_task_item_key") or product.get("item_key") or ""
+                )
+                .strip()
+                .lower()
+            )
+            if not item_key or "/" in item_key or item_key in used_keys:
+                item_key = self._manual_task_product_item_key(index)
+            while item_key in used_keys:
+                item_key = (
+                    f"{self._manual_task_product_item_key(index)}-{len(used_keys)}"
+                )
+            used_keys.add(item_key)
+            product["manual_task_item_key"] = item_key
+            enriched_products.append(product)
+            created.append(
+                ManualTaskItem(
+                    account_id=row.account_id,
+                    action_id=int(row.id),
+                    item_key=item_key,
+                    nm_id=self._optional_int(product.get("nm_id")),
+                    sku_id=self._optional_int(product.get("sku_id")),
+                    vendor_code=str(product.get("vendor_code") or "").strip() or None,
+                    title=str(product.get("title") or product.get("name") or "").strip()
+                    or None,
+                    photo_url=str(
+                        product.get("photo_url")
+                        or product.get("image_url")
+                        or product.get("thumbnail")
+                        or ""
+                    ).strip()
+                    or None,
+                    status="pending",
+                    product_json=product,
+                )
+            )
+        payload["selected_products"] = enriched_products
+        payload["product_count"] = len(enriched_products)
+        row.payload_json = payload
+        session.add_all(created)
+        await session.flush()
+        return created
+
+    @staticmethod
+    def _manual_task_progress_payload(items: list[ManualTaskItem]) -> dict[str, Any]:
+        done = sum(1 for item in items if str(item.status or "") == "done")
+        skipped = sum(1 for item in items if str(item.status or "") == "skipped")
+        total = len(items)
+        return {
+            "total": total,
+            "done": done,
+            "skipped": skipped,
+            "pending": max(total - done - skipped, 0),
+            "percent": round((done / total) * 100) if total else 0,
+            "items": [
+                {
+                    "id": item.id,
+                    "item_key": item.item_key,
+                    "status": item.status,
+                    "nm_id": item.nm_id,
+                    "sku_id": item.sku_id,
+                    "vendor_code": item.vendor_code,
+                    "title": item.title,
+                    "photo_url": item.photo_url,
+                    "completed_at": item.completed_at.isoformat()
+                    if item.completed_at
+                    else None,
+                    "completed_by_user_id": item.completed_by_user_id,
+                    "skipped_at": item.skipped_at.isoformat()
+                    if item.skipped_at
+                    else None,
+                    "skipped_by_user_id": item.skipped_by_user_id,
+                    "last_comment": item.last_comment,
+                }
+                for item in items
+            ],
+        }
+
+    def _manual_task_payload_with_progress(
+        self, payload: dict[str, Any], items: list[ManualTaskItem] | None
+    ) -> dict[str, Any]:
+        if items is None:
+            return payload
+        return {
+            **payload,
+            "manual_task_progress": self._manual_task_progress_payload(items),
+        }
+
+    async def _set_all_manual_task_items_status(
+        self,
+        session: AsyncSession,
+        row: UnifiedAction,
+        *,
+        status: str,
+        user_id: int | None,
+        comment: str | None,
+    ) -> list[ManualTaskItem]:
+        items = await self._ensure_manual_task_items(session, row)
+        now = utcnow()
+        for item in items:
+            if status == "done":
+                item.status = "done"
+                item.completed_at = item.completed_at or now
+                item.completed_by_user_id = item.completed_by_user_id or user_id
+                item.skipped_at = None
+                item.skipped_by_user_id = None
+            elif status == "pending":
+                item.status = "pending"
+                item.completed_at = None
+                item.completed_by_user_id = None
+                item.skipped_at = None
+                item.skipped_by_user_id = None
+            item.last_comment = comment or item.last_comment
+        await session.flush()
+        return items
+
+    async def update_manual_task_item(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        action_id: int,
+        item_key: str,
+        payload: PortalManualTaskItemUpdateRequest,
+        user_id: int | None,
+    ) -> PortalActionRead:
+        row = await session.get(UnifiedAction, int(action_id))
+        if row is None or int(row.account_id) != int(account_id):
+            raise HTTPException(status_code=404, detail="Manual task not found")
+        if not self._is_manual_task_action(row):
+            raise HTTPException(status_code=422, detail="Action is not a manual task")
+        normalized_key = str(item_key or "").strip().lower()
+        items = await self._ensure_manual_task_items(session, row)
+        item = next(
+            (candidate for candidate in items if candidate.item_key == normalized_key),
+            None,
+        )
+        if item is None:
+            raise HTTPException(status_code=404, detail="Manual task item not found")
+        old_status = str(item.status or "pending")
+        status = str(payload.status or "pending").strip().lower()
+        now = utcnow()
+        if status == "done":
+            item.status = "done"
+            item.completed_at = now
+            item.completed_by_user_id = user_id
+            item.skipped_at = None
+            item.skipped_by_user_id = None
+        elif status == "skipped":
+            item.status = "skipped"
+            item.skipped_at = now
+            item.skipped_by_user_id = user_id
+            item.completed_at = None
+            item.completed_by_user_id = None
+        else:
+            item.status = "pending"
+            item.completed_at = None
+            item.completed_by_user_id = None
+            item.skipped_at = None
+            item.skipped_by_user_id = None
+        item.last_comment = payload.comment or item.last_comment
+        if row.status in {"new", "acknowledged"} and item.status in {"done", "skipped"}:
+            row.status = "in_progress"
+            self._apply_unified_action_task_fields(
+                row,
+                status="in_progress",
+                comment=payload.comment
+                or "Ручная задача частично выполнена по товарам.",
+                review_status="in_progress",
+                user_id=user_id,
+            )
+        await session.flush()
+        items = await self._manual_task_items_for_action(session, int(row.id))
+        row.payload_json = self._manual_task_payload_with_progress(
+            dict(row.payload_json or {}), items
+        )
+        self._append_unified_action_history_event(
+            row,
+            event_type="manual_task_item_updated",
+            old_value={"item_key": item.item_key, "status": old_status},
+            new_value={"item_key": item.item_key, "status": item.status},
+            comment=payload.comment,
+            user_id=user_id,
+        )
+        self._add_action_center_result_event(
+            session,
+            row=row,
+            account_id=row.account_id,
+            event_type="manual_task_item_updated",
+            status=row.status,
+            message="Manual task product progress updated.",
+            payload={
+                "item_key": item.item_key,
+                "old_status": old_status,
+                "status": item.status,
+                "progress": self._manual_task_progress_payload(items),
+                "comment": payload.comment,
+            },
+            user_id=user_id,
+        )
+        await session.commit()
+        self._invalidate_actions_cache()
+        await session.refresh(row)
+        items = await self._manual_task_items_for_action(session, int(row.id))
+        return self._finalize_action(
+            self._unified_action_row(row, manual_task_items=items)
+        )
+
     async def create_manual_action(
         self,
         session: AsyncSession,
@@ -4848,6 +5138,10 @@ class PortalService:
         )
         session.add(row)
         await session.flush()
+        manual_items = await self._ensure_manual_task_items(session, row)
+        row.payload_json = self._manual_task_payload_with_progress(
+            dict(row.payload_json or {}), manual_items
+        )
         self._append_unified_action_history_event(
             row,
             event_type="manual_task_created",
@@ -4880,7 +5174,10 @@ class PortalService:
         await session.commit()
         self._invalidate_actions_cache()
         await session.refresh(row)
-        return self._finalize_action(self._unified_action_row(row))
+        manual_items = await self._manual_task_items_for_action(session, int(row.id))
+        return self._finalize_action(
+            self._unified_action_row(row, manual_task_items=manual_items)
+        )
 
     async def update_action(
         self,
@@ -4951,6 +5248,25 @@ class PortalService:
             review_status=getattr(payload, "review_status", None),
             user_id=user_id,
         )
+        manual_items_for_response: list[ManualTaskItem] | None = None
+        if self._is_manual_task_action(unified):
+            if status in {"done", "resolved"}:
+                manual_items_for_response = (
+                    await self._set_all_manual_task_items_status(
+                        session,
+                        unified,
+                        status="done",
+                        user_id=user_id,
+                        comment=payload.comment,
+                    )
+                )
+            else:
+                manual_items_for_response = await self._ensure_manual_task_items(
+                    session, unified
+                )
+            unified.payload_json = self._manual_task_payload_with_progress(
+                dict(unified.payload_json or {}), manual_items_for_response
+            )
         if old_status != status:
             event_type = self._canonical_action_event_type(
                 getattr(payload, "event_type", None),
@@ -5142,7 +5458,11 @@ class PortalService:
             )
         await session.commit()
         self._invalidate_actions_cache()
-        return self._finalize_action(self._unified_action_row(unified))
+        return self._finalize_action(
+            self._unified_action_row(
+                unified, manual_task_items=manual_items_for_response
+            )
+        )
 
     async def upsert_synthetic_action(
         self,
@@ -5397,7 +5717,8 @@ class PortalService:
         else:
             row.status = status
             payload_json = dict(row.payload_json or {})
-            payload_json["shadow_synthetic"] = True
+            if not self._is_manual_task_action(row):
+                payload_json["shadow_synthetic"] = True
             payload_json["marketplace_change"] = False
             payload_json["can_confirm"] = False
             payload_json["source_sync_state"] = source_sync_state
@@ -5584,6 +5905,25 @@ class PortalService:
                     else {}
                 ),
             }
+        manual_items_for_response: list[ManualTaskItem] | None = None
+        if self._is_manual_task_action(row):
+            if status in {"done", "resolved"}:
+                manual_items_for_response = (
+                    await self._set_all_manual_task_items_status(
+                        session,
+                        row,
+                        status="done",
+                        user_id=user_id,
+                        comment=payload.comment,
+                    )
+                )
+            else:
+                manual_items_for_response = await self._ensure_manual_task_items(
+                    session, row
+                )
+            row.payload_json = self._manual_task_payload_with_progress(
+                dict(row.payload_json or {}), manual_items_for_response
+            )
         if status == "in_progress":
             await self.result_tracking.ensure_before_snapshot(
                 session,
@@ -5684,7 +6024,9 @@ class PortalService:
         )
         await session.commit()
         self._invalidate_actions_cache()
-        return self._finalize_action(self._unified_action_row(row))
+        return self._finalize_action(
+            self._unified_action_row(row, manual_task_items=manual_items_for_response)
+        )
 
     async def _update_problem_instance_action_by_source(
         self,
@@ -7426,7 +7768,12 @@ class PortalService:
             local_quality = await self.card_quality.product_quality(
                 session, account_id=account.id, nm_id=nm_id
             )
-            if local_quality.status not in {"unavailable", "not_configured", "empty", "not_analyzed"}:
+            if local_quality.status not in {
+                "unavailable",
+                "not_configured",
+                "empty",
+                "not_analyzed",
+            }:
                 return local_quality
         except Exception:
             local_quality = None
@@ -9706,11 +10053,29 @@ class PortalService:
             or category == "finance_reconcile"
         )
 
-    def _unified_action_rows(self, rows: list[UnifiedAction]) -> list[PortalActionRead]:
-        return [self._unified_action_row(row) for row in rows]
+    def _unified_action_rows(
+        self,
+        rows: list[UnifiedAction],
+        *,
+        manual_task_items_by_action: dict[int, list[ManualTaskItem]] | None = None,
+    ) -> list[PortalActionRead]:
+        return [
+            self._unified_action_row(
+                row,
+                manual_task_items=(manual_task_items_by_action or {}).get(int(row.id)),
+            )
+            for row in rows
+        ]
 
-    def _unified_action_row(self, row: UnifiedAction) -> PortalActionRead:
-        payload = dict(row.payload_json or {})
+    def _unified_action_row(
+        self,
+        row: UnifiedAction,
+        *,
+        manual_task_items: list[ManualTaskItem] | None = None,
+    ) -> PortalActionRead:
+        payload = self._manual_task_payload_with_progress(
+            dict(row.payload_json or {}), manual_task_items
+        )
         linked_entity = (
             payload.get("linked_entity")
             if isinstance(payload.get("linked_entity"), dict)
@@ -10362,7 +10727,9 @@ class PortalService:
         status_history = self._problem_instance_status_history(row, history_rows or [])
         solve_map_template = snapshot.get("solve_map_template")
         solve_map = build_action_center_solve_map_from_template(
-            template=solve_map_template if isinstance(solve_map_template, dict) else None,
+            template=solve_map_template
+            if isinstance(solve_map_template, dict)
+            else None,
             allowed_actions=allowed_actions,
             nm_id=row.nm_id,
             problem_instance_id=row.id,

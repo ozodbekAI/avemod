@@ -11,9 +11,10 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.current_state import orders_current_subquery, sales_current_subquery
 from app.core.time import utcnow
 from app.models.analytics import WBRegionSalesDaily
-from app.models.finance import WBRealizationReportRow
+from app.models.finance import WBRealizationReport, WBRealizationReportRow
 from app.models.logistics import (
     WBLogisticsAcceptanceReportRow,
     WBLogisticsPaidStorageRow,
@@ -22,6 +23,7 @@ from app.models.logistics import (
     WBSellerWarehouseStock,
 )
 from app.models.orders import WBOrder
+from app.models.product_cards import CoreSKU
 from app.models.sales import WBSale
 from app.models.stocks import WBStockSnapshot, WBStockSnapshotRow
 from app.models.supplies import WBSupply, WBSupplyGood
@@ -127,6 +129,12 @@ class LogisticsService:
             "in_way_to_client": 0.0,
             "in_way_from_client": 0.0,
         }
+        closed_finance_date_to = await self._finance_closed_through_date(
+            session,
+            account_id=account_id,
+            start=start,
+            end=end,
+        )
 
         await self._merge_orders(
             session,
@@ -141,6 +149,7 @@ class LogisticsService:
             account_id=account_id,
             start=start,
             end=end,
+            closed_finance_date_to=closed_finance_date_to,
             warehouse_map=warehouse_map,
         )
         await self._merge_finance(
@@ -223,6 +232,7 @@ class LogisticsService:
             search_norm=search_norm,
             limit=product_limit,
             latest_stock_at=latest_stock_at,
+            closed_finance_date_to=closed_finance_date_to,
         )
         regional_shipments = self._regional_shipments(
             filtered_rows, day_count=day_count
@@ -610,20 +620,24 @@ class LogisticsService:
         region_votes: dict[str, Counter[str]],
     ) -> None:
         start_dt, end_dt = self._date_bounds(start, end)
+        orders_current = orders_current_subquery("logistics_orders_current")
         cancelled_in_period = and_(
-            WBOrder.is_cancel.is_(True),
-            WBOrder.cancel_date.is_not(None),
-            WBOrder.cancel_date >= start_dt,
-            WBOrder.cancel_date < end_dt,
+            orders_current.c.is_cancel.is_(True),
+            orders_current.c.cancel_date.is_not(None),
+            orders_current.c.cancel_date >= start_dt,
+            orders_current.c.cancel_date < end_dt,
         )
         value_expr = func.coalesce(
-            WBOrder.price_with_disc, WBOrder.finished_price, WBOrder.total_price, 0
+            orders_current.c.finished_price,
+            orders_current.c.price_with_disc,
+            orders_current.c.total_price,
+            0,
         )
         stmt = (
             select(
-                WBOrder.warehouse_name.label("warehouse_name"),
-                WBOrder.oblast_okrug_name.label("region_name"),
-                func.count(WBOrder.id).label("orders_qty"),
+                orders_current.c.warehouse_name.label("warehouse_name"),
+                orders_current.c.oblast_okrug_name.label("region_name"),
+                func.count(orders_current.c.id).label("orders_qty"),
                 func.sum(case((cancelled_in_period, 1), else_=0)).label(
                     "cancelled_orders_qty"
                 ),
@@ -633,12 +647,14 @@ class LogisticsService:
                 ),
             )
             .where(
-                WBOrder.account_id == account_id,
-                WBOrder.date.is_not(None),
-                WBOrder.date >= start_dt,
-                WBOrder.date < end_dt,
+                orders_current.c.account_id == account_id,
+                orders_current.c.date.is_not(None),
+                orders_current.c.date >= start_dt,
+                orders_current.c.date < end_dt,
             )
-            .group_by(WBOrder.warehouse_name, WBOrder.oblast_okrug_name)
+            .group_by(
+                orders_current.c.warehouse_name, orders_current.c.oblast_okrug_name
+            )
         )
         for row in (await session.execute(stmt)).mappings():
             key = self._warehouse_key(row["warehouse_name"])
@@ -659,30 +675,43 @@ class LogisticsService:
         account_id: int,
         start: date,
         end: date,
+        closed_finance_date_to: date | None,
         warehouse_map: dict[str, dict[str, Any]],
     ) -> None:
-        start_dt, end_dt = self._date_bounds(start, end)
+        sales_start = self._operational_sales_start(
+            start=start, closed_finance_date_to=closed_finance_date_to
+        )
+        if sales_start > end:
+            return
+        start_dt, end_dt = self._date_bounds(sales_start, end)
+        sales_current = sales_current_subquery("logistics_sales_current")
+        value_expr = func.coalesce(
+            sales_current.c.finished_price,
+            sales_current.c.price_with_disc,
+            sales_current.c.total_price,
+            0,
+        )
+        for_pay_expr = func.coalesce(sales_current.c.for_pay, 0)
+        sale_return_condition = self._sale_return_condition(sales_current)
+        positive_sale_expr = case((sale_return_condition, 0), else_=1)
         stmt = (
             select(
-                WBSale.warehouse_name.label("warehouse_name"),
-                func.count(WBSale.id).label("sales_qty"),
-                func.sum(
-                    func.coalesce(
-                        WBSale.price_with_disc,
-                        WBSale.finished_price,
-                        WBSale.total_price,
-                        0,
-                    )
-                ).label("revenue"),
-                func.sum(func.coalesce(WBSale.for_pay, 0)).label("for_pay"),
+                sales_current.c.warehouse_name.label("warehouse_name"),
+                func.sum(positive_sale_expr).label("sales_qty"),
+                func.sum(self._signed_sale_sql_expr(value_expr, sales_current)).label(
+                    "revenue"
+                ),
+                func.sum(self._signed_sale_sql_expr(for_pay_expr, sales_current)).label(
+                    "for_pay"
+                ),
             )
             .where(
-                WBSale.account_id == account_id,
-                WBSale.date.is_not(None),
-                WBSale.date >= start_dt,
-                WBSale.date < end_dt,
+                sales_current.c.account_id == account_id,
+                sales_current.c.date.is_not(None),
+                sales_current.c.date >= start_dt,
+                sales_current.c.date < end_dt,
             )
-            .group_by(WBSale.warehouse_name)
+            .group_by(sales_current.c.warehouse_name)
         )
         for row in (await session.execute(stmt)).mappings():
             key = self._warehouse_key(row["warehouse_name"])
@@ -691,6 +720,57 @@ class LogisticsService:
             item["sales_qty"] += self._float(row["sales_qty"])
             item["sales_revenue"] += self._float(row["revenue"])
             item["sales_for_pay"] += self._float(row["for_pay"])
+
+    @staticmethod
+    def _operational_sales_start(
+        *, start: date, closed_finance_date_to: date | None
+    ) -> date:
+        if closed_finance_date_to is None:
+            return start
+        return max(start, closed_finance_date_to + timedelta(days=1))
+
+    async def _finance_closed_through_date(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        start: date,
+        end: date,
+    ) -> date | None:
+        if session is None:
+            return None
+        reports = (
+            (
+                await session.execute(
+                    select(
+                        WBRealizationReport.date_from,
+                        WBRealizationReport.date_to,
+                        WBRealizationReport.create_date,
+                    ).where(WBRealizationReport.account_id == account_id)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        closed_to_candidates = []
+        for report in reports:
+            closed_to = report["date_to"] or report["create_date"]
+            closed_from = report["date_from"] or closed_to
+            if closed_to is None or closed_from is None:
+                continue
+            if closed_to >= start and closed_from <= end:
+                closed_to_candidates.append(closed_to)
+        if closed_to_candidates:
+            return min(max(closed_to_candidates), end)
+        return (
+            await session.execute(
+                select(func.max(WBRealizationReportRow.rr_date)).where(
+                    WBRealizationReportRow.account_id == account_id,
+                    WBRealizationReportRow.rr_date >= start,
+                    WBRealizationReportRow.rr_date <= end,
+                )
+            )
+        ).scalar_one_or_none()
 
     async def _merge_finance(
         self,
@@ -701,13 +781,6 @@ class LogisticsService:
         end: date,
         warehouse_map: dict[str, dict[str, Any]],
     ) -> None:
-        revenue_expr = func.coalesce(
-            WBRealizationReportRow.retail_price_with_disc,
-            WBRealizationReportRow.retail_amount,
-            0,
-        )
-        for_pay_expr = func.coalesce(WBRealizationReportRow.for_pay, 0)
-        finance_money_row = or_(revenue_expr != 0, for_pay_expr != 0)
         stmt = (
             select(
                 WBRealizationReportRow.office_name.label("warehouse_name"),
@@ -723,14 +796,7 @@ class LogisticsService:
                 func.sum(
                     func.coalesce(WBRealizationReportRow.paid_acceptance, 0)
                 ).label("paid_acceptance"),
-                func.sum(self._signed_finance_sql_expr(for_pay_expr)).label("for_pay"),
-                func.sum(self._signed_finance_sql_expr(revenue_expr)).label(
-                    "finance_revenue"
-                ),
                 func.count(WBRealizationReportRow.id).label("finance_rows"),
-                func.sum(case((finance_money_row, 1), else_=0)).label(
-                    "finance_money_rows"
-                ),
             )
             .where(
                 WBRealizationReportRow.account_id == account_id,
@@ -745,13 +811,128 @@ class LogisticsService:
             delivery = self._float(row["delivery_service"])
             rebill = self._float(row["rebill_logistic_cost"])
             item["finance_rows"] += int(row["finance_rows"] or 0)
-            item["finance_money_rows"] += int(row["finance_money_rows"] or 0)
             item["logistics_cost"] += delivery
             item["return_logistics_cost"] += rebill
             item["storage_cost"] += self._float(row["paid_storage"])
             item["acceptance_cost"] += self._float(row["paid_acceptance"])
-            item["finance_for_pay"] += self._float(row["for_pay"])
-            item["finance_revenue"] += self._float(row["finance_revenue"])
+        await self._merge_resolved_finance_money(
+            session,
+            account_id=account_id,
+            start=start,
+            end=end,
+            warehouse_map=warehouse_map,
+        )
+
+    async def _core_sku_matcher(
+        self, session: AsyncSession, *, account_id: int
+    ) -> tuple[Any, dict[str, dict[Any, list[CoreSKU]]]]:
+        from app.services.marts import MartService
+
+        mart_service = MartService()
+        core_skus = list(
+            (
+                await session.execute(
+                    select(CoreSKU).where(
+                        CoreSKU.account_id == account_id,
+                        CoreSKU.is_active.is_(True),
+                    )
+                )
+            ).scalars()
+        )
+        return mart_service, mart_service._build_core_sku_index(core_skus)
+
+    @staticmethod
+    def _finance_row_resolves_to_core_sku(
+        row: WBRealizationReportRow,
+        *,
+        mart_service: Any,
+        core_index: dict[str, dict[Any, list[CoreSKU]]],
+    ) -> bool:
+        barcode = mart_service._finance_row_barcode(row)
+        return (
+            mart_service._resolve_core_sku(
+                core_index,
+                vendor_code=row.vendor_code,
+                nm_id=row.nm_id,
+                barcode=barcode,
+                tech_size=None,
+            )
+            is not None
+        )
+
+    async def _merge_resolved_finance_money(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        start: date,
+        end: date,
+        warehouse_map: dict[str, dict[str, Any]],
+    ) -> None:
+        mart_service, core_index = await self._core_sku_matcher(
+            session, account_id=account_id
+        )
+        rows = list(
+            (
+                await session.execute(
+                    select(WBRealizationReportRow).where(
+                        WBRealizationReportRow.account_id == account_id,
+                        self._finance_period_filter(start=start, end=end),
+                    )
+                )
+            ).scalars()
+        )
+        for row in rows:
+            if not self._is_reconcilable_finance_row(row):
+                continue
+            if not self._finance_row_resolves_to_core_sku(
+                row, mart_service=mart_service, core_index=core_index
+            ):
+                continue
+            revenue = self._signed_finance_amount(row, row.retail_amount)
+            for_pay = self._signed_finance_amount(row, row.for_pay)
+            item = warehouse_map[self._warehouse_key(row.office_name)]
+            item["warehouse_name"] = self._warehouse_key(row.office_name)
+            if revenue != 0 or for_pay != 0:
+                item["finance_money_rows"] += 1
+            if self._finance_row_sign(row) > 0:
+                item["sales_qty"] += self._float(row.quantity or 1)
+            item["finance_revenue"] += self._float(revenue)
+            item["finance_for_pay"] += self._float(for_pay)
+
+    @staticmethod
+    def _source_column(source: Any, name: str) -> Any:
+        columns = getattr(source, "c", None)
+        return getattr(columns, name) if columns is not None else getattr(source, name)
+
+    @classmethod
+    def _sale_return_condition(cls, source: Any = WBSale) -> Any:
+        sale_id = func.lower(func.coalesce(cls._source_column(source, "sale_id"), ""))
+        for_pay = cls._source_column(source, "for_pay")
+        is_cancel = cls._source_column(source, "is_cancel")
+        return or_(
+            is_cancel.is_(True),
+            sale_id.like("r%"),
+            func.coalesce(for_pay, 0) < 0,
+        )
+
+    @classmethod
+    def _signed_sale_sql_expr(cls, value_expr: Any, source: Any = WBSale) -> Any:
+        return case(
+            (and_(cls._sale_return_condition(source), value_expr > 0), -value_expr),
+            else_=value_expr,
+        )
+
+    @staticmethod
+    def _reconcilable_finance_condition() -> Any:
+        doc_type = func.lower(func.coalesce(WBRealizationReportRow.doc_type_name, ""))
+        return or_(
+            WBRealizationReportRow.is_reconcilable.is_(True),
+            and_(
+                WBRealizationReportRow.is_reconcilable.is_(None),
+                doc_type.in_(("продажа", "возврат", "sale", "return")),
+            ),
+        )
 
     @staticmethod
     def _finance_return_condition() -> Any:
@@ -805,6 +986,13 @@ class LogisticsService:
         ):
             return -1
         return 1
+
+    @staticmethod
+    def _is_reconcilable_finance_row(row: WBRealizationReportRow) -> bool:
+        if row.is_reconcilable is not None:
+            return bool(row.is_reconcilable)
+        doc_type = (row.doc_type_name or "").strip().lower()
+        return doc_type in {"продажа", "возврат", "sale", "return"}
 
     @classmethod
     def _signed_finance_amount(cls, row: WBRealizationReportRow, value: Any) -> Decimal:
@@ -1129,6 +1317,7 @@ class LogisticsService:
         search_norm: str,
         limit: int,
         latest_stock_at: datetime | None,
+        closed_finance_date_to: date | None,
     ) -> list[LogisticsProductRow]:
         product_map: dict[str, dict[str, Any]] = defaultdict(self._empty_product)
         region_by_warehouse = {
@@ -1146,6 +1335,7 @@ class LogisticsService:
             account_id=account_id,
             start=start,
             end=end,
+            closed_finance_date_to=closed_finance_date_to,
             product_map=product_map,
         )
         await self._merge_product_finance(
@@ -1261,23 +1451,27 @@ class LogisticsService:
         product_map: dict[str, dict[str, Any]],
     ) -> None:
         start_dt, end_dt = self._date_bounds(start, end)
+        orders_current = orders_current_subquery("logistics_product_orders_current")
         cancelled_in_period = and_(
-            WBOrder.is_cancel.is_(True),
-            WBOrder.cancel_date.is_not(None),
-            WBOrder.cancel_date >= start_dt,
-            WBOrder.cancel_date < end_dt,
+            orders_current.c.is_cancel.is_(True),
+            orders_current.c.cancel_date.is_not(None),
+            orders_current.c.cancel_date >= start_dt,
+            orders_current.c.cancel_date < end_dt,
         )
         value_expr = func.coalesce(
-            WBOrder.price_with_disc, WBOrder.finished_price, WBOrder.total_price, 0
+            orders_current.c.finished_price,
+            orders_current.c.price_with_disc,
+            orders_current.c.total_price,
+            0,
         )
         stmt = (
             select(
-                WBOrder.warehouse_name.label("warehouse_name"),
-                WBOrder.nm_id.label("nm_id"),
-                WBOrder.supplier_article.label("vendor_code"),
-                WBOrder.barcode.label("barcode"),
-                WBOrder.oblast_okrug_name.label("region_name"),
-                func.count(WBOrder.id).label("orders_qty"),
+                orders_current.c.warehouse_name.label("warehouse_name"),
+                orders_current.c.nm_id.label("nm_id"),
+                orders_current.c.supplier_article.label("vendor_code"),
+                orders_current.c.barcode.label("barcode"),
+                orders_current.c.oblast_okrug_name.label("region_name"),
+                func.count(orders_current.c.id).label("orders_qty"),
                 func.sum(case((cancelled_in_period, 1), else_=0)).label(
                     "cancelled_orders_qty"
                 ),
@@ -1286,17 +1480,17 @@ class LogisticsService:
                 ),
             )
             .where(
-                WBOrder.account_id == account_id,
-                WBOrder.date.is_not(None),
-                WBOrder.date >= start_dt,
-                WBOrder.date < end_dt,
+                orders_current.c.account_id == account_id,
+                orders_current.c.date.is_not(None),
+                orders_current.c.date >= start_dt,
+                orders_current.c.date < end_dt,
             )
             .group_by(
-                WBOrder.warehouse_name,
-                WBOrder.nm_id,
-                WBOrder.supplier_article,
-                WBOrder.barcode,
-                WBOrder.oblast_okrug_name,
+                orders_current.c.warehouse_name,
+                orders_current.c.nm_id,
+                orders_current.c.supplier_article,
+                orders_current.c.barcode,
+                orders_current.c.oblast_okrug_name,
             )
         )
         for row in (await session.execute(stmt)).mappings():
@@ -1319,39 +1513,52 @@ class LogisticsService:
         account_id: int,
         start: date,
         end: date,
+        closed_finance_date_to: date | None,
         product_map: dict[str, dict[str, Any]],
     ) -> None:
-        start_dt, end_dt = self._date_bounds(start, end)
+        sales_start = self._operational_sales_start(
+            start=start, closed_finance_date_to=closed_finance_date_to
+        )
+        if sales_start > end:
+            return
+        start_dt, end_dt = self._date_bounds(sales_start, end)
+        sales_current = sales_current_subquery("logistics_product_sales_current")
+        value_expr = func.coalesce(
+            sales_current.c.finished_price,
+            sales_current.c.price_with_disc,
+            sales_current.c.total_price,
+            0,
+        )
+        for_pay_expr = func.coalesce(sales_current.c.for_pay, 0)
+        sale_return_condition = self._sale_return_condition(sales_current)
+        positive_sale_expr = case((sale_return_condition, 0), else_=1)
         stmt = (
             select(
-                WBSale.warehouse_name.label("warehouse_name"),
-                WBSale.nm_id.label("nm_id"),
-                WBSale.supplier_article.label("vendor_code"),
-                WBSale.barcode.label("barcode"),
-                func.max(WBSale.brand).label("brand"),
-                func.max(WBSale.subject).label("subject_name"),
-                func.count(WBSale.id).label("sales_qty"),
-                func.sum(
-                    func.coalesce(
-                        WBSale.price_with_disc,
-                        WBSale.finished_price,
-                        WBSale.total_price,
-                        0,
-                    )
-                ).label("revenue"),
-                func.sum(func.coalesce(WBSale.for_pay, 0)).label("for_pay"),
+                sales_current.c.warehouse_name.label("warehouse_name"),
+                sales_current.c.nm_id.label("nm_id"),
+                sales_current.c.supplier_article.label("vendor_code"),
+                sales_current.c.barcode.label("barcode"),
+                func.max(sales_current.c.brand).label("brand"),
+                func.max(sales_current.c.subject).label("subject_name"),
+                func.sum(positive_sale_expr).label("sales_qty"),
+                func.sum(self._signed_sale_sql_expr(value_expr, sales_current)).label(
+                    "revenue"
+                ),
+                func.sum(self._signed_sale_sql_expr(for_pay_expr, sales_current)).label(
+                    "for_pay"
+                ),
             )
             .where(
-                WBSale.account_id == account_id,
-                WBSale.date.is_not(None),
-                WBSale.date >= start_dt,
-                WBSale.date < end_dt,
+                sales_current.c.account_id == account_id,
+                sales_current.c.date.is_not(None),
+                sales_current.c.date >= start_dt,
+                sales_current.c.date < end_dt,
             )
             .group_by(
-                WBSale.warehouse_name,
-                WBSale.nm_id,
-                WBSale.supplier_article,
-                WBSale.barcode,
+                sales_current.c.warehouse_name,
+                sales_current.c.nm_id,
+                sales_current.c.supplier_article,
+                sales_current.c.barcode,
             )
         )
         for row in (await session.execute(stmt)).mappings():
@@ -1377,75 +1584,50 @@ class LogisticsService:
         end: date,
         product_map: dict[str, dict[str, Any]],
     ) -> None:
-        revenue_expr = func.coalesce(
-            WBRealizationReportRow.retail_price_with_disc,
-            WBRealizationReportRow.retail_amount,
-            0,
+        mart_service, core_index = await self._core_sku_matcher(
+            session, account_id=account_id
         )
-        for_pay_expr = func.coalesce(WBRealizationReportRow.for_pay, 0)
-        finance_money_row = or_(revenue_expr != 0, for_pay_expr != 0)
-        stmt = (
-            select(
-                WBRealizationReportRow.office_name.label("warehouse_name"),
-                WBRealizationReportRow.nm_id.label("nm_id"),
-                WBRealizationReportRow.vendor_code.label("vendor_code"),
-                WBRealizationReportRow.barcode.label("barcode"),
-                func.max(WBRealizationReportRow.title).label("title"),
-                func.max(WBRealizationReportRow.brand).label("brand"),
-                func.max(WBRealizationReportRow.subject_name).label("subject_name"),
-                func.sum(self._signed_finance_sql_expr(revenue_expr)).label(
-                    "finance_revenue"
-                ),
-                func.sum(self._signed_finance_sql_expr(for_pay_expr)).label(
-                    "finance_for_pay"
-                ),
-                func.sum(
-                    func.coalesce(WBRealizationReportRow.delivery_service, 0)
-                ).label("delivery_service"),
-                func.sum(
-                    func.coalesce(WBRealizationReportRow.rebill_logistic_cost, 0)
-                ).label("rebill_logistic_cost"),
-                func.sum(func.coalesce(WBRealizationReportRow.paid_storage, 0)).label(
-                    "paid_storage"
-                ),
-                func.sum(
-                    func.coalesce(WBRealizationReportRow.paid_acceptance, 0)
-                ).label("paid_acceptance"),
-                func.count(WBRealizationReportRow.id).label("finance_rows"),
-                func.sum(case((finance_money_row, 1), else_=0)).label(
-                    "finance_money_rows"
-                ),
-            )
-            .where(
-                WBRealizationReportRow.account_id == account_id,
-                self._finance_period_filter(start=start, end=end),
-            )
-            .group_by(
-                WBRealizationReportRow.office_name,
-                WBRealizationReportRow.nm_id,
-                WBRealizationReportRow.vendor_code,
-                WBRealizationReportRow.barcode,
-            )
+        rows = list(
+            (
+                await session.execute(
+                    select(WBRealizationReportRow).where(
+                        WBRealizationReportRow.account_id == account_id,
+                        self._finance_period_filter(start=start, end=end),
+                    )
+                )
+            ).scalars()
         )
-        for row in (await session.execute(stmt)).mappings():
+        for row in rows:
+            if not self._finance_row_resolves_to_core_sku(
+                row, mart_service=mart_service, core_index=core_index
+            ):
+                continue
+            finance_barcode = mart_service._finance_row_barcode(row)
             item = self._product_entry(
                 product_map,
-                warehouse_name=row["warehouse_name"],
-                nm_id=row["nm_id"],
-                barcode=row["barcode"],
-                vendor_code=row["vendor_code"],
+                warehouse_name=row.office_name,
+                nm_id=row.nm_id,
+                barcode=finance_barcode,
+                vendor_code=row.vendor_code,
             )
-            item["title"] = item.get("title") or row["title"]
-            item["brand"] = item.get("brand") or row["brand"]
-            item["subject_name"] = item.get("subject_name") or row["subject_name"]
-            item["finance_rows"] += int(row["finance_rows"] or 0)
-            item["finance_money_rows"] += int(row["finance_money_rows"] or 0)
-            item["finance_revenue"] += self._float(row["finance_revenue"])
-            item["finance_for_pay"] += self._float(row["finance_for_pay"])
-            item["logistics_cost"] += self._float(row["delivery_service"])
-            item["return_logistics_cost"] += self._float(row["rebill_logistic_cost"])
-            item["storage_cost"] += self._float(row["paid_storage"])
-            item["acceptance_cost"] += self._float(row["paid_acceptance"])
+            item["title"] = item.get("title") or row.title
+            item["brand"] = item.get("brand") or row.brand
+            item["subject_name"] = item.get("subject_name") or row.subject_name
+            item["finance_rows"] += 1
+            item["logistics_cost"] += self._float(row.delivery_service)
+            item["return_logistics_cost"] += self._float(row.rebill_logistic_cost)
+            item["storage_cost"] += self._float(row.paid_storage)
+            item["acceptance_cost"] += self._float(row.paid_acceptance)
+            if not self._is_reconcilable_finance_row(row):
+                continue
+            revenue = self._signed_finance_amount(row, row.retail_amount)
+            for_pay = self._signed_finance_amount(row, row.for_pay)
+            if revenue != 0 or for_pay != 0:
+                item["finance_money_rows"] += 1
+            if self._finance_row_sign(row) > 0:
+                item["sales_qty"] += self._float(row.quantity or 1)
+            item["finance_revenue"] += self._float(revenue)
+            item["finance_for_pay"] += self._float(for_pay)
 
     async def _merge_product_stock(
         self,
@@ -1500,6 +1682,14 @@ class LogisticsService:
             item["in_way_to_client"] += self._float(row.in_way_to_client)
             item["in_way_from_client"] += self._float(row.in_way_from_client)
 
+    @staticmethod
+    def _revenue_source(*, has_finance_money: bool, has_sales_money: bool) -> str:
+        if has_finance_money and has_sales_money:
+            return "finance+sales"
+        if has_finance_money:
+            return "finance"
+        return "sales"
+
     def _product_row(
         self,
         item: dict[str, Any],
@@ -1508,16 +1698,20 @@ class LogisticsService:
     ) -> LogisticsProductRow:
         orders_qty = self._float(item["orders_qty"])
         sales_qty = self._float(item["sales_qty"])
+        finance_revenue = self._float(item["finance_revenue"])
+        finance_for_pay = self._float(item["finance_for_pay"])
+        sales_revenue = self._float(item["sales_revenue"])
+        sales_for_pay = self._float(item["sales_for_pay"])
         has_finance_money = int(item.get("finance_money_rows") or 0) > 0
+        has_sales_money = bool(sales_revenue or sales_for_pay)
         revenue = (
-            self._float(item["finance_revenue"])
-            if has_finance_money
-            else self._float(item["sales_revenue"])
+            finance_revenue + sales_revenue if has_finance_money else sales_revenue
         )
         for_pay = (
-            self._float(item["finance_for_pay"])
-            if has_finance_money
-            else self._float(item["sales_for_pay"])
+            finance_for_pay + sales_for_pay if has_finance_money else sales_for_pay
+        )
+        revenue_source = self._revenue_source(
+            has_finance_money=has_finance_money, has_sales_money=has_sales_money
         )
         stock_units = self._float(item["stock_units"])
         avg_daily_sales = self._safe_div(sales_qty, day_count)
@@ -1588,7 +1782,7 @@ class LogisticsService:
             cancelled_revenue=self._float(item["cancelled_revenue"]),
             revenue=revenue,
             for_pay=for_pay,
-            revenue_source="finance" if has_finance_money else "sales",
+            revenue_source=revenue_source,
             finance_rows=int(item["finance_rows"] or 0),
             logistics_cost=self._float(item["logistics_cost"]),
             storage_cost=self._float(item["storage_cost"]),
@@ -1669,12 +1863,18 @@ class LogisticsService:
         sales_qty = self._float(item["sales_qty"])
         finance_revenue = self._float(item["finance_revenue"])
         finance_for_pay = self._float(item["finance_for_pay"])
+        sales_revenue = self._float(item["sales_revenue"])
+        sales_for_pay = self._float(item["sales_for_pay"])
         has_finance_money = int(item.get("finance_money_rows") or 0) > 0
+        has_sales_money = bool(sales_revenue or sales_for_pay)
         revenue = (
-            finance_revenue if has_finance_money else self._float(item["sales_revenue"])
+            finance_revenue + sales_revenue if has_finance_money else sales_revenue
         )
         for_pay = (
-            finance_for_pay if has_finance_money else self._float(item["sales_for_pay"])
+            finance_for_pay + sales_for_pay if has_finance_money else sales_for_pay
+        )
+        revenue_source = self._revenue_source(
+            has_finance_money=has_finance_money, has_sales_money=has_sales_money
         )
         logistics_total = (
             self._float(item["logistics_cost"])
@@ -1719,7 +1919,7 @@ class LogisticsService:
             sales_qty=sales_qty,
             revenue=revenue,
             for_pay=for_pay,
-            revenue_source="finance" if has_finance_money else "sales",
+            revenue_source=revenue_source,
             finance_rows=int(item["finance_rows"] or 0),
             logistics_cost=self._float(item["logistics_cost"]),
             storage_cost=self._float(item["storage_cost"]),

@@ -355,7 +355,15 @@ class ManualCostService:
         return committed
 
     @staticmethod
+    def _normalized_text(value: Any) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().casefold()
+        return normalized or None
+
+    @classmethod
     def _build_sku_index(
+        cls,
         sku_rows: list[CoreSKU],
     ) -> dict[str, dict[Any, list[CoreSKU]]]:
         index: dict[str, dict[Any, list[CoreSKU]]] = {
@@ -367,14 +375,16 @@ class ManualCostService:
             "vendor": defaultdict(list),
         }
         for sku in sku_rows:
+            normalized_vendor = cls._normalized_text(sku.vendor_code)
+            normalized_size = cls._normalized_text(sku.tech_size)
             index["vendor_barcode_size"][
-                (sku.vendor_code, sku.barcode, sku.tech_size)
+                (normalized_vendor, sku.barcode, normalized_size)
             ].append(sku)
             index["nm_barcode"][(sku.nm_id, sku.barcode)].append(sku)
             index["barcode"][sku.barcode].append(sku)
-            index["nm_size"][(sku.nm_id, sku.tech_size)].append(sku)
-            index["vendor_size"][(sku.vendor_code, sku.tech_size)].append(sku)
-            index["vendor"][sku.vendor_code].append(sku)
+            index["nm_size"][(sku.nm_id, normalized_size)].append(sku)
+            index["vendor_size"][(normalized_vendor, normalized_size)].append(sku)
+            index["vendor"][normalized_vendor].append(sku)
         return index
 
     @staticmethod
@@ -403,12 +413,14 @@ class ManualCostService:
         barcode: str | None,
         tech_size: str | None,
     ) -> tuple[list[CoreSKU], str | None]:
+        normalized_vendor = ManualCostService._normalized_text(vendor_code)
+        normalized_size = ManualCostService._normalized_text(tech_size)
         rules: list[tuple[str, list[CoreSKU]]] = [
             (
                 "vendor_code+barcode+tech_size",
                 list(
                     sku_index["vendor_barcode_size"].get(
-                        (vendor_code, barcode, tech_size), []
+                        (normalized_vendor, barcode, normalized_size), []
                     )
                 ),
             ),
@@ -422,15 +434,19 @@ class ManualCostService:
             ),
             (
                 "nm_id+tech_size",
-                list(sku_index["nm_size"].get((nm_id, tech_size), [])),
+                list(sku_index["nm_size"].get((nm_id, normalized_size), [])),
             ),
             (
                 "vendor_code+tech_size",
-                list(sku_index["vendor_size"].get((vendor_code, tech_size), [])),
+                list(
+                    sku_index["vendor_size"].get(
+                        (normalized_vendor, normalized_size), []
+                    )
+                ),
             ),
             (
                 "vendor_code",
-                list(sku_index["vendor"].get(vendor_code, [])),
+                list(sku_index["vendor"].get(normalized_vendor, [])),
             ),
         ]
         for rule, matches in rules:

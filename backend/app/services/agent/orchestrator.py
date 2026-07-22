@@ -32,6 +32,7 @@ from app.services.checker_core.title_policy import (
     should_keep_current_title_as_safer,
     validate_title,
 )
+from app.services.agent.scenarios import AgentScenarioService
 
 if TYPE_CHECKING:
     from app.models.auth import AuthUser
@@ -83,6 +84,11 @@ AGENT_MODULE_CATALOG: dict[str, dict[str, str]] = {
         "title": "Фокус на сегодня",
         "href": "/action-center",
         "description": "Очередь задач, рекомендаций и ручных проверок.",
+    },
+    "agent_scenarios": {
+        "title": "AI-сценарии",
+        "href": "/action-center",
+        "description": "Сценарии AI-оператора, безопасные запуски, история и финансы.",
     },
     "actions": {
         "title": "Действия",
@@ -843,6 +849,60 @@ AGENT_API_ACTION_CATALOG: dict[str, dict[str, Any]] = {
 
 AGENT_API_ACTION_CATALOG.update(
     {
+        "agent.scenario_templates": {
+            "title": "Шаблоны AI-сценариев",
+            "description": "Получить готовые шаблоны AI-сценариев оператора.",
+            "method": "GET",
+            "path": "/portal/agent/scenario-templates",
+            "write_policy": "read",
+            "module_key": "agent_scenarios",
+        },
+        "agent.scenarios": {
+            "title": "AI-сценарии",
+            "description": "Получить список AI-сценариев и их статусы.",
+            "method": "GET",
+            "path": "/portal/agent/scenarios",
+            "query": _account_query(),
+            "write_policy": "read",
+            "module_key": "agent_scenarios",
+        },
+        "agent.scenario_runs": {
+            "title": "История запусков AI-сценариев",
+            "description": "Получить run history AI-сценариев с результатами dry-run.",
+            "method": "GET",
+            "path": "/portal/agent/scenario-runs",
+            "query": _account_query(),
+            "write_policy": "read",
+            "module_key": "agent_scenarios",
+        },
+        "agent.finance": {
+            "title": "Финансы AI-оператора",
+            "description": "Показать usage/cost summary AI-оператора.",
+            "method": "GET",
+            "path": "/portal/agent/finance",
+            "query": _account_query(),
+            "write_policy": "read",
+            "module_key": "agent_scenarios",
+        },
+        "agent.scenario.run": {
+            "title": "Тестовый запуск AI-сценария",
+            "description": "Запустить сценарий в безопасном dry-run режиме и создать action previews.",
+            "method": "POST",
+            "path": "/portal/agent/scenarios/{scenario_id}/run",
+            "query": _account_query(),
+            "body": {"trigger": "chat", "dry_run": True},
+            "required_params": ["scenario_id"],
+            "confirm_required": True,
+            "success_message": "AI-сценарий запущен в безопасном dry-run режиме.",
+            "write_policy": "confirmed_local_mutation",
+            "module_key": "agent_scenarios",
+        },
+    }
+)
+
+
+AGENT_API_ACTION_CATALOG.update(
+    {
         "portal.action.update_status": {
             "title": "Обновить статус задачи",
             "description": "Изменить статус задачи Центра действий по action_id.",
@@ -1251,6 +1311,7 @@ AGENT_API_ACTION_PARAM_SCHEMA: dict[str, Any] = {
         "project_id": {"type": ["integer", "null"], "minimum": 1},
         "version_id": {"type": ["integer", "null"], "minimum": 1},
         "run_id": {"type": ["integer", "null"], "minimum": 1},
+        "scenario_id": {"type": ["integer", "null"], "minimum": 1},
         "candidate_id": {"type": ["integer", "null"], "minimum": 1},
         "case_id": {"type": ["integer", "null"], "minimum": 1},
         "cursor_id": {"type": ["integer", "null"], "minimum": 1},
@@ -1332,10 +1393,13 @@ AGENT_TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     },
     "scenario.create_manual_task": {
         "intent": "scenario_create",
-        "title": "Создать AI-сценарий как задачу",
-        "description": "Подготовить AI-сценарий ответов/автоматизации как безопасную ручную задачу.",
-        "required_args": ["selected_nm_id_or_search_query", "scenario_request"],
-        "write_policy": "manual_task_first",
+        "title": "Создать AI-сценарий",
+        "description": (
+            "Создать безопасный AI-сценарий оператора: scope, guardrails, schedule, "
+            "action previews и run history без прямой записи в WB."
+        ),
+        "required_args": ["scenario_request"],
+        "write_policy": "scenario_draft_preview_first",
     },
     "pricing.open": {
         "intent": "pricing_agent",
@@ -1424,11 +1488,20 @@ class AgentPlan:
     assistant_message: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class AgentPlanResult:
+    plan: AgentPlan
+    usage: dict[str, Any] | None = None
+    request_id: str | None = None
+    model: str | None = None
+    source: str = "chat_planner"
+
+
 class AgentService:
     """AI command orchestrator for the Seller Portal.
 
-    OpenAI is the only natural-language planner. This service never uses regex
-    or keyword rules to infer user intent; the backend only executes
+    OpenAI is the only natural-language planner. This service never uses
+    keyword rules to infer user intent; the backend only executes
     allow-listed tools from the structured AI plan.
     """
 
@@ -1659,8 +1732,10 @@ class AgentService:
     ) -> AgentMessageResponse:
         if payload.intent is not None:
             plan = self._ui_plan(payload)
+            plan_result = None
         else:
-            plan = await self._plan(payload)
+            plan_result = await self._plan_with_usage(payload)
+            plan = plan_result.plan
 
         if payload.selected_nm_id is not None and plan.selected_nm_id is None:
             plan = self._replace_plan(plan, selected_nm_id=payload.selected_nm_id)
@@ -1683,7 +1758,7 @@ class AgentService:
                 plan, intent="page_explain", confidence="high", source="ai"
             )
 
-        return await self._execute_plan(
+        response = await self._execute_plan(
             session,
             account_id=account_id,
             role=role,
@@ -1691,6 +1766,19 @@ class AgentService:
             payload=payload,
             plan=plan,
         )
+        if plan_result is not None:
+            await self._record_openai_usage(
+                session,
+                account_id=account_id,
+                user_id=int(user.id),
+                result=plan_result,
+                payload_json={
+                    "intent": plan.intent,
+                    "tool_name": plan.tool_name,
+                    "status": response.status,
+                },
+            )
+        return response
 
     async def _execute_plan(
         self,
@@ -1720,7 +1808,13 @@ class AgentService:
                 session, account_id=account_id, role=role, user=user, plan=plan
             )
         if plan.intent == "page_explain":
-            return await self._page_explain(payload=payload, plan=plan)
+            return await self._page_explain(
+                session=session,
+                account_id=account_id,
+                user_id=int(user.id),
+                payload=payload,
+                plan=plan,
+            )
         if plan.intent == "reputation_agent":
             return self._reputation_agent(plan)
         if plan.intent == "scenario_create":
@@ -1731,6 +1825,7 @@ class AgentService:
                 user=user,
                 plan=plan,
                 request_text=payload.message,
+                context=payload.context,
             )
         if plan.intent == "pricing_agent":
             return self._pricing_agent(plan)
@@ -1861,8 +1956,9 @@ class AgentService:
         user: AuthUser,
         plan: AgentPlan,
         request_text: str,
+        context: dict[str, Any],
     ) -> AgentMessageResponse:
-        if plan.selected_nm_id is None:
+        if plan.selected_nm_id is None and plan.search_query:
             products = await self._search_products(
                 session,
                 account_id=account_id,
@@ -1882,10 +1978,12 @@ class AgentService:
                 },
             )
 
-        product = await self._get_product(
-            session, account_id=account_id, nm_id=plan.selected_nm_id
-        )
-        if product is None:
+        product = None
+        if plan.selected_nm_id is not None:
+            product = await self._get_product(
+                session, account_id=account_id, nm_id=plan.selected_nm_id
+            )
+        if plan.selected_nm_id is not None and product is None:
             return AgentMessageResponse(
                 status="blocked",
                 mode=self._mode(plan),
@@ -1903,9 +2001,14 @@ class AgentService:
                     "Я понял сценарий, но у вашей роли нет прав на создание задач. "
                     "Можно открыть раздел репутации и передать настройку менеджеру."
                 ),
-                products=[self._product_ref(product)],
+                products=[self._product_ref(product)] if product is not None else [],
                 actions=[
-                    AgentUIAction(type="navigate", title="Репутация", href="/reputation")
+                    AgentUIAction(
+                        type="navigate",
+                        title="AI-сценарии",
+                        href="/action-center",
+                        description="Открыть операционный контур и задачи.",
+                    )
                 ],
                 audit=self._audit(plan),
             )
@@ -1915,57 +2018,112 @@ class AgentService:
             plan,
             "Создать безопасный AI-сценарий для выбранного товара.",
         )
-        description = self._task_description(
-            "Запрос пользователя:",
-            request,
-            "Черновик агента:",
-            self._nullable_text(plan.assistant_message)
-            or (
-                "Подготовить сценарий работы AI-оператора. Сценарий должен учитывать карточку товара, "
-                "отзывы/вопросы покупателей, tone of voice бренда и требовать ручной проверки перед публикацией."
-            ),
-            "Правило безопасности:",
-            "Не публиковать ответы и не менять данные WB без ручного подтверждения ответственного пользователя.",
-        )
-        action = self._manual_task_action(
+        scenario_type = self._scenario_type_from_module_key(
+            plan.module_key
+        ) or self._scenario_type_from_context(context)
+        scope_json: dict[str, Any] = {"mode": "account"}
+        if product is not None:
+            scope_json = {
+                "mode": "product",
+                "nm_id": int(product.nm_id),
+                "vendor_code": product.vendor_code,
+                "title": product.title,
+                "brand": product.brand,
+            }
+        scenario = await AgentScenarioService().create_from_agent_prompt(
+            session,
             account_id=account_id,
-            user=user,
-            product=product,
-            title="AI-сценарий для проверки",
-            description=description,
-            task_kind="agent_scenario",
-            deadline_days=2,
+            user_id=int(user.id),
+            prompt=request,
+            assistant_message=self._nullable_text(plan.assistant_message),
+            scope_json=scope_json,
+            scenario_type=scenario_type,
         )
+        query = urlencode({"account_id": account_id})
+        run_query = urlencode({"account_id": account_id})
         return AgentMessageResponse(
             mode=self._mode(plan),
             intent="scenario_create",
             message=(
-                "Сценарий подготовлен как безопасная задача. Я не публикую ответы и не меняю WB автоматически: "
-                "сначала задача попадёт в ручную проверку."
+                f"Создал draft AI-сценария «{scenario.name}». Он работает по production-safe правилам: "
+                "сначала dry-run, action previews и ручное подтверждение. Прямых записей в Wildberries нет."
             ),
-            products=[self._product_ref(product)],
+            products=[self._product_ref(product)] if product is not None else [],
             actions=[
-                action,
                 AgentUIAction(
-                    type="navigate",
-                    title="Центр действий",
-                    href="/action-center",
-                    description="Проверить и запустить подготовленную задачу.",
+                    type="api_request",
+                    title="Тестовый запуск",
+                    href=f"/portal/agent/scenarios/{scenario.id}/run?{run_query}",
+                    method="POST",
+                    confirm_required=True,
+                    description="Запустить сценарий в безопасном dry-run режиме.",
+                    payload={
+                        "body": {"trigger": "chat", "dry_run": True},
+                        "success_message": "AI-сценарий запущен в dry-run режиме.",
+                    },
                 ),
                 AgentUIAction(
-                    type="navigate",
-                    title="Репутация",
-                    href="/reputation",
-                    description="Открыть отзывы и вопросы.",
+                    type="api_request",
+                    title="История запусков",
+                    href=(
+                        f"/portal/agent/scenario-runs?{query}"
+                        f"&scenario_id={scenario.id}"
+                    ),
+                    method="GET",
+                    description="Показать run history этого сценария.",
+                    payload={"success_message": "История запусков получена."},
+                ),
+                AgentUIAction(
+                    type="api_request",
+                    title="Финансы AI",
+                    href=f"/portal/agent/finance?{query}",
+                    method="GET",
+                    description="Показать usage/cost summary AI-оператора.",
+                    payload={"success_message": "Финансы AI-оператора получены."},
                 ),
             ],
             suggestions=[
-                "Создать задачу",
-                "Открыть отзывы",
-                "Подготовь R&D отчёт",
+                "Запусти тестовый запуск",
+                "Покажи историю сценариев",
+                "Покажи финансы AI",
             ],
-            audit={**self._audit(plan), "write_policy": "manual_task_first"},
+            audit={
+                **self._audit(plan),
+                "scenario_id": scenario.id,
+                "scenario_type": scenario_type,
+                "write_policy": "scenario_draft_preview_first",
+                "direct_marketplace_writes": False,
+            },
         )
+
+    @staticmethod
+    def _scenario_type_from_context(context: dict[str, Any]) -> str:
+        path = str((context or {}).get("path") or "")
+        if "/reputation" in path:
+            return "reputation"
+        if "/pricing" in path:
+            return "pricing"
+        if "/ads" in path:
+            return "ads"
+        if "/stock" in path or "/purchase-plan" in path:
+            return "stock"
+        if "/analytics" in path or "/money" in path or "/dashboard" in path:
+            return "strategy"
+        return "general"
+
+    @staticmethod
+    def _scenario_type_from_module_key(module_key: str | None) -> str | None:
+        return {
+            "reputation": "reputation",
+            "pricing": "pricing",
+            "ads": "ads",
+            "stock": "stock",
+            "stock_control": "stock",
+            "purchase_plan": "stock",
+            "analytics": "strategy",
+            "money": "strategy",
+            "dashboard": "strategy",
+        }.get(str(module_key or ""))
 
     def _pricing_agent(self, plan: AgentPlan) -> AgentMessageResponse:
         return AgentMessageResponse(
@@ -2458,16 +2616,28 @@ class AgentService:
         return None
 
     async def _plan(self, payload: AgentMessageRequest) -> AgentPlan:
+        return (await self._plan_with_usage(payload)).plan
+
+    async def _plan_with_usage(self, payload: AgentMessageRequest) -> AgentPlanResult:
         if not self.settings.openai_api_key:
-            return AgentPlan(
-                "help",
-                confidence="low",
-                source="ai_unconfigured",
-                assistant_message="AI-оператор не настроен: добавьте OPENAI_API_KEY на backend.",
+            return AgentPlanResult(
+                plan=AgentPlan(
+                    "help",
+                    confidence="low",
+                    source="ai_unconfigured",
+                    assistant_message="AI-оператор не настроен: добавьте OPENAI_API_KEY на backend.",
+                ),
+                model=self.settings.openai_model,
+                source="chat_planner_unconfigured",
             )
-        return await self._openai_plan(payload)
+        return await self._openai_plan_with_usage(payload)
 
     async def _openai_plan(self, payload: AgentMessageRequest) -> AgentPlan:
+        return (await self._openai_plan_with_usage(payload)).plan
+
+    async def _openai_plan_with_usage(
+        self, payload: AgentMessageRequest
+    ) -> AgentPlanResult:
         request_payload = self._openai_request_payload(payload)
         started_at = perf_counter()
         last_error: Exception | None = None
@@ -2488,6 +2658,7 @@ class AgentService:
                         await self._sleep_before_openai_retry(response, attempt)
                         continue
                     response.raise_for_status()
+                    request_id = response.headers.get("x-request-id")
                     data = response.json() if response.text else {}
                 logger.info(
                     "agent_openai_plan_succeeded",
@@ -2497,7 +2668,13 @@ class AgentService:
                         "model": self.settings.openai_model,
                     },
                 )
-                return self._plan_from_openai_payload(data)
+                return AgentPlanResult(
+                    plan=self._plan_from_openai_payload(data),
+                    usage=self._openai_usage(data),
+                    request_id=request_id or self._openai_response_id(data),
+                    model=str(data.get("model") or self.settings.openai_model),
+                    source="chat_planner",
+                )
             except Exception as exc:
                 last_error = exc
                 logger.warning(
@@ -2524,11 +2701,15 @@ class AgentService:
                 else "UnknownError",
             },
         )
-        return AgentPlan(
-            "help",
-            confidence="low",
-            source="ai_error",
-            assistant_message=self._planner_error_message(last_error),
+        return AgentPlanResult(
+            plan=AgentPlan(
+                "help",
+                confidence="low",
+                source="ai_error",
+                assistant_message=self._planner_error_message(last_error),
+            ),
+            model=self.settings.openai_model,
+            source="chat_planner_error",
         )
 
     def _openai_request_payload(self, payload: AgentMessageRequest) -> dict[str, Any]:
@@ -2552,7 +2733,7 @@ class AgentService:
                     "title_update_preview",
                     "page_explain",
                     "reputation_agent",
-                    "scenario_create_safe_manual_task",
+                    "scenario_create_safe_draft_with_run_history",
                     "pricing_agent",
                     "insights_report_manual_task",
                     "module_navigation_catalog",
@@ -2700,7 +2881,7 @@ class AgentService:
                     "search_query": None,
                     "selected_nm_id": 1001001,
                     "new_title": None,
-                    "module_key": None,
+                    "module_key": "reputation",
                     "api_action_key": None,
                     "api_action_params": None,
                     "confidence": "high",
@@ -2982,8 +3163,10 @@ class AgentService:
                         "Если товар не указан точно, верни selected_nm_id=null и хороший search_query. "
                         "Если пользователь просит изменить карточку WB, выбери preview workflow, не прямую запись. "
                         "Если пользователь просит создать AI-сценарий, автоответы, работу с отзывами/вопросами, умные цены "
-                        "по расписанию или похожую автоматизацию, выбери scenario_create: backend создаст только безопасную "
-                        "ручную задачу, без публикации и без записи в WB. "
+                        "по расписанию или похожую автоматизацию, выбери scenario_create: backend создаст безопасный "
+                        "draft AI-сценария со scope, guardrails, dry-run и run history, без публикации и без записи в WB. "
+                        "Если домен сценария понятен, укажи module_key: reputation, pricing, ads, stock_control, "
+                        "purchase_plan, analytics, money или dashboard. "
                         "Если пользователь просит открыть отзывы, вопросы покупателей, репутацию или ответы бренда, "
                         "выбери reputation_agent. "
                         "Если пользователь просит R&D, маркетинговый, логистический, производственный, NPD отчёт или "
@@ -3708,7 +3891,13 @@ class AgentService:
             return False
 
     async def _page_explain(
-        self, *, payload: AgentMessageRequest, plan: AgentPlan
+        self,
+        *,
+        payload: AgentMessageRequest,
+        plan: AgentPlan,
+        session: AsyncSession | None = None,
+        account_id: int | None = None,
+        user_id: int | None = None,
     ) -> AgentMessageResponse:
         if plan.source == "context_fallback" or not self.settings.openai_api_key:
             answer = self._page_explain_fallback(payload.context, payload.message)
@@ -3718,6 +3907,26 @@ class AgentService:
                 answer = await self._openai_page_answer(
                     message=payload.message, context_text=context_text
                 )
+                if session is not None and account_id is not None:
+                    await self._record_openai_usage(
+                        session,
+                        account_id=account_id,
+                        user_id=user_id,
+                        result=AgentPlanResult(
+                            plan=plan,
+                            usage=answer.get("_usage")
+                            if isinstance(answer.get("_usage"), dict)
+                            else None,
+                            request_id=self._nullable_text(answer.get("_request_id")),
+                            model=self._nullable_text(answer.get("_model"))
+                            or self.settings.openai_model,
+                            source="page_explain",
+                        ),
+                        payload_json={
+                            "intent": "page_explain",
+                            "page_path": str((payload.context or {}).get("path") or ""),
+                        },
+                    )
             except Exception as exc:
                 logger.warning(
                     "agent_page_explain_failed",
@@ -3824,6 +4033,7 @@ class AgentService:
                         continue
                     response.raise_for_status()
                     data = response.json() if response.text else {}
+                    request_id = response.headers.get("x-request-id")
                 parsed = self._load_json_object(self._extract_openai_text(data))
                 logger.info(
                     "agent_page_explain_succeeded",
@@ -3842,6 +4052,9 @@ class AgentService:
                     if isinstance(parsed.get("warnings"), list)
                     else [],
                     "confidence": str(parsed.get("confidence") or "medium"),
+                    "_usage": self._openai_usage(data),
+                    "_request_id": request_id or self._openai_response_id(data),
+                    "_model": str(data.get("model") or self.settings.openai_model),
                 }
             except Exception as exc:
                 last_error = exc
@@ -3957,6 +4170,45 @@ class AgentService:
     ) -> None:
         await asyncio.sleep(self._openai_retry_delay(response, attempt))
 
+    async def _record_openai_usage(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        user_id: int | None,
+        result: AgentPlanResult,
+        payload_json: dict[str, Any] | None = None,
+    ) -> None:
+        if not result.usage:
+            return
+        try:
+            await AgentScenarioService().record_usage(
+                session,
+                account_id=account_id,
+                user_id=user_id,
+                source=result.source,
+                provider="openai",
+                model=result.model or self.settings.openai_model,
+                usage=result.usage,
+                request_id=result.request_id,
+                payload_json=payload_json or {},
+            )
+        except Exception:
+            logger.exception(
+                "agent_openai_usage_ledger_failed",
+                extra={"account_id": account_id, "source": result.source},
+            )
+
+    @staticmethod
+    def _openai_usage(payload: dict[str, Any]) -> dict[str, Any] | None:
+        usage = payload.get("usage")
+        return usage if isinstance(usage, dict) else None
+
+    @staticmethod
+    def _openai_response_id(payload: dict[str, Any]) -> str | None:
+        response_id = payload.get("id")
+        return response_id if isinstance(response_id, str) and response_id else None
+
     @staticmethod
     def _planner_context(context: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(context, dict):
@@ -3979,6 +4231,11 @@ class AgentService:
             if isinstance(context.get("recent_api"), list)
             else []
         )
+        provenance = (
+            context.get("metric_provenance")
+            if isinstance(context.get("metric_provenance"), list)
+            else []
+        )
 
         compact_numbers: list[str] = []
         for item in numbers[:10]:
@@ -3999,6 +4256,26 @@ class AgentService:
                 }
             )
 
+        compact_provenance: list[dict[str, str]] = []
+        for item in provenance[:12]:
+            if not isinstance(item, dict):
+                continue
+            compact_provenance.append(
+                {
+                    key: text(item.get(key), 400)
+                    for key in (
+                        "key",
+                        "label",
+                        "value",
+                        "source",
+                        "formula",
+                        "api_path",
+                        "updated_at",
+                    )
+                    if text(item.get(key), 400)
+                }
+            )
+
         return {
             "path": text(context.get("path"), 220),
             "search": text(context.get("search"), 220),
@@ -4006,6 +4283,7 @@ class AgentService:
             "headings": [text(item, 180) for item in headings[:10]],
             "visible_text": text(context.get("visible_text"), 2000),
             "visible_number_context": [item for item in compact_numbers if item],
+            "metric_provenance": compact_provenance,
             "recent_api": compact_api,
         }
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, ClassVar
@@ -147,6 +148,8 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-5-mini"
     openai_vision_model: str = "gpt-4o-mini"
     openai_timeout_seconds: float = 60.0
+    agent_openai_input_usd_per_million: Decimal = Decimal("0.25")
+    agent_openai_output_usd_per_million: Decimal = Decimal("2.00")
     wb_checker_data_path: str = "data/wb_checker"
     checker_ai_enabled: bool = False
     checker_vision_enabled: bool = False

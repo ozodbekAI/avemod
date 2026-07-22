@@ -67,6 +67,20 @@ export interface AgentToolCallRequest {
   context?: Record<string, unknown>;
 }
 
+export interface AgentMcpRequest {
+  jsonrpc?: "2.0";
+  id?: number | string | null;
+  method: "initialize" | "tools/list" | "tools/call";
+  params?: Record<string, unknown>;
+}
+
+export interface AgentMcpResponse {
+  jsonrpc: "2.0";
+  id?: number | string | null;
+  result?: Record<string, unknown> | null;
+  error?: Record<string, unknown> | null;
+}
+
 export interface AgentProductRef {
   nm_id: number;
   vendor_code?: string | null;
@@ -98,6 +112,73 @@ export interface AgentMessageResponse {
   audit?: Record<string, unknown>;
 }
 
+export interface AgentScenarioRead {
+  id: number;
+  account_id: number;
+  name: string;
+  description?: string | null;
+  scenario_type: string;
+  status: string;
+  approval_policy: string;
+  auto_execute_enabled: boolean;
+  scope_json: Record<string, unknown>;
+  schedule_json: Record<string, unknown>;
+  guardrails_json: Record<string, unknown>;
+  actions_json: Record<string, unknown>[];
+  next_run_at?: string | null;
+  last_run_at?: string | null;
+  last_run_status?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentScenarioListResponse {
+  status: "ok" | "empty";
+  total: number;
+  limit: number;
+  offset: number;
+  items: AgentScenarioRead[];
+}
+
+export interface AgentScenarioRunRead {
+  id: number;
+  account_id: number;
+  scenario_id: number;
+  trigger: string;
+  status: string;
+  dry_run: boolean;
+  actions_preview_json: Record<string, unknown>[];
+  actions_executed: number;
+  actions_blocked: number;
+  output_json: Record<string, unknown>;
+  estimated_cost_usd: string | number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentScenarioRunListResponse {
+  status: "ok" | "empty";
+  total: number;
+  limit: number;
+  offset: number;
+  items: AgentScenarioRunRead[];
+}
+
+export interface AgentFinanceSummary {
+  status: "ok";
+  account_id: number;
+  scenarios_total: number;
+  active_scenarios: number;
+  runs_total: number;
+  runs_last_30d: number;
+  failed_runs_last_30d: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd: string | number;
+  ledger_items: Record<string, unknown>[];
+}
+
 export function sendAgentMessage(payload: AgentMessageRequest) {
   return api<AgentMessageResponse>(API_ENDPOINTS.portal.agentMessage, {
     method: "POST",
@@ -118,9 +199,39 @@ export function callAgentTool(payload: AgentToolCallRequest) {
   });
 }
 
+export function callAgentMcp(accountId: number, payload: AgentMcpRequest) {
+  return api<AgentMcpResponse>(
+    `${API_ENDPOINTS.portal.agentMcp}?account_id=${encodeURIComponent(String(accountId))}`,
+    {
+      method: "POST",
+      body: { jsonrpc: "2.0", ...payload },
+    },
+  );
+}
+
 export function createAgentManualTask(payload: Record<string, unknown>) {
   return api<unknown>(API_ENDPOINTS.portal.agentManualTask, {
     method: "POST",
     body: payload,
   });
+}
+
+export function fetchAgentScenarios(accountId: number) {
+  return api<AgentScenarioListResponse>(
+    `${API_ENDPOINTS.portal.agentScenarios}?account_id=${encodeURIComponent(String(accountId))}`,
+  );
+}
+
+export function fetchAgentScenarioRuns(accountId: number, scenarioId?: number) {
+  const params = new URLSearchParams({ account_id: String(accountId) });
+  if (scenarioId) params.set("scenario_id", String(scenarioId));
+  return api<AgentScenarioRunListResponse>(
+    `${API_ENDPOINTS.portal.agentScenarioRuns}?${params.toString()}`,
+  );
+}
+
+export function fetchAgentFinance(accountId: number) {
+  return api<AgentFinanceSummary>(
+    `${API_ENDPOINTS.portal.agentFinance}?account_id=${encodeURIComponent(String(accountId))}`,
+  );
 }

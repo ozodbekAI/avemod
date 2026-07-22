@@ -128,10 +128,19 @@ function summarizeApiActionResult(value: unknown) {
     "status",
     "message",
     "id",
+    "scenario_id",
     "run_id",
+    "scenario_type",
     "run_type",
     "total",
     "count",
+    "scenarios_total",
+    "active_scenarios",
+    "runs_total",
+    "runs_last_30d",
+    "failed_runs_last_30d",
+    "total_tokens",
+    "estimated_cost_usd",
     "checked_accounts",
     "opened_count",
     "updated_count",
@@ -153,6 +162,14 @@ function summarizeApiActionResult(value: unknown) {
   }
   const items = value.items;
   if (Array.isArray(items)) parts.push(`items: ${items.length}`);
+  const previews = value.actions_preview_json;
+  if (Array.isArray(previews)) {
+    parts.push(`action previews: ${previews.length}`);
+  }
+  const output = value.output_json;
+  if (isRecord(output) && typeof output.summary === "string") {
+    parts.push(output.summary);
+  }
   const warnings = value.warnings;
   if (Array.isArray(warnings) && warnings.length) {
     parts.push(`warnings: ${warnings.length}`);

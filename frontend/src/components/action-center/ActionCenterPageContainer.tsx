@@ -144,6 +144,7 @@ import {
   fetchPortalProducts,
   previewCardQualityIssueApply,
   recheckProblemInstance,
+  updateManualTaskItem,
   type PortalAssignableUser,
   type PortalProductRow,
 } from "@/lib/portal";
@@ -185,6 +186,36 @@ const COMPLETED_TASK_QUERY_STATUS = "done,resolved";
 const DEACTIVATED_TASK_QUERY_STATUS = "ignored,dismissed";
 
 type TaskBoardMode = "active" | "completed" | "deactivated";
+
+type ManualTaskProgressItem = {
+  id?: number | string | null;
+  item_key?: string | null;
+  status?: "pending" | "done" | "skipped" | string | null;
+  nm_id?: number | null;
+  sku_id?: number | null;
+  vendor_code?: string | null;
+  title?: string | null;
+  photo_url?: string | null;
+  last_comment?: string | null;
+};
+
+type ManualTaskProgress = {
+  total: number;
+  done: number;
+  skipped: number;
+  pending: number;
+  percent: number;
+  items: ManualTaskProgressItem[];
+};
+
+const EMPTY_MANUAL_TASK_PROGRESS: ManualTaskProgress = {
+  total: 0,
+  done: 0,
+  skipped: 0,
+  pending: 0,
+  percent: 0,
+  items: [],
+};
 
 const STATUS_TONE: Record<string, string> = {
   new: "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300",
@@ -680,10 +711,16 @@ function ProductThumb({
   );
 }
 
-function itemPayload(item: ActionCenterItem): Record<string, any> {
+function asLooseRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function itemPayload(item: ActionCenterItem): Record<string, unknown> {
   return {
-    ...(typeof item.raw === "object" && item.raw ? item.raw : {}),
-    ...(typeof item.payload === "object" && item.payload ? item.payload : {}),
+    ...asLooseRecord(item.raw),
+    ...asLooseRecord(item.payload),
   };
 }
 
@@ -720,20 +757,78 @@ function isManualTask(item: ActionCenterItem | null): boolean {
   );
 }
 
+function manualTaskActionId(item: ActionCenterItem): number | null {
+  if (typeof item.action_id === "number" && Number.isFinite(item.action_id)) {
+    return item.action_id;
+  }
+  const match = String(item.id ?? "").match(/^unified:(\d+)$/);
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function manualTaskProgress(item: ActionCenterItem): ManualTaskProgress {
+  const payload = itemPayload(item);
+  const rawProgress = payload.manual_task_progress;
+  if (
+    !rawProgress ||
+    typeof rawProgress !== "object" ||
+    Array.isArray(rawProgress)
+  ) {
+    return EMPTY_MANUAL_TASK_PROGRESS;
+  }
+  const progress = rawProgress as Record<string, unknown>;
+  const items = Array.isArray(progress.items)
+    ? progress.items.map((entry) => asLooseRecord(entry))
+    : [];
+  const done = numberFromUnknown(progress.done) ?? 0;
+  const skipped = numberFromUnknown(progress.skipped) ?? 0;
+  const total = numberFromUnknown(progress.total) ?? items.length;
+  return {
+    total,
+    done,
+    skipped,
+    pending:
+      numberFromUnknown(progress.pending) ??
+      Math.max(total - done - skipped, 0),
+    percent:
+      numberFromUnknown(progress.percent) ??
+      (total ? Math.round((done / total) * 100) : 0),
+    items: items.map((entry) => ({
+      id: firstString(entry.id) ?? numberFromUnknown(entry.id),
+      item_key: firstString(entry.item_key),
+      status: firstString(entry.status, "pending"),
+      nm_id: numberFromUnknown(entry.nm_id),
+      sku_id: numberFromUnknown(entry.sku_id),
+      vendor_code: firstString(entry.vendor_code),
+      title: firstString(entry.title),
+      photo_url: firstString(entry.photo_url),
+      last_comment: firstString(entry.last_comment),
+    })),
+  };
+}
+
 function manualTaskProducts(item: ActionCenterItem): PortalProductRow[] {
   const payload = itemPayload(item);
   const rows = Array.isArray(payload.selected_products)
     ? payload.selected_products
     : [];
   return rows
-    .map((row: any) => ({
-      nm_id: Number(row?.nm_id),
-      sku_id: numberFromUnknown(row?.sku_id),
-      title: firstString(row?.title, row?.name),
-      vendor_code: firstString(row?.vendor_code, row?.article),
-      photo_url: firstString(row?.photo_url, row?.image_url, row?.thumbnail),
-      thumbnail: firstString(row?.thumbnail, row?.photo_url, row?.image_url),
-    }))
+    .map((entry) => {
+      const row = asLooseRecord(entry);
+      return {
+        nm_id: Number(row.nm_id),
+        sku_id: numberFromUnknown(row.sku_id),
+        title: firstString(row.title, row.name),
+        vendor_code: firstString(row.vendor_code, row.article),
+        photo_url: firstString(row.photo_url, row.image_url, row.thumbnail),
+        thumbnail: firstString(row.thumbnail, row.photo_url, row.image_url),
+        manual_task_item_key: firstString(
+          row.manual_task_item_key,
+          row.item_key,
+        ),
+      };
+    })
     .filter(
       (row) => Number.isFinite(row.nm_id) && row.nm_id > 0,
     ) as PortalProductRow[];
@@ -3818,8 +3913,12 @@ function ManualTaskResolutionPanel({
   onDoneNext: (item: ActionCenterItem) => void;
   onNext: () => void;
 }) {
+  const queryClient = useQueryClient();
   const payload = itemPayload(item);
   const products = manualTaskProducts(item);
+  const progress = manualTaskProgress(item);
+  const progressItems = Array.isArray(progress.items) ? progress.items : [];
+  const actionId = manualTaskActionId(item);
   const closed = isClosedAction(item);
   const instructions = firstString(
     payload.instructions,
@@ -3842,23 +3941,82 @@ function ManualTaskResolutionPanel({
           ),
         } as PortalProductRow,
       ];
+  const productKey = (product: PortalProductRow, index: number) =>
+    firstString(
+      product.manual_task_item_key,
+      progressItems[index]?.item_key,
+      `product-${index + 1}`,
+    );
+  const progressStatusByKey = useMemo(() => {
+    const map = new Map<string, string>();
+    progressItems.forEach((entry, index: number) => {
+      const key = firstString(entry.item_key, `product-${index + 1}`);
+      if (key) map.set(key, norm(entry.status || "pending"));
+    });
+    return map;
+  }, [progressItems]);
+  const progressSignature = useMemo(
+    () =>
+      displayProducts
+        .map((product, index) => {
+          const key = productKey(product, index);
+          return `${key}:${progressStatusByKey.get(key) || "pending"}`;
+        })
+        .join("|"),
+    [displayProducts, progressStatusByKey],
+  );
   const [checkedProducts, setCheckedProducts] = useState<Set<string>>(
     () => new Set(),
   );
   useEffect(() => {
-    setCheckedProducts(new Set());
-  }, [item.id]);
-  const productKey = (product: PortalProductRow, index: number) =>
-    `${product.nm_id ?? index}:${product.vendor_code ?? ""}:${index}`;
+    const doneKeys = displayProducts
+      .map((product, index) => productKey(product, index))
+      .filter((key) => progressStatusByKey.get(key) === "done");
+    setCheckedProducts(new Set(doneKeys));
+  }, [item.id, progressSignature]);
+  const itemMutation = useMutation({
+    mutationFn: ({
+      itemKey,
+      status,
+    }: {
+      itemKey: string;
+      status: "pending" | "done" | "skipped";
+    }) => {
+      if (actionId == null) {
+        throw new Error("У ручной задачи нет action_id");
+      }
+      return updateManualTaskItem(actionId, itemKey, {
+        account_id: item.account_id,
+        status,
+        comment:
+          status === "done"
+            ? "Товар отмечен готовым в ручной задаче."
+            : "Товар возвращён в работу в ручной задаче.",
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["portal-actions"] });
+      queryClient.invalidateQueries({ queryKey: ["portal-action-results"] });
+    },
+    onError: () => {
+      toast.error("Не удалось сохранить прогресс по товару");
+      queryClient.invalidateQueries({ queryKey: ["portal-actions"] });
+    },
+  });
   const checkedCount = checkedProducts.size;
   const allChecked =
     displayProducts.length > 0 && checkedCount >= displayProducts.length;
   const toggleProductDone = (key: string, checked: boolean) => {
+    if (closed || item.can_update === false || itemMutation.isPending) return;
     setCheckedProducts((prev) => {
       const next = new Set(prev);
       if (checked) next.add(key);
       else next.delete(key);
       return next;
+    });
+    itemMutation.mutate({
+      itemKey: key,
+      status: checked ? "done" : "pending",
     });
   };
   const markSelectedDone = () => {
@@ -3871,9 +4029,9 @@ function ManualTaskResolutionPanel({
       return;
     }
     onStatus(item, "in_progress", false, {
-      comment: `Отмечено выполненным по ${checkedCount} из ${displayProducts.length} товаров. Задача оставлена в работе.`,
+      comment: `Прогресс сохранён по ${checkedCount} из ${displayProducts.length} товаров. Задача оставлена в работе.`,
     });
-    toast.success("Часть товаров отмечена. Задача осталась в работе.");
+    toast.success("Прогресс сохранён. Задача осталась в работе.");
   };
   return (
     <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
@@ -3976,6 +4134,11 @@ function ManualTaskResolutionPanel({
                   >
                     <Checkbox
                       checked={checked}
+                      disabled={
+                        closed ||
+                        item.can_update === false ||
+                        itemMutation.isPending
+                      }
                       onCheckedChange={(value) =>
                         toggleProductDone(key, value === true)
                       }
@@ -3993,7 +4156,9 @@ function ManualTaskResolutionPanel({
                         {productRowSubtitle(product)}
                       </div>
                     </div>
-                    {checked ? (
+                    {itemMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                    ) : checked ? (
                       <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
                     ) : null}
                   </label>
@@ -4032,7 +4197,7 @@ function ManualTaskResolutionPanel({
                 {
                   title: "Выполнить работу",
                   text: "Изменить title, фото, цену или выполнить свою инструкцию.",
-                  done: closed,
+                  done: checkedCount > 0 || closed,
                 },
                 {
                   title: "Закрыть",
@@ -4069,7 +4234,7 @@ function ManualTaskResolutionPanel({
           <div className="rounded-xl border bg-card p-3">
             <div className="mb-2 text-xs text-muted-foreground">
               {displayProducts.length > 1
-                ? "Частичный прогресс запишется в историю задачи. Чтобы закрыть задачу, отметьте все товары."
+                ? "Частичный прогресс сохранится по товарам. Чтобы закрыть задачу, отметьте все товары."
                 : "Закройте задачу, когда товар реально исправлен."}
             </div>
             <div className="grid gap-2">
@@ -4079,6 +4244,7 @@ function ManualTaskResolutionPanel({
                 disabled={
                   closed ||
                   busy ||
+                  itemMutation.isPending ||
                   !item.can_update ||
                   (!checkedCount && displayProducts.length > 1)
                 }

@@ -440,6 +440,93 @@ async def test_sku_profitability_does_not_require_cost_for_zero_activity_rows() 
     assert rows[0].has_real_manual_cost is True
 
 
+@pytest.mark.asyncio
+async def test_sku_profitability_subtracts_read_time_source_ads_from_profit() -> None:
+    service = DashboardService()
+    mart_row = SimpleNamespace(
+        account_id=1,
+        stat_date=date(2026, 5, 20),
+        sku_id=19099,
+        nm_id=323108780,
+        vendor_code="SKU-ADS",
+        barcode="BAR-ADS",
+        title="Ads allocation row",
+        brand="Avemod",
+        subject_name="Kostyumy",
+        finance_rows=1,
+        final_sales_qty=1,
+        final_return_qty=0,
+        final_net_qty=1,
+        final_revenue=Decimal("100"),
+        final_for_pay=Decimal("90"),
+        sale_rows=1,
+        commission=Decimal("10"),
+        acquiring_fee=Decimal("0"),
+        logistics=Decimal("0"),
+        paid_acceptance=Decimal("0"),
+        storage=Decimal("0"),
+        penalties=Decimal("0"),
+        deductions=Decimal("0"),
+        additional_payments=Decimal("0"),
+        wb_commission=Decimal("10"),
+        payment_processing=Decimal("0"),
+        pvz_reward=Decimal("0"),
+        wb_logistics=Decimal("0"),
+        wb_logistics_rebill=Decimal("0"),
+        acceptance=Decimal("0"),
+        penalty=Decimal("0"),
+        deduction=Decimal("0"),
+        marketing_deduction=Decimal("0"),
+        loyalty=Decimal("0"),
+        other_wb_expenses=Decimal("0"),
+        total_wb_expenses=Decimal("10"),
+        ad_spend=Decimal("0"),
+        ad_spend_operational=Decimal("0"),
+        ad_spend_finance=Decimal("0"),
+        ad_spend_final=Decimal("0"),
+        ad_spend_source="",
+        ad_spend_delta=Decimal("0"),
+        estimated_cogs=Decimal("40"),
+        seller_cogs=Decimal("40"),
+        seller_other_expense=Decimal("0"),
+        total_seller_expenses=Decimal("40"),
+        estimated_profit_before_ads=Decimal("50"),
+        estimated_profit_after_ads=Decimal("50"),
+        net_profit_after_all_expenses=Decimal("50"),
+        has_manual_cost=True,
+        has_real_manual_cost=True,
+        has_placeholder_cost=False,
+        cost_source="supplier_upload",
+        final_revenue_source="finance",
+        closing_stock_qty=Decimal("1"),
+    )
+    session = _FakeSession(
+        [
+            _FakeExecuteResult(scalars_list=[mart_row]),
+            _FakeExecuteResult(
+                scalar=SimpleNamespace(
+                    settings_json={"cost_trust_policy": "owner_approved_final"}
+                )
+            ),
+            _FakeExecuteResult(rows=[(323108780, Decimal("30"))]),
+        ]
+    )
+
+    rows = await service.sku_profitability(
+        session,  # type: ignore[arg-type]
+        account_id=1,
+        date_from=date(2026, 5, 1),
+        date_to=date(2026, 5, 31),
+    )
+
+    assert len(rows) == 1
+    assert rows[0].ad_spend_final == 30.0
+    assert rows[0].estimated_profit == 20.0
+    assert rows[0].net_profit_after_all_expenses == 20.0
+    assert rows[0].margin_percent == 20.0
+    assert rows[0].roi_percent == 50.0
+
+
 def test_article_finance_summary_aligns_with_mart_rows() -> None:
     mart_row = SimpleNamespace(
         final_sales_qty=2,

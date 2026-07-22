@@ -5,6 +5,16 @@ type PageMetricSnippet = {
   tag: string;
 };
 
+type PageMetricProvenance = {
+  key: string;
+  label: string;
+  value: string;
+  source?: string;
+  formula?: string;
+  api_path?: string;
+  updated_at?: string;
+};
+
 type ApiField = {
   path: string;
   value: string | number | boolean | null;
@@ -43,8 +53,32 @@ const PRIORITY_API_FIELD_PATHS = [
 ];
 
 function compactText(value: string, limit = 600) {
-  const text = value.replace(/\s+/g, " ").trim();
+  const text = collapseWhitespace(value);
   return text.length > limit ? `${text.slice(0, limit)}...` : text;
+}
+
+function collapseWhitespace(value: string) {
+  let output = "";
+  let pendingSpace = false;
+  for (const char of value) {
+    const isSpace =
+      char === " " ||
+      char === "\n" ||
+      char === "\r" ||
+      char === "\t" ||
+      char === "\f" ||
+      char === "\v";
+    if (isSpace) {
+      pendingSpace = output.length > 0;
+      continue;
+    }
+    if (pendingSpace) {
+      output += " ";
+      pendingSpace = false;
+    }
+    output += char;
+  }
+  return output;
 }
 
 function hasDigit(value: string) {
@@ -123,6 +157,32 @@ function collectMetricSnippets(root: Element) {
     snippets.push({ text, tag: element.tagName.toLowerCase() });
   }
   return snippets;
+}
+
+function collectMetricProvenance(root: Element) {
+  return Array.from(root.querySelectorAll("[data-agent-metric]"))
+    .filter((element) => !shouldSkip(element) && isElementVisible(element))
+    .map((element) => {
+      const item = element as HTMLElement;
+      const value = compactText(item.innerText || item.textContent || "", 420);
+      const metric: PageMetricProvenance = {
+        key: item.dataset.agentMetric || "",
+        label:
+          item.dataset.agentLabel || item.getAttribute("aria-label") || value,
+        value,
+      };
+      if (item.dataset.agentSource) metric.source = item.dataset.agentSource;
+      if (item.dataset.agentFormula) metric.formula = item.dataset.agentFormula;
+      if (item.dataset.agentApiPath) {
+        metric.api_path = item.dataset.agentApiPath;
+      }
+      if (item.dataset.agentUpdatedAt) {
+        metric.updated_at = item.dataset.agentUpdatedAt;
+      }
+      return metric;
+    })
+    .filter((item) => item.key && item.value)
+    .slice(0, 80);
 }
 
 function flattenApiFields(
@@ -224,6 +284,7 @@ export function buildAgentPageContext() {
     headings: collectHeadings(root),
     visible_text: pageText,
     visible_number_context: collectMetricSnippets(root),
+    metric_provenance: collectMetricProvenance(root),
     recent_api: getRecentApiSnapshots().slice(0, 12).map(compactApiSnapshot),
   };
 }

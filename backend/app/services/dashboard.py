@@ -2498,18 +2498,12 @@ class DashboardService:
             )
             if has_complete_manual_cost:
                 computed_profit = (
-                    net_profit_after_all_expenses_value
-                    if net_profit_after_all_expenses_value != 0
-                    else self._decimal(bucket["estimated_profit_after_ads"])
+                    realized_revenue
+                    - total_wb_expenses
+                    - total_seller_expenses
+                    - effective_ad_spend
+                    + additional_income
                 )
-                if computed_profit == 0 and realized_revenue > 0:
-                    computed_profit = (
-                        realized_revenue
-                        - total_wb_expenses
-                        - total_seller_expenses
-                        - effective_ad_spend
-                        + additional_income
-                    )
                 profit = computed_profit
                 margin_percent = (
                     float((computed_profit / realized_revenue) * Decimal("100"))
@@ -2521,14 +2515,7 @@ class DashboardService:
                     if estimated_cogs > 0
                     else None
                 )
-                if net_profit_after_all_expenses_value == 0 and realized_revenue > 0:
-                    net_profit_after_all_expenses_value = (
-                        realized_revenue
-                        - total_wb_expenses
-                        - total_seller_expenses
-                        - effective_ad_spend
-                        + additional_income
-                    )
+                net_profit_after_all_expenses_value = computed_profit
             drr_percent = (
                 float((effective_ad_spend / realized_revenue) * Decimal("100"))
                 if realized_revenue > 0

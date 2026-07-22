@@ -4554,7 +4554,12 @@ class DataQualityService:
         touched = 0
         seen: set[str] = set()
         for row in rows:
-            entity_key = f"nm:{row.nm_id}|vendor:{row.vendor_code}"
+            normalized_vendor = str(row.vendor_code or "").strip().casefold()
+            entity_key = (
+                f"sku:{row.sku_id}"
+                if row.sku_id is not None
+                else f"nm:{row.nm_id}|vendor:{normalized_vendor}"
+            )
             if entity_key in seen:
                 continue
             seen.add(entity_key)

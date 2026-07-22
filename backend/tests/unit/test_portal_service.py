@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 from app.models.accounts import WBAccount
 from app.models.card_quality import CardQualityIssue
-from app.models.operator import OperatorDraft, ResultEvent, UnifiedAction
+from app.models.operator import ManualTaskItem, OperatorDraft, ResultEvent, UnifiedAction
 from app.models.problem_engine import ProblemDefinition, ProblemInstance, ProblemInstanceHistory
 from app.schemas.card_quality import CardQualityIssueRead
 from app.schemas.claims import CaseListItemOut, ClaimsCasesPage
@@ -24,6 +24,7 @@ from app.schemas.portal import (
     PortalDataReadinessSource,
     PortalModuleHealth,
     PortalModuleHealthItem,
+    PortalManualTaskItemUpdateRequest,
     PortalProductGroupingRead,
     PortalProductQualityRead,
     PortalResultEventRead,
@@ -54,8 +55,9 @@ class _FakeExecuteResult:
 
 
 class _FakeSession:
-    def __init__(self, *, unified_actions=None):
+    def __init__(self, *, unified_actions=None, manual_task_items=None):
         self.unified_actions = unified_actions or []
+        self.manual_task_items = manual_task_items or []
         self.committed = False
         self.added = []
         self.next_id = 1000
@@ -78,12 +80,20 @@ class _FakeSession:
         )
 
     async def execute(self, stmt):
+        if "manual_task_items" in str(stmt):
+            return _FakeExecuteResult(scalars=self.manual_task_items)
         return _FakeExecuteResult(scalars=self.unified_actions)
 
     def add(self, row):
         self.added.append(row)
         if isinstance(row, UnifiedAction) and row not in self.unified_actions:
             self.unified_actions.append(row)
+        if isinstance(row, ManualTaskItem) and row not in self.manual_task_items:
+            self.manual_task_items.append(row)
+
+    def add_all(self, rows):
+        for row in rows:
+            self.add(row)
 
     async def flush(self):
         for row in self.added:
@@ -1363,6 +1373,59 @@ async def test_portal_actions_default_items_have_frontend_contract_fields() -> N
         if not item.can_update:
             assert item.can_update_status is False
             assert item.can_update_reason
+
+
+@pytest.mark.asyncio
+async def test_portal_update_manual_task_item_persists_product_progress() -> None:
+    row = UnifiedAction(
+        id=901,
+        account_id=1,
+        source_module="manual",
+        source_id="manual:901",
+        action_type="MANUAL_REVIEW",
+        status="new",
+        priority="P2",
+        title="Проверить товары",
+        payload_json={
+            "manual_task": True,
+            "selected_products": [
+                {"nm_id": 111, "title": "Первый товар"},
+                {
+                    "nm_id": 222,
+                    "title": "Второй товар",
+                    "manual_task_item_key": "custom-2",
+                },
+            ],
+        },
+    )
+    session = _FakeSession(unified_actions=[row])
+
+    result = await PortalService().update_manual_task_item(
+        session,
+        account_id=1,
+        action_id=901,
+        item_key="product-1",
+        payload=PortalManualTaskItemUpdateRequest(
+            account_id=1,
+            status="done",
+            comment="Первый товар исправлен.",
+        ),
+        user_id=5,
+    )
+
+    assert session.committed is True
+    assert row.status == "in_progress"
+    assert [item.item_key for item in session.manual_task_items] == [
+        "product-1",
+        "custom-2",
+    ]
+    assert [item.status for item in session.manual_task_items] == ["done", "pending"]
+    progress = result.payload["manual_task_progress"]
+    assert progress["total"] == 2
+    assert progress["done"] == 1
+    assert progress["pending"] == 1
+    assert progress["items"][0]["item_key"] == "product-1"
+    assert progress["items"][0]["status"] == "done"
 
 
 @pytest.mark.asyncio

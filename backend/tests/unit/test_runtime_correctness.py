@@ -27,6 +27,7 @@ from app.modules.ads.client import AdsClient
 from app.modules.ads.sync import AdsSyncService
 from app.modules.analytics.sync import AnalyticsSyncService
 from app.modules.finance.sync import FinanceSyncService
+from app.modules.logistics.sync import LogisticsSyncService
 from app.modules.orders.sync import OrdersSyncService
 from app.modules.product_cards.sync import ProductCardsSyncService
 from app.modules.sales.sync import SalesSyncService
@@ -134,7 +135,7 @@ def test_register_jobs_does_not_raise_and_registers_jobs() -> None:
     register_jobs(scheduler)
 
     job_ids = {job.id for job in scheduler.get_jobs()}
-    assert len(job_ids) == 27
+    assert len(job_ids) == 29
     assert "process-card-quality-runs" in job_ids
     assert "process-queued-stock-control-runs" in job_ids
     assert "dynamic-problem-nightly" in job_ids
@@ -165,6 +166,7 @@ def test_register_jobs_does_not_raise_and_registers_jobs() -> None:
         "sync-promotions",
         "sync-analytics",
         "sync-tariffs",
+        "sync-logistics",
         "sync-documents",
         "sync-local-reputation",
         "reputation-auto-draft-local",
@@ -194,6 +196,21 @@ def test_dedupe_datetime_normalizes_to_canonical_utc_isoformat() -> None:
     )
 
     assert dedupe == expected
+
+
+def test_logistics_paid_storage_chunks_cover_default_money_window() -> None:
+    chunks = LogisticsSyncService._date_chunks(
+        date_from=date(2026, 6, 19),
+        date_to=date(2026, 7, 19),
+        max_days=LogisticsSyncService.PAID_STORAGE_CHUNK_DAYS,
+    )
+
+    assert chunks == [
+        (date(2026, 6, 19), date(2026, 6, 26)),
+        (date(2026, 6, 27), date(2026, 7, 4)),
+        (date(2026, 7, 5), date(2026, 7, 12)),
+        (date(2026, 7, 13), date(2026, 7, 19)),
+    ]
 
 
 def test_orders_current_subquery_keeps_distinct_rows_for_same_srid_and_different_nm_id() -> (
@@ -659,7 +676,11 @@ async def test_orders_sync_boundary_replay_does_not_raise_stuck_issue_for_small_
         SimpleNamespace(), account=SimpleNamespace(id=1), force_full=False
     )
 
-    assert result["pagesLoaded"] == 1
+    assert (
+        service.client.fetch_orders.await_args_list[0].kwargs["date_from"]
+        == "2026-05-12T10:05:00+00:00"
+    )
+    assert result["pagesLoaded"] == 2
     service._open_issue.assert_not_called()
 
 
@@ -693,7 +714,11 @@ async def test_sales_sync_boundary_replay_raises_stuck_issue_near_limit() -> Non
         SimpleNamespace(), account=SimpleNamespace(id=1), force_full=False
     )
 
-    assert result["pagesLoaded"] == 1
+    assert (
+        service.client.fetch_sales.await_args_list[0].kwargs["date_from"]
+        == "2026-05-12T10:05:00+00:00"
+    )
+    assert result["pagesLoaded"] == 2
     service._open_issue.assert_awaited_once()
 
 

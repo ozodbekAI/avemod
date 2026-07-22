@@ -34,6 +34,9 @@ class LogisticsSyncService(DomainSyncBase):
 
     PAID_STORAGE_CURSOR_KEY = "paid_storage_task"
     ACCEPTANCE_CURSOR_KEY = "acceptance_report_task"
+    PAID_STORAGE_WINDOW_DAYS = 31
+    PAID_STORAGE_CHUNK_DAYS = 8
+    ACCEPTANCE_WINDOW_DAYS = 31
     REPORT_STATUS_POLL_ATTEMPTS = 3
     REPORT_STATUS_POLL_SECONDS = 5
     MARKETPLACE_STOCK_CHUNK_SIZE = 1000
@@ -79,6 +82,18 @@ class LogisticsSyncService(DomainSyncBase):
             start = end - timedelta(days=max_days - 1)
             clamped = True
         return start, end, clamped
+
+    @staticmethod
+    def _date_chunks(
+        *, date_from: date, date_to: date, max_days: int
+    ) -> list[tuple[date, date]]:
+        chunks: list[tuple[date, date]] = []
+        cursor = date_from
+        while cursor <= date_to:
+            chunk_to = min(cursor + timedelta(days=max_days - 1), date_to)
+            chunks.append((cursor, chunk_to))
+            cursor = chunk_to + timedelta(days=1)
+        return chunks
 
     @staticmethod
     def _data(payload: Any) -> Any:
@@ -532,11 +547,12 @@ class LogisticsSyncService(DomainSyncBase):
         account_id: int,
         date_from: date,
         date_to: date,
+        cursor_key: str | None = None,
     ) -> dict[str, Any]:
         status, task_id, rows, task_status = await self._sync_async_report(
             session,
             account_id=account_id,
-            cursor_key=self.PAID_STORAGE_CURSOR_KEY,
+            cursor_key=cursor_key or self.PAID_STORAGE_CURSOR_KEY,
             date_from=date_from,
             date_to=date_to,
             create_call=self.client.create_paid_storage_report,
@@ -813,14 +829,14 @@ class LogisticsSyncService(DomainSyncBase):
         paid_from, paid_to, paid_clamped = self._window(
             backfill_from=backfill_from,
             backfill_to=backfill_to,
-            default_days=8,
-            max_days=8,
+            default_days=self.PAID_STORAGE_WINDOW_DAYS,
+            max_days=self.PAID_STORAGE_WINDOW_DAYS,
         )
         acceptance_from, acceptance_to, acceptance_clamped = self._window(
             backfill_from=backfill_from,
             backfill_to=backfill_to,
-            default_days=31,
-            max_days=31,
+            default_days=self.ACCEPTANCE_WINDOW_DAYS,
+            max_days=self.ACCEPTANCE_WINDOW_DAYS,
         )
         if paid_clamped or acceptance_clamped:
             await self._open_issue(
@@ -833,20 +849,51 @@ class LogisticsSyncService(DomainSyncBase):
                     "paidStorage": {
                         "dateFrom": paid_from.isoformat(),
                         "dateTo": paid_to.isoformat(),
-                        "maxDays": 8,
+                        "maxDays": self.PAID_STORAGE_WINDOW_DAYS,
+                        "chunkDays": self.PAID_STORAGE_CHUNK_DAYS,
                     },
                     "acceptanceReport": {
                         "dateFrom": acceptance_from.isoformat(),
                         "dateTo": acceptance_to.isoformat(),
-                        "maxDays": 31,
+                        "maxDays": self.ACCEPTANCE_WINDOW_DAYS,
                     },
                 },
             )
 
         await self._progress(stage="logistics_paid_storage", progress_percent=20)
-        paid_storage = await self._sync_paid_storage(
-            session, account_id=account.id, date_from=paid_from, date_to=paid_to
+        paid_storage_chunks = []
+        paid_storage_rows = 0
+        for chunk_from, chunk_to in self._date_chunks(
+            date_from=paid_from,
+            date_to=paid_to,
+            max_days=self.PAID_STORAGE_CHUNK_DAYS,
+        ):
+            chunk = await self._sync_paid_storage(
+                session,
+                account_id=account.id,
+                date_from=chunk_from,
+                date_to=chunk_to,
+                cursor_key=(
+                    f"{self.PAID_STORAGE_CURSOR_KEY}:"
+                    f"{chunk_from.isoformat()}:{chunk_to.isoformat()}"
+                ),
+            )
+            chunk["dateFrom"] = chunk_from.isoformat()
+            chunk["dateTo"] = chunk_to.isoformat()
+            paid_storage_chunks.append(chunk)
+            paid_storage_rows += int(chunk.get("rows") or 0)
+        paid_storage_status = (
+            "failed"
+            if any(item.get("status") == "failed" for item in paid_storage_chunks)
+            else "partial"
+            if any(item.get("status") == "partial" for item in paid_storage_chunks)
+            else "completed"
         )
+        paid_storage = {
+            "status": paid_storage_status,
+            "rows": paid_storage_rows,
+            "chunks": paid_storage_chunks,
+        }
         await self._progress(stage="logistics_acceptance_report", progress_percent=45)
         acceptance = await self._sync_acceptance(
             session,
@@ -874,6 +921,7 @@ class LogisticsSyncService(DomainSyncBase):
                 "paidStorage": {
                     "dateFrom": paid_from.isoformat(),
                     "dateTo": paid_to.isoformat(),
+                    "chunkDays": self.PAID_STORAGE_CHUNK_DAYS,
                 },
                 "acceptanceReport": {
                     "dateFrom": acceptance_from.isoformat(),

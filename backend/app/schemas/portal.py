@@ -2803,7 +2803,9 @@ class PortalActionRead(PortalBaseModel):
             return "read_only_signal" if not self.can_update else "missing_evidence"
         formula_code = str(self.evidence_ledger.formula_code or "")
         formula_human = str(self.evidence_ledger.formula_human or "")
-        synthetic = bool(self.evidence_ledger.is_synthetic) or formula_code.startswith("portal_action.")
+        synthetic = bool(self.evidence_ledger.is_synthetic) or formula_code.startswith(
+            "portal_action."
+        )
         has_formula = bool(
             formula_human.strip()
             or formula_code.strip()
@@ -2919,6 +2921,12 @@ class PortalManualActionCreateRequest(PortalBaseModel):
     assigned_to_user_id: int
     deadline_at: datetime
     products: list[PortalManualActionProduct] = Field(min_length=1, max_length=100)
+
+
+class PortalManualTaskItemUpdateRequest(PortalBaseModel):
+    account_id: int | None = None
+    status: Literal["pending", "done", "skipped"]
+    comment: str | None = Field(default=None, max_length=1000)
 
 
 class PortalDataBlock(PortalBaseModel):

@@ -30,6 +30,7 @@ from app.services.reputation import ReputationService
 from app.services.stock_control import StockControlService
 from app.services.experiments import ExperimentSchedulerService
 from app.services.ab_tests import ABTestService
+from app.services.agent.scenarios import AgentScenarioService
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,18 @@ async def run_scheduled_domain_sync(domain: str) -> None:
                     await session.commit()
                 except Exception:
                     await session.rollback()
+
+
+async def process_due_agent_scenarios(*, max_runs: int = 10) -> None:
+    async with SessionLocal() as session:
+        try:
+            await AgentScenarioService().process_due_scenarios(
+                session, limit=max(1, int(max_runs))
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            logger.exception("Due AI agent scenario processing failed")
 
 
 async def process_queued_wb_sync_run(run_id: int) -> None:

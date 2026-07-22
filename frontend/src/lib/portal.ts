@@ -263,6 +263,12 @@ export interface PortalManualActionCreatePayload {
   products: PortalManualActionProduct[];
 }
 
+export interface PortalManualTaskItemUpdatePayload {
+  account_id?: number | null;
+  status: "pending" | "done" | "skipped";
+  comment?: string | null;
+}
+
 export type AllowedActionCode =
   | "create_task"
   | "assign"
@@ -393,6 +399,7 @@ export interface PortalProductRow {
   thumbnail_url?: string | null;
   main_photo_url?: string | null;
   image_url?: string | null;
+  manual_task_item_key?: string | null;
   brand?: string | null;
   subject_name?: string | null;
   revenue?: number | null;
@@ -1657,6 +1664,20 @@ export const createManualPortalAction = (
     method: "POST",
     body: payload,
   });
+
+export const updateManualTaskItem = (
+  actionId: number | string,
+  itemKey: string,
+  payload: PortalManualTaskItemUpdatePayload,
+) =>
+  api<PortalAction>(
+    API_ENDPOINTS.portal.manualTaskItemUpdate(actionId, itemKey),
+    {
+      method: "PATCH",
+      query: ngAcc(payload.account_id),
+      body: payload,
+    },
+  );
 
 export const previewGrouping = (
   accountId: number | null | undefined,

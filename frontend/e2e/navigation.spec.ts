@@ -65,9 +65,9 @@ test("AI operator handles JVO-like admin workflows", async ({ page }) => {
 
   await page.getByRole("button", { name: "Product 360 deep link" }).click();
   await expect(productDialog).toBeHidden();
-  await expect(page.getByText("Сценарий подготовлен")).toBeVisible();
+  await expect(page.getByText("Создал draft AI-сценария")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Создать задачу" }),
+    page.getByRole("button", { name: "Тестовый запуск" }),
   ).toBeVisible();
 
   expect(
@@ -140,14 +140,34 @@ test("API failures render a page error state", async ({ page }) => {
   await expect(page.getByText("Серверная ошибка").first()).toBeVisible();
 });
 
-test("results page shows Корреляция, а не гарантия with До действия and После изменения markers", async ({
+test("results page shows causality warning with До and После markers", async ({
   page,
 }) => {
   await page.goto("/results");
 
   await expect(page.getByRole("heading", { name: "Результаты" })).toBeVisible();
-  await expect(page.getByText("Корреляция, а не гарантия")).toBeVisible();
+  await expect(page.getByText("Сравнение показывает связь")).toBeVisible();
   expect(RESULTS_ERROR_COPY).toBe("Не удалось загрузить результаты");
+});
+
+test("logistics workspace uses Russian decision-first UI with sortable shipment columns", async ({
+  page,
+}) => {
+  await page.goto("/logistics");
+
+  await expect(
+    page.getByRole("heading", { name: "Логистика WB" }),
+  ).toBeVisible();
+  await expect(page.getByText("Что сделать сейчас")).toBeVisible();
+  await expect(page.getByText("Подсортировка по выгоде")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Остаток/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Скорость/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Цель/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Отгрузка/ })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Чистый эффект/ }),
+  ).toBeVisible();
+  await expect(page.getByText("Net")).toHaveCount(0);
 });
 
 test("mobile viewport", async ({ page }) => {

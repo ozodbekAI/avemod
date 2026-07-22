@@ -125,6 +125,7 @@ from app.schemas.portal import (
     PortalGroupingPreviewRead,
     PortalGroupingPreviewRequest,
     PortalManualActionCreateRequest,
+    PortalManualTaskItemUpdateRequest,
     PortalModulesHealthRead,
     PortalOverviewRead,
     PortalProduct360Read,
@@ -806,6 +807,36 @@ async def portal_create_manual_action(
     scoped_payload = payload.model_copy(update={"account_id": account.id})
     return await service.create_manual_action(
         session, payload=scoped_payload, user_id=current_user.id
+    )
+
+
+@router.patch(
+    "/portal/actions/{action_id}/manual-items/{item_key}",
+    response_model=PortalActionRead,
+)
+async def portal_update_manual_task_item(
+    action_id: int,
+    item_key: str,
+    payload: PortalManualTaskItemUpdateRequest,
+    account_id: int | None = Query(default=None),
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> PortalActionRead:
+    scoped_account_id = payload.account_id or account_id
+    account = await _required_portal_account_for_role(
+        session,
+        current_user,
+        account_id=scoped_account_id,
+        minimum_role="operator",
+    )
+    scoped_payload = payload.model_copy(update={"account_id": account.id})
+    return await service.update_manual_task_item(
+        session,
+        account_id=account.id,
+        action_id=action_id,
+        item_key=item_key,
+        payload=scoped_payload,
+        user_id=current_user.id,
     )
 
 

@@ -14,6 +14,7 @@ class SalesSyncService(DomainSyncBase):
     category = "statistics"
     MAX_PAGES_PER_RUN = 200
     PAGINATION_STUCK_WARNING_THRESHOLD = 79_000
+    CURSOR_LOOKBACK_DAYS = 3
 
     def __init__(self) -> None:
         super().__init__()
@@ -31,6 +32,16 @@ class SalesSyncService(DomainSyncBase):
         if current_max is None or parsed > current_max:
             return parsed
         return current_max
+
+    @classmethod
+    def _cursor_start_with_lookback(cls, raw_value: str) -> str:
+        try:
+            parsed = parse_datetime(raw_value)
+        except ValueError:
+            return raw_value
+        if parsed is None:
+            return raw_value
+        return (parsed - timedelta(days=cls.CURSOR_LOOKBACK_DAYS)).isoformat()
 
     async def _resolve_pagination_issues(self, session, *, account_id: int) -> None:
         await self.dq_service.resolve_issues(
@@ -58,7 +69,9 @@ class SalesSyncService(DomainSyncBase):
         if backfill_from is not None:
             start_dt = backfill_from.isoformat()
         elif cursor and cursor.cursor_value.get("lastChangeDate"):
-            start_dt = cursor.cursor_value["lastChangeDate"]
+            start_dt = self._cursor_start_with_lookback(
+                cursor.cursor_value["lastChangeDate"]
+            )
         else:
             start_dt = (utcnow() - timedelta(days=90)).isoformat()
         rows = []

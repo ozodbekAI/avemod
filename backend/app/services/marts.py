@@ -308,13 +308,35 @@ class MartService:
         date_from: date,
         date_to: date,
     ) -> date | None:
+        reports = (
+            (
+                await session.execute(
+                    select(
+                        WBRealizationReport.date_from,
+                        WBRealizationReport.date_to,
+                        WBRealizationReport.create_date,
+                    ).where(WBRealizationReport.account_id == account_id)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        closed_to_candidates = []
+        for report in reports:
+            closed_to = report["date_to"] or report["create_date"]
+            closed_from = report["date_from"] or closed_to
+            if closed_to is None or closed_from is None:
+                continue
+            if closed_to >= date_from and closed_from <= date_to:
+                closed_to_candidates.append(closed_to)
+        if closed_to_candidates:
+            return min(max(closed_to_candidates), date_to)
         return (
             await session.execute(
-                select(func.max(WBRealizationReport.date_to)).where(
-                    WBRealizationReport.account_id == account_id,
-                    WBRealizationReport.date_to.is_not(None),
-                    WBRealizationReport.date_to >= date_from,
-                    WBRealizationReport.date_to <= date_to,
+                select(func.max(WBRealizationReportRow.rr_date)).where(
+                    WBRealizationReportRow.account_id == account_id,
+                    WBRealizationReportRow.rr_date >= date_from,
+                    WBRealizationReportRow.rr_date <= date_to,
                 )
             )
         ).scalar_one_or_none()
@@ -352,6 +374,24 @@ class MartService:
         # WB realization report can keep return amount positive while marking doc_type=Возврат.
         # Normalize returns to negative so finance/mart reconciliation is not inflated.
         if cls._finance_sign(row) < 0 and amount > 0:
+            return -amount
+        return amount
+
+    @classmethod
+    def _sale_sign(cls, row: dict[str, Any]) -> int:
+        sale_id = str(row.get("sale_id") or "").strip().lower()
+        if row.get("is_cancel") or sale_id.startswith("r"):
+            return -1
+        if cls._decimal(row.get("for_pay")) < 0:
+            return -1
+        return 1
+
+    @classmethod
+    def _signed_sale_amount(cls, row: dict[str, Any], value: Any) -> Decimal:
+        amount = cls._decimal(value)
+        if amount == 0:
+            return amount
+        if cls._sale_sign(row) < 0 and amount > 0:
             return -amount
         return amount
 
@@ -1382,18 +1422,27 @@ class MartService:
             "nm_barcode_vendor": defaultdict(list),
         }
         for sku in core_skus:
+            normalized_vendor = MartService._normalized_text(sku.vendor_code)
+            normalized_size = MartService._normalized_text(sku.tech_size)
             index["vendor_barcode_size"][
-                (sku.vendor_code, sku.barcode, sku.tech_size)
+                (normalized_vendor, sku.barcode, normalized_size)
             ].append(sku)
             index["nm_barcode"][(sku.nm_id, sku.barcode)].append(sku)
             index["barcode"][sku.barcode].append(sku)
-            index["nm_size"][(sku.nm_id, sku.tech_size)].append(sku)
-            index["vendor_size"][(sku.vendor_code, sku.tech_size)].append(sku)
-            index["vendor"][sku.vendor_code].append(sku)
+            index["nm_size"][(sku.nm_id, normalized_size)].append(sku)
+            index["vendor_size"][(normalized_vendor, normalized_size)].append(sku)
+            index["vendor"][normalized_vendor].append(sku)
             index["nm_barcode_vendor"][
-                (sku.nm_id, sku.barcode, sku.vendor_code)
+                (sku.nm_id, sku.barcode, normalized_vendor)
             ].append(sku)
         return index
+
+    @staticmethod
+    def _normalized_text(value: Any) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().casefold()
+        return normalized or None
 
     def _resolve_core_sku(
         self,
@@ -1404,14 +1453,18 @@ class MartService:
         barcode: str | None,
         tech_size: str | None,
     ) -> CoreSKU | None:
+        normalized_vendor = self._normalized_text(vendor_code)
+        normalized_size = self._normalized_text(tech_size)
         candidates = [
-            index["vendor_barcode_size"].get((vendor_code, barcode, tech_size), []),
+            index["vendor_barcode_size"].get(
+                (normalized_vendor, barcode, normalized_size), []
+            ),
             index["nm_barcode"].get((nm_id, barcode), []),
             index["barcode"].get(barcode, []),
-            index["nm_size"].get((nm_id, tech_size), []),
-            index["vendor_size"].get((vendor_code, tech_size), []),
-            index["vendor"].get(vendor_code, []),
-            index["nm_barcode_vendor"].get((nm_id, barcode, vendor_code), []),
+            index["nm_size"].get((nm_id, normalized_size), []),
+            index["vendor_size"].get((normalized_vendor, normalized_size), []),
+            index["vendor"].get(normalized_vendor, []),
+            index["nm_barcode_vendor"].get((nm_id, barcode, normalized_vendor), []),
         ]
         for group in candidates:
             if len(group) == 1:
@@ -1440,31 +1493,72 @@ class MartService:
         return candidates[0]
 
     @staticmethod
-    def _build_cost_index(costs: list[ManualCost]) -> dict[int, list[ManualCost]]:
-        index: dict[int, list[ManualCost]] = defaultdict(list)
+    def _build_cost_index(
+        costs: list[ManualCost],
+    ) -> dict[str, dict[Any, list[ManualCost]]]:
+        index: dict[str, dict[Any, list[ManualCost]]] = {
+            "by_sku": defaultdict(list),
+            "by_nm_vendor_size": defaultdict(list),
+        }
         for cost in costs:
-            if cost.sku_id is None:
-                continue
-            index[int(cost.sku_id)].append(cost)
-        for sku_costs in index.values():
-            sku_costs.sort(
-                key=lambda cost: (cost.valid_from or date.min, cost.id), reverse=True
-            )
+            if cost.sku_id is not None:
+                index["by_sku"][int(cost.sku_id)].append(cost)
+            normalized_vendor = MartService._normalized_text(cost.vendor_code)
+            normalized_size = MartService._normalized_text(cost.tech_size)
+            if cost.nm_id is not None and normalized_vendor and normalized_size:
+                index["by_nm_vendor_size"][
+                    (int(cost.nm_id), normalized_vendor, normalized_size)
+                ].append(cost)
+        for group in index.values():
+            for costs_for_key in group.values():
+                costs_for_key.sort(
+                    key=lambda cost: (cost.valid_from or date.min, cost.id),
+                    reverse=True,
+                )
         return index
+
+    def _active_cost_from_candidates(
+        self,
+        candidates: list[ManualCost],
+        *,
+        at_date: date | None,
+    ) -> ManualCost | None:
+        active_costs = [
+            cost for cost in candidates if self.dashboard._cost_is_active(cost, at_date)
+        ]
+        active_costs.sort(
+            key=lambda cost: (cost.valid_from or date.min, cost.id), reverse=True
+        )
+        return active_costs[0] if active_costs else None
 
     def _match_cost_from_index(
         self,
-        cost_index: dict[int, list[ManualCost]],
+        cost_index: dict[str, dict[Any, list[ManualCost]]],
         *,
         sku_id: int | None,
+        nm_id: int | None = None,
+        vendor_code: str | None = None,
+        tech_size: str | None = None,
         at_date: date | None,
     ) -> ManualCost | None:
-        if sku_id is None:
+        if sku_id is not None:
+            matched = self._active_cost_from_candidates(
+                cost_index["by_sku"].get(int(sku_id), []),
+                at_date=at_date,
+            )
+            if matched is not None:
+                return matched
+        normalized_vendor = self._normalized_text(vendor_code)
+        normalized_size = self._normalized_text(tech_size)
+        if nm_id is None or not normalized_vendor or not normalized_size:
             return None
-        for cost in cost_index.get(int(sku_id), []):
-            if self.dashboard._cost_is_active(cost, at_date):
-                return cost
-        return None
+        return self._active_cost_from_candidates(
+            cost_index["by_nm_vendor_size"].get(
+                (int(nm_id), normalized_vendor, normalized_size),
+                [],
+            ),
+            at_date=at_date,
+        )
 
     @staticmethod
     def _extract_price(
@@ -2203,9 +2297,7 @@ class MartService:
             stat_date = self._mapping_date(sale.get("date"))
             if stat_date is None:
                 continue
-            if not self._should_use_operational_sale(
-                stat_date, closed_finance_date_to
-            ):
+            if not self._should_use_operational_sale(stat_date, closed_finance_date_to):
                 continue
             bucket = get_bucket(
                 stat_date,
@@ -2216,21 +2308,21 @@ class MartService:
             bucket["brand"] = bucket["brand"] or sale.get("brand")
             bucket["subject_name"] = bucket["subject_name"] or sale.get("subject")
             bucket["sale_rows"] += 1
-            sign = (
-                -1
-                if sale.get("is_cancel") or self._decimal(sale.get("for_pay")) < 0
-                else 1
-            )
+            sign = self._sale_sign(sale)
             if sign > 0:
                 bucket["operational_sales_qty"] += 1
             else:
                 bucket["operational_return_qty"] += 1
-            bucket["operational_revenue"] += self._decimal(
+            bucket["operational_revenue"] += self._signed_sale_amount(
+                sale,
                 sale.get("finished_price")
                 or sale.get("price_with_disc")
-                or sale.get("total_price")
+                or sale.get("total_price"),
             )
-            bucket["operational_for_pay"] += self._decimal(sale.get("for_pay"))
+            bucket["operational_for_pay"] += self._signed_sale_amount(
+                sale,
+                sale.get("for_pay"),
+            )
             bucket["payload"]["sources"].append("sales")
 
         finance_rows = list(
@@ -2423,6 +2515,9 @@ class MartService:
             matched_cost = self._match_cost_from_index(
                 cost_index,
                 sku_id=bucket["sku_id"],
+                nm_id=bucket["nm_id"],
+                vendor_code=bucket["vendor_code"],
+                tech_size=resolved_sku.tech_size,
                 at_date=bucket["stat_date"],
             )
             bucket["ad_spend_finance"] = self._decimal(bucket["marketing_deduction"])

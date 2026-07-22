@@ -6,6 +6,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.jobs.sync_jobs import (
     collect_experiment_metric_snapshots,
     process_ab_tests,
+    process_due_agent_scenarios,
     process_queued_card_quality_runs,
     process_queued_claim_detection_runs,
     process_queued_grouping_runs,
@@ -103,6 +104,13 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
     )
     scheduler.add_job(
         run_scheduled_domain_sync,
+        CronTrigger(minute=10, hour=3),
+        kwargs={"domain": "logistics"},
+        id="sync-logistics",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_scheduled_domain_sync,
         CronTrigger(minute=20, hour=3),
         kwargs={"domain": "documents"},
         id="sync-documents",
@@ -196,5 +204,11 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
         process_ab_tests,
         CronTrigger(minute="*/2"),
         id="process-ab-tests",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        process_due_agent_scenarios,
+        CronTrigger(minute="*/5"),
+        id="process-due-agent-scenarios",
         replace_existing=True,
     )
