@@ -52,9 +52,9 @@ export type ActionCenterFilterState = {
 export type ActionCenterDigestResultEvent = {
   event_type?: string | null;
   outcome?: string | null;
-  payload?: Record<string, any> | null;
-  comparison?: Record<string, any> | null;
-  after_snapshot?: Record<string, any> | null;
+  payload?: Record<string, unknown> | null;
+  comparison?: Record<string, unknown> | null;
+  after_snapshot?: Record<string, unknown> | null;
   confidence?: string | null;
   created_at?: string | null;
 };
@@ -186,7 +186,10 @@ function text(value: unknown): string {
     .toLowerCase();
 }
 
-function firstString(search: Record<string, unknown>, ...keys: string[]): string {
+function firstString(
+  search: Record<string, unknown>,
+  ...keys: string[]
+): string {
   for (const key of keys) {
     const value = search[key];
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -346,7 +349,11 @@ function isSameLocalDay(a: Date, b: Date): boolean {
   );
 }
 
-function isWithinDays(value: string | null | undefined, now: Date, days: number): boolean {
+function isWithinDays(
+  value: string | null | undefined,
+  now: Date,
+  days: number,
+): boolean {
   if (!value) return false;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return false;
@@ -354,7 +361,10 @@ function isWithinDays(value: string | null | undefined, now: Date, days: number)
   return diffMs >= 0 && diffMs <= days * 24 * 60 * 60 * 1000;
 }
 
-function eventCreatedToday(event: ActionCenterDigestResultEvent, now: Date): boolean {
+function eventCreatedToday(
+  event: ActionCenterDigestResultEvent,
+  now: Date,
+): boolean {
   if (!event.created_at) return false;
   const date = new Date(event.created_at);
   return !Number.isNaN(date.getTime()) && isSameLocalDay(date, now);
@@ -375,12 +385,19 @@ function eventOutcome(event: ActionCenterDigestResultEvent): string {
 
 function hasMeasuredComparison(event: ActionCenterDigestResultEvent): boolean {
   const comparison = event.comparison ?? event.payload?.comparison;
-  const metrics = comparison && typeof comparison === "object" ? comparison.metrics : null;
-  if (metrics && typeof metrics === "object" && Object.keys(metrics).length > 0) {
+  const metrics =
+    comparison && typeof comparison === "object" ? comparison.metrics : null;
+  if (
+    metrics &&
+    typeof metrics === "object" &&
+    Object.keys(metrics).length > 0
+  ) {
     return true;
   }
   const after = event.after_snapshot ?? event.payload?.after_snapshot;
-  return Boolean(after && typeof after === "object" && Object.keys(after).length > 0);
+  return Boolean(
+    after && typeof after === "object" && Object.keys(after).length > 0,
+  );
 }
 
 export function actionCenterIsDueToday(
@@ -410,7 +427,10 @@ function moneyRank(item: ActionCenterItem): number {
     : -1;
 }
 
-function dateRank(value: string | null | undefined, missingLast = true): number {
+function dateRank(
+  value: string | null | undefined,
+  missingLast = true,
+): number {
   if (!value) return missingLast ? Number.MAX_SAFE_INTEGER : 0;
   const time = new Date(value).getTime();
   if (Number.isNaN(time)) return missingLast ? Number.MAX_SAFE_INTEGER : 0;
@@ -540,7 +560,10 @@ export function sortActionCenterItems(
 ): ActionCenterItem[] {
   return [...items].sort((left, right) => {
     if (sort === "money_impact") {
-      return moneyRank(right) - moneyRank(left) || priorityRank(left) - priorityRank(right);
+      return (
+        moneyRank(right) - moneyRank(left) ||
+        priorityRank(left) - priorityRank(right)
+      );
     }
     if (sort === "deadline") {
       return dateRank(left.deadline_at) - dateRank(right.deadline_at);
@@ -560,8 +583,7 @@ export function sortActionCenterItems(
       const leftStatus = context.resultStatus?.(left) ?? left.result_status;
       const rightStatus = context.resultStatus?.(right) ?? right.result_status;
       return (
-        (RESULT_ORDER[leftStatus] ?? 99) -
-        (RESULT_ORDER[rightStatus] ?? 99) ||
+        (RESULT_ORDER[leftStatus] ?? 99) - (RESULT_ORDER[rightStatus] ?? 99) ||
         priorityRank(left) - priorityRank(right)
       );
     }
@@ -577,7 +599,9 @@ export function buildActionCenterDailyDigest(
   resultEvents: ActionCenterDigestResultEvent[] = [],
   now = new Date(),
 ): ActionCenterDailyDigest {
-  const todayEvents = resultEvents.filter((event) => eventCreatedToday(event, now));
+  const todayEvents = resultEvents.filter((event) =>
+    eventCreatedToday(event, now),
+  );
   return {
     newToday: items.filter((item) =>
       isWithinDays(item.created_at ?? item.last_seen_at, now, 1),
@@ -586,7 +610,10 @@ export function buildActionCenterDailyDigest(
     overdue: items.filter(actionCenterIsOverdue).length,
     recheckCompleted: todayEvents.filter((event) => {
       const type = text(event.event_type);
-      return type === "recheck_result" || eventNotificationType(event) === "recheck_completed";
+      return (
+        type === "recheck_result" ||
+        eventNotificationType(event) === "recheck_completed"
+      );
     }).length,
     resultImproved: todayEvents.filter((event) => {
       const type = eventNotificationType(event);
@@ -611,17 +638,28 @@ export function buildActionCenterWeeklySummary(
     closedTasks: items.filter(
       (item) =>
         actionCenterStatusIsClosed(item) &&
-        isWithinDays(item.last_status_changed_at ?? item.last_seen_at ?? item.created_at, now, 7),
+        isWithinDays(
+          item.last_status_changed_at ?? item.last_seen_at ?? item.created_at,
+          now,
+          7,
+        ),
     ).length,
     reopenedTasks:
       items.filter(
         (item) =>
           text(item.status) === "reopened" &&
-          isWithinDays(item.last_status_changed_at ?? item.last_seen_at ?? item.created_at, now, 7),
+          isWithinDays(
+            item.last_status_changed_at ?? item.last_seen_at ?? item.created_at,
+            now,
+            7,
+          ),
       ).length +
       weekEvents.filter((event) => {
         const type = text(event.event_type);
-        return type === "reopened" || eventNotificationType(event) === "issue_reopened";
+        return (
+          type === "reopened" ||
+          eventNotificationType(event) === "issue_reopened"
+        );
       }).length,
     confirmedMeasuredOutcomes: weekEvents.filter((event) => {
       const outcome = eventOutcome(event);
@@ -639,7 +677,11 @@ export function buildActionCenterWeeklySummary(
       return (
         opportunity &&
         actionCenterStatusIsClosed(item) &&
-        isWithinDays(item.last_status_changed_at ?? item.last_seen_at ?? item.created_at, now, 7)
+        isWithinDays(
+          item.last_status_changed_at ?? item.last_seen_at ?? item.created_at,
+          now,
+          7,
+        )
       );
     }).length,
   };

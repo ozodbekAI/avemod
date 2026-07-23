@@ -30,6 +30,7 @@ from app.models.reputation import (
     ReputationSettings,
 )
 from app.schemas.operator import (
+    ActionStatus,
     DraftOut,
     DraftType,
     ExternalStatus,
@@ -6267,7 +6268,6 @@ class ReputationService:
         if item_type != "review":
             return []
         has_positive = bool(self.POSITIVE_RE.search(source_text))
-        has_negative = self._has_negative_signal(source_text)
         result: list[str] = []
         if (
             current_sentiment == REVIEW_SENTIMENT_NEGATIVE

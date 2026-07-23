@@ -2311,9 +2311,24 @@ function ResultsPage() {
 
         {activeId ? (
           <>
-            <div className="flex items-start gap-2 rounded-md border bg-card px-3 py-2 text-xs text-muted-foreground">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
-              <span>{PROBLEM_RESULT_CORRELATION_DISCLAIMER}</span>
+            <div className="flex flex-col gap-2 rounded-md border bg-card px-3 py-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+                <span>
+                  <b className="font-medium text-foreground">
+                    Корреляция, а не гарантия.
+                  </b>{" "}
+                  {PROBLEM_RESULT_CORRELATION_DISCLAIMER}
+                </span>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-1.5 pl-5 sm:pl-0">
+                <Badge variant="outline" className="rounded-sm">
+                  До действия
+                </Badge>
+                <Badge variant="outline" className="rounded-sm">
+                  После изменения
+                </Badge>
+              </div>
             </div>
 
             <ResultsFilterPanel

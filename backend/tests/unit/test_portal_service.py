@@ -4005,3 +4005,70 @@ async def test_portal_product_quality_returns_not_configured_when_checker_missin
     assert quality.action == "connect_checker_in_settings"
     assert quality.issues == []
     assert quality.score is None
+
+
+@pytest.mark.asyncio
+async def test_action_center_capabilities_expose_jvo_like_domains_and_write_gaps() -> None:
+    service = PortalService()
+
+    result = await service.action_center_capabilities(_FakeSession(), account_id=1)
+
+    domains = {domain.key: domain for domain in result.domains}
+    assert {
+        "data_blockers",
+        "card_quality",
+        "price",
+        "ads_promo",
+        "stock",
+        "manual_tasks",
+        "system_checks",
+    }.issubset(domains)
+    assert result.summary["domain_count"] == len(result.domains)
+    assert result.summary["execute_missing_wb_write"] >= 2
+    assert result.summary["wb_unknown_connectors"] == 0
+    assert result.summary["wb_api_write_gap"] >= 2
+    assert any(
+        capability.key == "missing_cost_inline_fix"
+        and capability.execute_status == "ready"
+        for capability in domains["data_blockers"].capabilities
+    )
+    assert any(
+        capability.key == "manual_task_creation"
+        and capability.execute_status == "ready"
+        for capability in domains["manual_tasks"].capabilities
+    )
+    assert any(
+        capability.key == "wb_price_discount_write"
+        and capability.execute_status == "missing_wb_write"
+        for capability in domains["price"].capabilities
+    )
+    price_write = next(
+        capability
+        for capability in domains["price"].capabilities
+        if capability.key == "wb_price_discount_write"
+    )
+    assert price_write.wb_tracking_status == "write_gap"
+    assert (
+        "https://discounts-prices-api.wildberries.ru/api/v2/upload/task"
+        in price_write.wb_api_endpoints
+    )
+    assert price_write.implementation_gaps
+    assert price_write.safety_requirements
+    card_text = next(
+        capability
+        for capability in domains["card_quality"].capabilities
+        if capability.key == "card_text_inline_fix"
+    )
+    assert card_text.wb_tracking_status == "tracked"
+    assert "product_cards.update_card" in card_text.wb_connector_ids
+    assert "content" in card_text.token_categories
+    assert any(
+        capability.key == "ads_campaign_control"
+        and capability.execute_status == "missing_wb_write"
+        for capability in domains["ads_promo"].capabilities
+    )
+    for domain in result.domains:
+        for capability in domain.capabilities:
+            if capability.execute_status == "missing_wb_write":
+                assert capability.implementation_gaps
+                assert capability.safety_requirements

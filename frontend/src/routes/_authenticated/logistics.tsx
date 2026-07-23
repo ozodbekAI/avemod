@@ -130,6 +130,7 @@ type LogisticsOverview = {
   acceptance_details?: AcceptanceDetailRow[];
   transit_tariffs?: TransitTariffRow[];
   seller_warehouses?: SellerWarehouseRow[];
+  shipment_planning?: ShipmentPlanningRead | null;
   data_sources: DataSourceRow[];
   api_capabilities: CapabilityRow[];
   recommendations: RecommendationRow[];
@@ -419,6 +420,71 @@ type SellerWarehouseRow = {
   stock_rows: number;
   stock_units: number;
   latest_stock_at?: string | null;
+};
+
+type ShipmentScopeOption = {
+  key: string;
+  label: string;
+  scope_type: "region" | "warehouse" | string;
+  region_name?: string | null;
+  warehouse_id?: number | null;
+  warehouse_name?: string | null;
+  enabled_by_default: boolean;
+  selectable: boolean;
+  reason?: string | null;
+  risk_level: "ok" | "watch" | "warning" | "danger" | string;
+  acceptance_status?: string | null;
+  stock_units: number;
+  current_stock_qty: number;
+  target_stock_qty: number;
+  delta_qty: number;
+  shortage_qty: number;
+  excess_qty: number;
+  inbound_qty: number;
+  outbound_qty: number;
+  sales_qty: number;
+  revenue: number;
+  product_count: number;
+};
+
+type ShipmentMovementRow = {
+  id: number;
+  movement_type: string;
+  nm_id?: number | null;
+  vendor_code?: string | null;
+  barcode?: string | null;
+  size_name?: string | null;
+  donor_region?: string | null;
+  donor_warehouse?: string | null;
+  recipient_region?: string | null;
+  recipient_warehouse?: string | null;
+  quantity: number;
+  priority: string;
+  reason_code?: string | null;
+  business_explanation?: string | null;
+  confidence: string;
+  status: string;
+};
+
+type ShipmentPlanningRead = {
+  status: "stock_control" | "fallback" | string;
+  formula: {
+    source: string;
+    title: string;
+    detail: string;
+    latest_run_id?: number | null;
+    latest_run_type?: string | null;
+    latest_run_finished_at?: string | null;
+    warning?: string | null;
+  };
+  regions: ShipmentScopeOption[];
+  warehouses: ShipmentScopeOption[];
+  movements: ShipmentMovementRow[];
+  excluded_regions: string[];
+  source_run_id?: number | null;
+  source_run_type?: string | null;
+  source_run_finished_at?: string | null;
+  summary: Record<string, unknown>;
 };
 
 type WarehouseCalculated = {
@@ -726,39 +792,28 @@ function LogisticsPage() {
 
           {data && (
             <>
-              <LogisticsKpiStrip kpis={data.kpis} />
-
-              <RecommendationsPanel
-                recommendations={data.recommendations}
+              <LogisticsMissionControl
+                kpis={data.kpis}
                 tasks={visibleTasks}
                 warehouses={warehouses}
+                sources={data.data_sources}
+                capabilities={data.api_capabilities}
+                selectedTask={selectedTask}
+                selectedWarehouse={selectedWarehouse}
                 periodDays={periodDays}
+                onSelectTask={(task) => {
+                  setSelectedTaskId(task.id);
+                  if (task.warehouse_name) {
+                    setSelectedWarehouseName(task.warehouse_name);
+                  }
+                }}
                 onSelectWarehouse={setSelectedWarehouseName}
+                onExportTasks={() => exportCsv("tasks")}
+                exportingTasks={exportingDataset === "tasks"}
               />
 
               <Tabs defaultValue="plan" className="w-full">
-                <TabsList className="h-auto w-full justify-start overflow-x-auto rounded-md border bg-background p-1">
-                  <TabsTrigger value="plan" className="gap-2 text-xs">
-                    <ClipboardList className="h-3.5 w-3.5" />
-                    План
-                  </TabsTrigger>
-                  <TabsTrigger value="shipment" className="gap-2 text-xs">
-                    <PackagePlus className="h-3.5 w-3.5" />
-                    Подсортировка
-                  </TabsTrigger>
-                  <TabsTrigger value="warehouses" className="gap-2 text-xs">
-                    <Warehouse className="h-3.5 w-3.5" />
-                    Склады
-                  </TabsTrigger>
-                  <TabsTrigger value="supplies" className="gap-2 text-xs">
-                    <Factory className="h-3.5 w-3.5" />
-                    Поставки
-                  </TabsTrigger>
-                  <TabsTrigger value="details" className="gap-2 text-xs">
-                    <Database className="h-3.5 w-3.5" />
-                    Расходы и API
-                  </TabsTrigger>
-                </TabsList>
+                <LogisticsWorkflowTabsList />
 
                 <TabsContent value="plan" className="mt-4">
                   <DecisionDesk
@@ -766,6 +821,7 @@ function LogisticsPage() {
                     products={products}
                     warehouses={warehouses}
                     regionalShipments={regionalShipments}
+                    shipmentPlanning={data.shipment_planning ?? null}
                     selectedTask={selectedTask}
                     selectedWarehouse={selectedWarehouse}
                     selectedTaskId={selectedTask?.id ?? null}
@@ -791,6 +847,7 @@ function LogisticsPage() {
                     products={products}
                     supplies={data.supplies}
                     regionalShipments={regionalShipments}
+                    shipmentPlanning={data.shipment_planning ?? null}
                     periodDays={periodDays}
                     onSelectWarehouse={setSelectedWarehouseName}
                     onExport={() => exportCsv("shipment")}
@@ -888,7 +945,7 @@ function LogisticsSkeleton() {
           <Skeleton key={index} className="h-28 rounded-md" />
         ))}
       </div>
-      <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)_390px]">
+      <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[320px_minmax(0,1fr)_390px]">
         <Skeleton className="h-[560px] rounded-md" />
         <Skeleton className="h-[560px] rounded-md" />
         <Skeleton className="h-[560px] rounded-md" />
@@ -960,7 +1017,7 @@ function ExecutiveMetric({
     <Card className="rounded-md">
       <CardContent className="flex h-full min-h-28 flex-col justify-between gap-3 p-4">
         <div className="flex items-center justify-between gap-3">
-          <div className="truncate text-sm font-medium text-muted-foreground">
+          <div className="line-clamp-2 text-sm font-medium leading-snug text-muted-foreground">
             {title}
           </div>
           <span
@@ -982,6 +1039,651 @@ function ExecutiveMetric({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function LogisticsMissionControl({
+  kpis,
+  tasks,
+  warehouses,
+  sources,
+  capabilities,
+  selectedTask,
+  selectedWarehouse,
+  periodDays,
+  onSelectTask,
+  onSelectWarehouse,
+  onExportTasks,
+  exportingTasks,
+}: {
+  kpis: LogisticsKpis;
+  tasks: LogisticsTaskRow[];
+  warehouses: WarehouseRow[];
+  sources: DataSourceRow[];
+  capabilities: CapabilityRow[];
+  selectedTask: LogisticsTaskRow | null;
+  selectedWarehouse: WarehouseRow | null;
+  periodDays: number;
+  onSelectTask: (task: LogisticsTaskRow) => void;
+  onSelectWarehouse: (name: string) => void;
+  onExportTasks: () => void;
+  exportingTasks: boolean;
+}) {
+  const totalLogistics =
+    kpis.logistics_cost +
+    kpis.return_logistics_cost +
+    kpis.storage_cost +
+    kpis.acceptance_cost;
+  const activeTask = selectedTask ?? tasks[0] ?? null;
+  const primaryWarehouse =
+    (activeTask?.warehouse_name &&
+      warehouses.find(
+        (row) => row.warehouse_name === activeTask.warehouse_name,
+      )) ||
+    selectedWarehouse ||
+    warehouses[0] ||
+    null;
+  const calc = primaryWarehouse
+    ? calculateWarehouse(primaryWarehouse, periodDays)
+    : null;
+  const riskyWarehouses = warehouses
+    .filter((row) => row.risk_level !== "ok")
+    .slice()
+    .sort(
+      (a, b) =>
+        riskWeight(a.risk_level) - riskWeight(b.risk_level) ||
+        b.missed_revenue - a.missed_revenue,
+    );
+  const criticalTasks = tasks.filter(
+    (task) => riskWeight(task.severity) <= 1,
+  ).length;
+  const openSlots = warehouses.filter(
+    (row) => row.allow_unload || row.acceptance_status === "available",
+  ).length;
+  const readySources = sources.filter((source) =>
+    isHealthyDataStatus(source.status),
+  ).length;
+  const activeApis = capabilities.filter((capability) =>
+    isHealthyDataStatus(capability.status),
+  ).length;
+  const sourceReadiness = sources.length
+    ? Math.round((readySources / sources.length) * 100)
+    : 100;
+  const firstAction =
+    activeTask?.action ||
+    primaryWarehouse?.recommendation ||
+    "Проверьте склад с максимальной потерей и ближайший слот приёмки.";
+
+  return (
+    <section className="overflow-hidden rounded-md border bg-background">
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="space-y-4 p-4 md:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="inline-flex items-center gap-2 rounded-md border bg-muted/40 px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                <ListChecks className="h-3.5 w-3.5" />
+                Рабочий пульт продавца
+              </div>
+              <h2 className="mt-3 text-2xl font-semibold tracking-normal">
+                Сначала закрываем деньги, потом выбираем маршрут
+              </h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+                В первом экране оставлены только решения: что сделать, куда
+                везти, сколько отгрузить и насколько готовы WB-источники.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className="gap-1">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                {formatNumber(criticalTasks)} срочных
+              </Badge>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-2"
+                onClick={onExportTasks}
+                disabled={exportingTasks}
+              >
+                <Download className="h-4 w-4" />
+                Экспорт задач
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid gap-3 xl:grid-cols-3">
+            <StudioStep
+              step="01"
+              title={activeTask?.title || "Критичных задач нет"}
+              detail={uiText(firstAction)}
+              metric={formatMoney(
+                activeTask?.expected_net_effect ??
+                  primaryWarehouse?.missed_revenue,
+              )}
+              metricLabel="чистый эффект"
+              icon={Target}
+              tone="rose"
+              badge={
+                activeTask ? <RiskBadge level={activeTask.severity} /> : null
+              }
+              onClick={
+                activeTask
+                  ? () => {
+                      onSelectTask(activeTask);
+                      if (activeTask.warehouse_name) {
+                        onSelectWarehouse(activeTask.warehouse_name);
+                      }
+                    }
+                  : undefined
+              }
+            />
+            <StudioStep
+              step="02"
+              title={primaryWarehouse?.warehouse_name || "Выберите склад"}
+              detail={
+                primaryWarehouse?.region_name ||
+                "Склад подтянется из выбранной задачи"
+              }
+              metric={`+${formatNumber(
+                activeTask?.recommended_supply_qty ?? calc?.replenishmentQty,
+              )}`}
+              metricLabel="к отгрузке"
+              icon={PackagePlus}
+              tone="amber"
+              badge={
+                primaryWarehouse ? (
+                  <Badge variant="secondary">
+                    {acceptanceLabel(primaryWarehouse.acceptance_status)}
+                  </Badge>
+                ) : null
+              }
+              onClick={
+                primaryWarehouse
+                  ? () => onSelectWarehouse(primaryWarehouse.warehouse_name)
+                  : undefined
+              }
+            />
+            <StudioStep
+              step="03"
+              title="Проверить источники"
+              detail={`${formatNumber(readySources)}/${formatNumber(
+                sources.length,
+              )} источников готовы, ${formatNumber(activeApis)}/${formatNumber(
+                capabilities.length,
+              )} API активны`}
+              metric={`${sourceReadiness}%`}
+              metricLabel="готовность"
+              icon={Database}
+              tone="emerald"
+            />
+          </div>
+        </div>
+
+        <aside className="border-t bg-muted/25 p-4 lg:border-l lg:border-t-0">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-medium uppercase text-muted-foreground">
+                Пульс бизнеса
+              </div>
+              <div className="text-sm font-semibold">за выбранный период</div>
+            </div>
+            <Badge variant="outline">{periodDays} дн.</Badge>
+          </div>
+          <div className="grid gap-2">
+            <StudioMetric
+              label="Выручка"
+              value={formatMoney(kpis.revenue)}
+              note={`${formatNumber(kpis.orders_qty)} заказов`}
+              tone="emerald"
+            />
+            <StudioMetric
+              label="Расходы логистики"
+              value={formatMoney(totalLogistics)}
+              note={`${formatPercent(kpis.logistics_share_percent)} от выручки`}
+              tone="amber"
+            />
+            <StudioMetric
+              label="Потерянный спрос"
+              value={formatMoney(kpis.missed_revenue)}
+              note={`${formatNumber(kpis.missed_orders_qty)} заказов`}
+              tone="rose"
+            />
+            <StudioMetric
+              label="Остаток и слоты"
+              value={`${formatNumber(kpis.stock_units)} шт`}
+              note={`${formatNumber(openSlots)} слотов открыто`}
+              tone="sky"
+            />
+          </div>
+        </aside>
+      </div>
+
+      <div className="grid min-w-0 border-t bg-card lg:grid-cols-[minmax(0,1fr)_380px]">
+        <WarehouseSignalStrip
+          rows={riskyWarehouses}
+          periodDays={periodDays}
+          onSelectWarehouse={onSelectWarehouse}
+        />
+        <SourceReadinessStrip
+          sources={sources}
+          capabilities={capabilities}
+          sourceReadiness={sourceReadiness}
+          activeApis={activeApis}
+        />
+      </div>
+    </section>
+  );
+}
+
+function StudioStep({
+  step,
+  title,
+  detail,
+  metric,
+  metricLabel,
+  icon: Icon,
+  tone,
+  badge,
+  onClick,
+}: {
+  step: string;
+  title: string;
+  detail: string;
+  metric: string;
+  metricLabel: string;
+  icon: LucideIcon;
+  tone: "rose" | "amber" | "emerald";
+  badge?: ReactNode;
+  onClick?: () => void;
+}) {
+  const toneClass = {
+    rose: "border-rose-200 bg-rose-50 text-rose-700",
+    amber: "border-amber-200 bg-amber-50 text-amber-700",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  }[tone];
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!onClick}
+      className="grid min-h-44 gap-4 rounded-md border bg-background p-4 text-left transition enabled:hover:border-primary/40 enabled:hover:shadow-sm disabled:cursor-default"
+    >
+      <span className="flex items-start justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-xs font-medium text-muted-foreground">
+          <span className="inline-flex h-6 w-6 items-center justify-center rounded-md border bg-muted">
+            {step}
+          </span>
+          <Icon className="h-4 w-4" />
+        </span>
+        {badge}
+      </span>
+      <span className="min-w-0">
+        <span className="line-clamp-2 text-base font-semibold">{title}</span>
+        <span className="mt-2 line-clamp-3 text-sm leading-5 text-muted-foreground">
+          {detail}
+        </span>
+      </span>
+      <span className="mt-auto flex items-end justify-between gap-3">
+        <span>
+          <span className="block text-[11px] font-medium uppercase text-muted-foreground">
+            {metricLabel}
+          </span>
+          <span className="block text-xl font-semibold">{metric}</span>
+        </span>
+        <span
+          className={cn(
+            "inline-flex h-9 w-9 items-center justify-center rounded-md border",
+            toneClass,
+          )}
+        >
+          <ChevronRight className="h-4 w-4" />
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function StudioMetric({
+  label,
+  value,
+  note,
+  tone,
+}: {
+  label: string;
+  value: string;
+  note: string;
+  tone: "emerald" | "amber" | "rose" | "sky";
+}) {
+  const dotClass = {
+    emerald: "bg-emerald-500",
+    amber: "bg-amber-500",
+    rose: "bg-rose-500",
+    sky: "bg-sky-500",
+  }[tone];
+  return (
+    <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-md border bg-background px-3 py-2.5">
+      <span className={cn("mt-1 h-2.5 w-2.5 rounded-full", dotClass)} />
+      <span className="min-w-0">
+        <span className="flex items-center justify-between gap-3">
+          <span className="truncate text-sm text-muted-foreground">
+            {label}
+          </span>
+          <span className="shrink-0 text-sm font-semibold">{value}</span>
+        </span>
+        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+          {note}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+function WarehouseSignalStrip({
+  rows,
+  periodDays,
+  onSelectWarehouse,
+}: {
+  rows: WarehouseRow[];
+  periodDays: number;
+  onSelectWarehouse: (name: string) => void;
+}) {
+  const maxLoss = Math.max(...rows.map((row) => row.missed_revenue), 1);
+  const totalLoss = rows.reduce((sum, row) => sum + row.missed_revenue, 0);
+  const openWarehouses = rows.filter(
+    (row) => row.allow_unload || row.acceptance_status === "available",
+  ).length;
+  const closedWarehouses = rows.filter(
+    (row) => row.acceptance_status === "closed",
+  ).length;
+  return (
+    <div className="min-w-0 space-y-3 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold">
+            Склады, где теряются деньги
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Нажмите на строку, чтобы открыть склад и расчёт.
+          </div>
+        </div>
+        <Badge variant="outline">{formatNumber(rows.length)} с риском</Badge>
+      </div>
+      {rows.length ? (
+        <>
+          <div className="grid min-w-0 gap-2 md:grid-cols-2 2xl:grid-cols-3">
+            {rows.slice(0, 6).map((row) => {
+              const calc = calculateWarehouse(row, periodDays);
+              const width = Math.max(
+                Math.round((row.missed_revenue / maxLoss) * 100),
+                8,
+              );
+              return (
+                <button
+                  key={row.warehouse_name}
+                  type="button"
+                  onClick={() => onSelectWarehouse(row.warehouse_name)}
+                  className="grid min-w-0 gap-2 rounded-md border bg-background px-3 py-3 text-left transition hover:border-primary/40 hover:bg-muted/40"
+                >
+                  <span className="flex min-w-0 items-start justify-between gap-3">
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold">
+                        {row.warehouse_name}
+                      </span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {row.region_name || "регион не определён"} ·{" "}
+                        {acceptanceLabel(row.acceptance_status)}
+                      </span>
+                    </span>
+                    <RiskBadge level={row.risk_level} />
+                  </span>
+                  <span className="h-1.5 overflow-hidden rounded-full bg-muted">
+                    <span
+                      className="block h-full rounded-full bg-rose-500"
+                      style={{ width: `${width}%` }}
+                    />
+                  </span>
+                  <span className="grid min-w-0 grid-cols-3 gap-2 text-xs">
+                    <MetricInline
+                      label="Потеря"
+                      value={formatMoney(row.missed_revenue)}
+                    />
+                    <MetricInline
+                      label="Довоз"
+                      value={`+${formatNumber(calc.replenishmentQty)}`}
+                    />
+                    <MetricInline
+                      label="Покрытие"
+                      value={
+                        row.turnover_days
+                          ? `${formatNumber(row.turnover_days)} дн.`
+                          : "нет"
+                      }
+                    />
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="grid gap-2 md:grid-cols-3">
+            <CompactFact
+              label="Потери в зоне риска"
+              value={formatMoney(totalLoss)}
+              note={`${formatNumber(rows.length)} складов`}
+            />
+            <CompactFact
+              label="Открытая приёмка"
+              value={formatNumber(openWarehouses)}
+              note="можно везти быстрее"
+            />
+            <CompactFact
+              label="Закрытая приёмка"
+              value={formatNumber(closedWarehouses)}
+              note="проверьте маршрут"
+            />
+          </div>
+        </>
+      ) : (
+        <div className="rounded-md border bg-emerald-50 px-3 py-3 text-sm text-emerald-700">
+          Рисковых складов нет: можно перейти к плановой подсортировке.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SourceReadinessStrip({
+  sources,
+  capabilities,
+  sourceReadiness,
+  activeApis,
+}: {
+  sources: DataSourceRow[];
+  capabilities: CapabilityRow[];
+  sourceReadiness: number;
+  activeApis: number;
+}) {
+  return (
+    <div className="space-y-3 border-t p-4 lg:border-l lg:border-t-0">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold">Доверие к расчёту</div>
+          <div className="text-xs text-muted-foreground">
+            Сразу видно, почему цифра может отличаться.
+          </div>
+        </div>
+        <Badge variant="outline">{sourceReadiness}%</Badge>
+      </div>
+      <Progress value={sourceReadiness} className="h-2" />
+      <div className="grid gap-2">
+        {sources.slice(0, 3).map((source) => (
+          <DataStatusLine
+            key={source.key}
+            label={source.label}
+            value={`${formatNumber(source.rows)} строк`}
+            status={source.status}
+          />
+        ))}
+        <DataStatusLine
+          label="API Wildberries"
+          value={`${formatNumber(activeApis)}/${formatNumber(
+            capabilities.length,
+          )} активны`}
+          status={activeApis === capabilities.length ? "ok" : "warning"}
+        />
+      </div>
+    </div>
+  );
+}
+
+function MissionMetric({
+  label,
+  value,
+  note,
+  icon: Icon,
+  tone,
+}: {
+  label: string;
+  value: string;
+  note: string;
+  icon: LucideIcon;
+  tone: "teal" | "amber" | "red" | "blue";
+}) {
+  const toneClass = {
+    teal: "border-teal-200 bg-teal-50 text-teal-700",
+    amber: "border-amber-200 bg-amber-50 text-amber-700",
+    red: "border-red-200 bg-red-50 text-red-700",
+    blue: "border-sky-200 bg-sky-50 text-sky-700",
+  }[tone];
+  return (
+    <div className="grid min-h-24 gap-3 rounded-md border bg-background p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-sm font-medium text-muted-foreground">{label}</div>
+        <span
+          className={cn(
+            "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border",
+            toneClass,
+          )}
+        >
+          <Icon className="h-4 w-4" />
+        </span>
+      </div>
+      <div className="min-w-0">
+        <div className="truncate text-2xl font-semibold">{value}</div>
+        <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+          {note}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DataStatusLine({
+  label,
+  value,
+  status,
+}: {
+  label: string;
+  value: string;
+  status: string;
+}) {
+  const healthy = isHealthyDataStatus(status);
+  return (
+    <div className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-md border px-3 py-2 text-sm">
+      <span className="min-w-0">
+        <span className="block truncate font-medium">{label}</span>
+        <span className="block truncate text-xs text-muted-foreground">
+          {value}
+        </span>
+      </span>
+      <Badge
+        variant="outline"
+        className={cn(
+          healthy
+            ? "border-teal-200 bg-teal-50 text-teal-700"
+            : "border-amber-200 bg-amber-50 text-amber-700",
+        )}
+      >
+        {healthy ? "готово" : "нужно проверить"}
+      </Badge>
+    </div>
+  );
+}
+
+function LogisticsWorkflowTabsList() {
+  const tabs: {
+    value: string;
+    title: string;
+    detail: string;
+    icon: LucideIcon;
+  }[] = [
+    {
+      value: "plan",
+      title: "Сводка решений",
+      detail: "задачи и разбор",
+      icon: ClipboardList,
+    },
+    {
+      value: "shipment",
+      title: "Подсортировка",
+      detail: "склад, регион, артикулы",
+      icon: PackagePlus,
+    },
+    {
+      value: "warehouses",
+      title: "Склады и слоты",
+      detail: "маржа и приёмка",
+      icon: Warehouse,
+    },
+    {
+      value: "supplies",
+      title: "Поставки",
+      detail: "план, факт, разница",
+      icon: Factory,
+    },
+    {
+      value: "details",
+      title: "Расходы и API",
+      detail: "хранение, приёмка",
+      icon: Database,
+    },
+  ];
+  return (
+    <div className="rounded-md border bg-background">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-2">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <Layers3 className="h-4 w-4 text-muted-foreground" />
+          Рабочие зоны
+        </div>
+        <div className="text-xs text-muted-foreground">
+          обзор → расчёт → склад → поставка → источники
+        </div>
+      </div>
+      <TabsList className="grid h-auto w-full grid-cols-1 rounded-none bg-transparent p-0 sm:grid-cols-2 xl:grid-cols-5">
+        {tabs.map((tab, index) => {
+          const Icon = tab.icon;
+          return (
+            <TabsTrigger
+              key={tab.value}
+              value={tab.value}
+              className="group h-full justify-start gap-3 whitespace-normal rounded-none border-b border-r bg-background p-3 text-left last:border-r-0 data-[state=active]:bg-muted/50 data-[state=active]:shadow-none xl:border-b-0"
+            >
+              <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted text-foreground group-data-[state=active]:border-primary/30 group-data-[state=active]:bg-primary/10">
+                <Icon className="h-4 w-4" />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[11px] font-medium text-muted-foreground">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <span className="block text-sm font-semibold">{tab.title}</span>
+                <span className="block text-xs font-normal text-muted-foreground">
+                  {tab.detail}
+                </span>
+              </span>
+            </TabsTrigger>
+          );
+        })}
+      </TabsList>
+    </div>
   );
 }
 
@@ -1007,7 +1709,7 @@ function RecommendationsPanel({
       severity: row.risk_level,
       title: row.warehouse_name,
       detail:
-        row.recommendation ||
+        uiText(row.recommendation) ||
         `Проверить запас: риск потери ${formatMoney(row.missed_revenue)}.`,
       action:
         calc.replenishmentQty > 0
@@ -1051,9 +1753,11 @@ function RecommendationsPanel({
             </div>
             <div className="line-clamp-1 font-semibold">{item.title}</div>
             <div className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-              {item.detail}
+              {uiText(item.detail)}
             </div>
-            <div className="mt-3 text-sm font-medium">{item.action}</div>
+            <div className="mt-3 text-sm font-medium">
+              {uiText(item.action)}
+            </div>
           </button>
         ))}
       </div>
@@ -1121,6 +1825,7 @@ function DecisionDesk({
   products,
   warehouses,
   regionalShipments,
+  shipmentPlanning,
   selectedTask,
   selectedWarehouse,
   selectedTaskId,
@@ -1135,6 +1840,7 @@ function DecisionDesk({
   products: ProductRow[];
   warehouses: WarehouseRow[];
   regionalShipments: RegionalShipmentRow[];
+  shipmentPlanning?: ShipmentPlanningRead | null;
   selectedTask: LogisticsTaskRow | null;
   selectedWarehouse: WarehouseRow | null;
   selectedTaskId: string | null;
@@ -1146,7 +1852,7 @@ function DecisionDesk({
   exportingTasks: boolean;
 }) {
   return (
-    <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)_360px]">
+    <div className="grid gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
       <div className="space-y-4 xl:self-start">
         <TaskQueuePanel
           tasks={tasks}
@@ -1164,32 +1870,22 @@ function DecisionDesk({
         />
       </div>
       <div className="space-y-4">
-        <ShipmentBuilderWorkspace
-          warehouses={warehouses}
-          products={products}
-          supplies={[]}
-          regionalShipments={regionalShipments}
-          periodDays={periodDays}
-          onSelectWarehouse={onSelectWarehouse}
-          compact
-        />
-        <div className="2xl:hidden">
-          <InsightPanel
-            task={selectedTask}
-            warehouse={selectedWarehouse}
-            products={products}
-            selectedWarehouseName={selectedWarehouseName}
-            periodDays={periodDays}
-          />
-        </div>
-      </div>
-      <div className="hidden 2xl:block">
         <InsightPanel
           task={selectedTask}
           warehouse={selectedWarehouse}
           products={products}
           selectedWarehouseName={selectedWarehouseName}
           periodDays={periodDays}
+        />
+        <ShipmentBuilderWorkspace
+          warehouses={warehouses}
+          products={products}
+          supplies={[]}
+          regionalShipments={regionalShipments}
+          shipmentPlanning={shipmentPlanning}
+          periodDays={periodDays}
+          onSelectWarehouse={onSelectWarehouse}
+          compact
         />
       </div>
     </div>
@@ -1322,7 +2018,7 @@ function DecisionFocusPanel({
                     {route.warehouse_name}
                   </span>
                   <span className="block truncate text-muted-foreground">
-                    {route.reason}
+                    {uiText(route.reason)}
                   </span>
                 </span>
                 <span className="shrink-0 font-semibold">
@@ -1368,7 +2064,7 @@ function TaskQueuePanel({
       <CardHeader className="border-b p-4">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <CardTitle className="text-base">Что сделать сейчас</CardTitle>
+            <CardTitle className="text-base">Очередь задач</CardTitle>
             <div className="mt-1 text-xs text-muted-foreground">
               {formatNumber(tasks.length)} задач по приоритету
             </div>
@@ -1381,7 +2077,7 @@ function TaskQueuePanel({
             disabled={exporting}
           >
             <Download className="h-4 w-4" />
-            CSV
+            Экспорт
           </Button>
         </div>
       </CardHeader>
@@ -1458,7 +2154,7 @@ function InsightPanel({
 
   return (
     <>
-      <Card className="rounded-md 2xl:sticky 2xl:top-20 2xl:self-start">
+      <Card className="rounded-md">
         <CardHeader className="border-b p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -1525,7 +2221,9 @@ function InsightPanel({
               <div className="text-xs font-medium text-muted-foreground">
                 Действие
               </div>
-              <div className="mt-1 text-sm font-medium">{task.action}</div>
+              <div className="mt-1 text-sm font-medium">
+                {uiText(task.action)}
+              </div>
             </div>
           )}
 
@@ -1539,7 +2237,7 @@ function InsightPanel({
             <ProductMiniTable products={relatedProducts.slice(0, 6)} compact />
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+          <div className="grid gap-2 sm:grid-cols-2">
             <Button
               size="sm"
               className="gap-2"
@@ -1593,7 +2291,13 @@ function TaskAnalysisSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="flex w-full flex-col overflow-hidden p-0 sm:max-w-[min(1080px,calc(100vw-2rem))]">
+      <SheetContent
+        className="flex !max-w-none flex-col overflow-hidden p-0 data-[state=closed]:duration-150 data-[state=open]:duration-200"
+        style={{
+          width: "min(1080px, calc(100vw - 2rem))",
+          maxWidth: "none",
+        }}
+      >
         <div className="border-b px-5 py-4">
           <SheetHeader className="pr-8 text-left">
             <div className="flex flex-wrap items-center gap-2">
@@ -1667,7 +2371,7 @@ function TaskAnalysisSheet({
                     <ListChecks className="h-4 w-4 text-muted-foreground" />
                     Действие
                   </div>
-                  <div className="text-sm">{task.action}</div>
+                  <div className="text-sm">{uiText(task.action)}</div>
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {task.tags.map((tag) => (
                       <Badge key={tag} variant="outline">
@@ -1690,6 +2394,7 @@ function ShipmentBuilderWorkspace({
   products,
   supplies,
   regionalShipments,
+  shipmentPlanning,
   periodDays,
   onSelectWarehouse,
   onExport,
@@ -1700,6 +2405,7 @@ function ShipmentBuilderWorkspace({
   products: ProductRow[];
   supplies: SupplyRow[];
   regionalShipments: RegionalShipmentRow[];
+  shipmentPlanning?: ShipmentPlanningRead | null;
   periodDays: number;
   onSelectWarehouse: (warehouseName: string) => void;
   onExport?: () => void;
@@ -1716,47 +2422,137 @@ function ShipmentBuilderWorkspace({
     { id: "shipmentNet", desc: true },
   ]);
 
-  const options = useMemo(() => {
-    if (mode === "region") {
-      const names = Array.from(
-        new Set(
-          warehouses
-            .map((row) => row.region_name)
-            .filter((name): name is string => Boolean(name)),
-        ),
-      );
-      return names.length ? names : ["регион не определён"];
-    }
-    return warehouses.map((row) => row.warehouse_name);
-  }, [mode, warehouses]);
+  const regionOptions = useMemo(
+    () =>
+      mergeScopeOptions(
+        shipmentPlanning?.regions ?? [],
+        buildFallbackRegionOptions(warehouses, products, periodDays),
+      ),
+    [periodDays, products, shipmentPlanning?.regions, warehouses],
+  );
+  const warehouseOptions = useMemo(
+    () =>
+      mergeScopeOptions(
+        shipmentPlanning?.warehouses ?? [],
+        buildFallbackWarehouseOptions(warehouses, products, periodDays),
+      ),
+    [periodDays, products, shipmentPlanning?.warehouses, warehouses],
+  );
+  const [enabledRegionKeys, setEnabledRegionKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [enabledWarehouseKeys, setEnabledWarehouseKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
 
-  const effectiveKey =
-    selectedKey && options.includes(selectedKey)
-      ? selectedKey
-      : options[0] || null;
+  useEffect(() => {
+    setEnabledRegionKeys(defaultScopeKeys(regionOptions));
+  }, [regionOptions]);
+
+  useEffect(() => {
+    setEnabledWarehouseKeys(defaultScopeKeys(warehouseOptions));
+  }, [warehouseOptions]);
+
+  const options = mode === "region" ? regionOptions : warehouseOptions;
+  const enabledKeys =
+    mode === "region" ? enabledRegionKeys : enabledWarehouseKeys;
+  const effectiveOption =
+    (selectedKey && options.find((option) => option.key === selectedKey)) ||
+    options.find((option) => enabledKeys.has(option.key)) ||
+    options[0] ||
+    null;
+  const effectiveKey = effectiveOption?.key ?? null;
+  const effectiveLabel = effectiveOption?.label ?? null;
+  const regionOptionByLabel = useMemo(
+    () => new Map(regionOptions.map((option) => [option.label, option])),
+    [regionOptions],
+  );
+  const warehouseOptionByLabel = useMemo(
+    () => new Map(warehouseOptions.map((option) => [option.label, option])),
+    [warehouseOptions],
+  );
+  const movementQtyByProduct = useMemo(
+    () => buildMovementQuantityIndex(shipmentPlanning?.movements ?? []),
+    [shipmentPlanning?.movements],
+  );
 
   useEffect(() => {
     setSelectedKey(null);
     setExcludedIds(new Set());
   }, [mode]);
 
+  const toggleRegion = useCallback((key: string) => {
+    setEnabledRegionKeys((prev) => toggleSetValue(prev, key));
+  }, []);
+  const toggleWarehouse = useCallback((key: string) => {
+    setEnabledWarehouseKeys((prev) => toggleSetValue(prev, key));
+  }, []);
+  const selectAllForMode = useCallback(() => {
+    if (mode === "region") {
+      setEnabledRegionKeys(new Set(regionOptions.map((option) => option.key)));
+      return;
+    }
+    setEnabledWarehouseKeys(
+      new Set(warehouseOptions.map((option) => option.key)),
+    );
+  }, [mode, regionOptions, warehouseOptions]);
+  const applyRecommendedForMode = useCallback(() => {
+    if (mode === "region") {
+      setEnabledRegionKeys(defaultScopeKeys(regionOptions));
+      return;
+    }
+    setEnabledWarehouseKeys(defaultScopeKeys(warehouseOptions));
+  }, [mode, regionOptions, warehouseOptions]);
+
   const sourceProducts = useMemo(() => {
-    if (!effectiveKey) return [];
+    if (!effectiveOption) return [];
+    const scopedProducts = products.filter((row) => {
+      const regionLabel = productRegionLabel(row);
+      const regionOption = regionOptionByLabel.get(regionLabel);
+      const warehouseOption = warehouseOptionByLabel.get(row.warehouse_name);
+      const regionAllowed = regionOption
+        ? enabledRegionKeys.has(regionOption.key)
+        : true;
+      const warehouseAllowed = warehouseOption
+        ? enabledWarehouseKeys.has(warehouseOption.key)
+        : true;
+      return regionAllowed && warehouseAllowed;
+    });
     const filtered =
       mode === "region"
-        ? products.filter(
-            (row) =>
-              (row.region_name || "регион не определён") === effectiveKey,
+        ? scopedProducts.filter(
+            (row) => productRegionLabel(row) === effectiveOption.label,
           )
-        : products.filter((row) => row.warehouse_name === effectiveKey);
+        : scopedProducts.filter(
+            (row) => row.warehouse_name === effectiveOption.label,
+          );
     return sortProductRows(filtered).slice(0, compact ? 60 : 120);
-  }, [compact, effectiveKey, mode, products]);
+  }, [
+    compact,
+    effectiveOption,
+    enabledRegionKeys,
+    enabledWarehouseKeys,
+    mode,
+    products,
+    regionOptionByLabel,
+    warehouseOptionByLabel,
+  ]);
 
   const shipmentRows = useMemo<ShipmentLine[]>(
     () =>
       sourceProducts.map((row) => {
-        const targetStock = Math.ceil(row.avg_daily_sales * targetDays);
-        const rawQty = Math.max(targetStock - row.stock_units, 0);
+        const movementQty = stockControlMovementQty(
+          row,
+          effectiveOption,
+          movementQtyByProduct,
+        );
+        const fallbackTargetStock = Math.ceil(row.avg_daily_sales * targetDays);
+        const targetStock =
+          movementQty > 0 ? row.stock_units + movementQty : fallbackTargetStock;
+        const rawQty =
+          movementQty > 0
+            ? movementQty
+            : Math.max(targetStock - row.stock_units, 0);
         const minApplied = rawQty > 0 ? Math.max(rawQty, minQty) : 0;
         const roundedQty =
           minApplied > 0
@@ -1786,7 +2582,15 @@ function ShipmentBuilderWorkspace({
           shipmentNet,
         };
       }),
-    [boxMultiple, excludedIds, minQty, sourceProducts, targetDays],
+    [
+      boxMultiple,
+      effectiveOption,
+      excludedIds,
+      minQty,
+      movementQtyByProduct,
+      sourceProducts,
+      targetDays,
+    ],
   );
 
   const visibleLines = useMemo(
@@ -1960,16 +2764,22 @@ function ShipmentBuilderWorkspace({
       mode === "region"
         ? warehouses.some(
             (row) =>
-              row.region_name === effectiveKey &&
+              row.region_name === effectiveLabel &&
               [supply.actual_warehouse_name, supply.warehouse_name].includes(
                 row.warehouse_name,
               ),
           )
         : [supply.actual_warehouse_name, supply.warehouse_name].includes(
-            effectiveKey || "",
+            effectiveLabel || "",
           ),
     )
     .slice(0, 4);
+  const activeScopeSummary = {
+    regions: enabledRegionKeys.size,
+    warehouses: enabledWarehouseKeys.size,
+    allRegions: regionOptions.length,
+    allWarehouses: warehouseOptions.length,
+  };
 
   if (!products.length) {
     return (
@@ -1988,7 +2798,7 @@ function ShipmentBuilderWorkspace({
     <div
       className={cn(
         "grid gap-4",
-        !compact && "xl:grid-cols-[280px_minmax(0,1fr)_330px]",
+        !compact && "2xl:grid-cols-[340px_minmax(520px,1fr)_340px]",
       )}
     >
       {!compact && (
@@ -1996,10 +2806,16 @@ function ShipmentBuilderWorkspace({
           mode={mode}
           onModeChange={setMode}
           options={options}
-          selected={effectiveKey}
+          selectedKey={effectiveKey}
+          enabledKeys={enabledKeys}
+          onToggle={mode === "region" ? toggleRegion : toggleWarehouse}
+          onSelectAll={selectAllForMode}
+          onApplyRecommended={applyRecommendedForMode}
           onSelect={(option) => {
-            setSelectedKey(option);
-            if (mode === "warehouse") onSelectWarehouse(option);
+            setSelectedKey(option.key);
+            if (mode === "warehouse" && option.warehouse_name) {
+              onSelectWarehouse(option.warehouse_name);
+            }
           }}
         />
       )}
@@ -2013,12 +2829,17 @@ function ShipmentBuilderWorkspace({
                   Подсортировка по выгоде
                 </CardTitle>
                 <Badge variant="outline">
-                  {effectiveKey || "направление —"}
+                  {effectiveLabel || "направление —"}
+                </Badge>
+                <Badge variant="secondary">
+                  {shipmentPlanning?.status === "stock_control"
+                    ? "контроль остатков"
+                    : "логистика"}
                 </Badge>
               </div>
               <div className="mt-1 text-xs text-muted-foreground">
-                Сортируйте по остатку, скорости, цели, отгрузке и чистому
-                эффекту. Технические поля скрыты, оставлены рабочие показатели.
+                Выберите рабочие регионы и склады, затем отсортируйте товары по
+                остатку, скорости, цели, отгрузке и чистому эффекту.
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -2065,12 +2886,15 @@ function ShipmentBuilderWorkspace({
             <div className="grid gap-3 border-b p-3 lg:grid-cols-[1fr_260px]">
               <CompactDirectionPicker
                 options={options}
-                selected={effectiveKey}
+                selectedKey={effectiveKey}
+                enabledKeys={enabledKeys}
                 mode={mode}
                 onModeChange={setMode}
                 onSelect={(option) => {
-                  setSelectedKey(option);
-                  if (mode === "warehouse") onSelectWarehouse(option);
+                  setSelectedKey(option.key);
+                  if (mode === "warehouse" && option.warehouse_name) {
+                    onSelectWarehouse(option.warehouse_name);
+                  }
                 }}
               />
               <ShipmentSettings
@@ -2085,16 +2909,33 @@ function ShipmentBuilderWorkspace({
             </div>
           )}
 
-          <ShipmentTable
-            table={table}
-            rows={sortedRows}
-            toggleLine={toggleLine}
-          />
+          {visibleLines.length ? (
+            <ShipmentTable
+              table={table}
+              rows={sortedRows}
+              toggleLine={toggleLine}
+              compact={compact}
+            />
+          ) : (
+            <Alert className="m-3 rounded-md">
+              <PackagePlus className="h-4 w-4" />
+              <AlertTitle>Нет строк для выбранного направления</AlertTitle>
+              <AlertDescription>
+                Проверьте включённые регионы и склады или выберите другое
+                направление поставки.
+              </AlertDescription>
+            </Alert>
+          )}
         </CardContent>
       </Card>
 
       {!compact && (
-        <div className="space-y-4 xl:sticky xl:top-20 xl:self-start">
+        <div className="space-y-4 xl:grid xl:grid-cols-2 xl:gap-4 xl:space-y-0 2xl:sticky 2xl:top-20 2xl:block 2xl:space-y-4 2xl:self-start">
+          <ShipmentFormulaPanel
+            planning={shipmentPlanning ?? null}
+            scopeSummary={activeScopeSummary}
+            selectedOption={effectiveOption}
+          />
           <ShipmentSettings
             targetDays={targetDays}
             minQty={minQty}
@@ -2115,22 +2956,38 @@ function DirectionPanel({
   mode,
   onModeChange,
   options,
-  selected,
+  selectedKey,
+  enabledKeys,
+  onToggle,
+  onSelectAll,
+  onApplyRecommended,
   onSelect,
 }: {
   mode: ShipmentBuilderMode;
   onModeChange: (mode: ShipmentBuilderMode) => void;
-  options: string[];
-  selected: string | null;
-  onSelect: (option: string) => void;
+  options: ShipmentScopeOption[];
+  selectedKey: string | null;
+  enabledKeys: Set<string>;
+  onToggle: (key: string) => void;
+  onSelectAll: () => void;
+  onApplyRecommended: () => void;
+  onSelect: (option: ShipmentScopeOption) => void;
 }) {
+  const enabledCount = options.filter((option) =>
+    enabledKeys.has(option.key),
+  ).length;
   return (
-    <Card className="rounded-md xl:sticky xl:top-20 xl:self-start">
+    <Card className="rounded-md 2xl:sticky 2xl:top-20 2xl:self-start">
       <CardHeader className="border-b p-4">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <RouteIcon className="h-4 w-4" />
-          Направления
-        </CardTitle>
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <RouteIcon className="h-4 w-4" />
+            Направления
+          </CardTitle>
+          <Badge variant="secondary">
+            {enabledCount}/{options.length}
+          </Badge>
+        </div>
       </CardHeader>
       <CardContent className="space-y-3 p-3">
         <div className="grid grid-cols-2 gap-1 rounded-md bg-muted p-1">
@@ -2153,20 +3010,88 @@ function DirectionPanel({
             Регион
           </Button>
         </div>
-        <div className="max-h-[590px] space-y-2 overflow-y-auto">
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 gap-2"
+            onClick={onApplyRecommended}
+          >
+            <ShieldCheck className="h-4 w-4" />
+            Рекоменд.
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 gap-2"
+            onClick={onSelectAll}
+          >
+            <ListChecks className="h-4 w-4" />
+            Все
+          </Button>
+        </div>
+        <div className="grid max-h-[300px] gap-2 overflow-y-auto pr-1 md:grid-cols-2 2xl:block 2xl:max-h-[590px] 2xl:space-y-2">
           {options.map((option) => (
-            <button
-              key={option}
-              type="button"
-              onClick={() => onSelect(option)}
+            <div
+              key={option.key}
               className={cn(
-                "flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm transition hover:bg-muted/60",
-                option === selected && "border-primary bg-primary/5",
+                "rounded-md border transition hover:bg-muted/60",
+                option.key === selectedKey && "border-primary bg-primary/5",
+                !enabledKeys.has(option.key) && "opacity-60",
               )}
             >
-              <span className="min-w-0 truncate">{option}</span>
-              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-            </button>
+              <div className="grid gap-2 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-2">
+                    <Checkbox
+                      checked={enabledKeys.has(option.key)}
+                      onCheckedChange={() => onToggle(option.key)}
+                      aria-label={`Включить ${option.label}`}
+                      className="mt-0.5"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => onSelect(option)}
+                      className="min-w-0 text-left"
+                    >
+                      <div className="truncate text-sm font-medium">
+                        {option.label}
+                      </div>
+                      <div className="truncate text-[11px] text-muted-foreground">
+                        {uiText(option.reason) ||
+                          "Можно включить в расчёт поставки"}
+                      </div>
+                    </button>
+                  </div>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 shrink-0"
+                    onClick={() => onSelect(option)}
+                    aria-label={`Открыть ${option.label}`}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-[11px]">
+                  <MetricInline
+                    label="Дефицит"
+                    value={`+${formatNumber(option.shortage_qty)}`}
+                  />
+                  <MetricInline
+                    label="Излишек"
+                    value={formatNumber(option.excess_qty)}
+                  />
+                  <MetricInline
+                    label="Артикулы"
+                    value={formatNumber(option.product_count)}
+                  />
+                </div>
+              </div>
+            </div>
           ))}
         </div>
       </CardContent>
@@ -2176,16 +3101,18 @@ function DirectionPanel({
 
 function CompactDirectionPicker({
   options,
-  selected,
+  selectedKey,
+  enabledKeys,
   mode,
   onModeChange,
   onSelect,
 }: {
-  options: string[];
-  selected: string | null;
+  options: ShipmentScopeOption[];
+  selectedKey: string | null;
+  enabledKeys: Set<string>;
   mode: ShipmentBuilderMode;
   onModeChange: (mode: ShipmentBuilderMode) => void;
-  onSelect: (option: string) => void;
+  onSelect: (option: ShipmentScopeOption) => void;
 }) {
   return (
     <div className="grid gap-2">
@@ -2212,17 +3139,123 @@ function CompactDirectionPicker({
       <div className="flex gap-2 overflow-x-auto pb-1">
         {options.slice(0, 12).map((option) => (
           <Button
-            key={option}
+            key={option.key}
             size="sm"
-            variant={option === selected ? "default" : "outline"}
-            className="h-8 shrink-0"
+            variant={option.key === selectedKey ? "default" : "outline"}
+            className={cn(
+              "h-8 shrink-0",
+              !enabledKeys.has(option.key) && "opacity-60",
+            )}
             onClick={() => onSelect(option)}
           >
-            {option}
+            {option.label}
           </Button>
         ))}
       </div>
     </div>
+  );
+}
+
+function ShipmentFormulaPanel({
+  planning,
+  scopeSummary,
+  selectedOption,
+}: {
+  planning: ShipmentPlanningRead | null;
+  scopeSummary: {
+    regions: number;
+    warehouses: number;
+    allRegions: number;
+    allWarehouses: number;
+  };
+  selectedOption: ShipmentScopeOption | null;
+}) {
+  const movements = planning?.movements?.slice(0, 4) ?? [];
+  return (
+    <Card className="rounded-md" role="region" aria-label="Расчёт поставки">
+      <CardHeader className="border-b p-4">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Calculator className="h-4 w-4" />
+          Расчёт поставки
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4 p-4">
+        <div className="rounded-md border bg-muted/30 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm font-medium">
+              {uiText(planning?.formula?.title) || "Логистическая формула"}
+            </div>
+            <Badge variant="outline">
+              {planning?.status === "stock_control"
+                ? "контроль остатков"
+                : "резерв"}
+            </Badge>
+          </div>
+          <div className="mt-2 text-xs leading-5 text-muted-foreground">
+            {uiText(planning?.formula?.detail) ||
+              "Цель = скорость продаж × горизонт; отгрузка закрывает дефицит."}
+          </div>
+          {planning?.formula?.warning && (
+            <div className="mt-2 text-xs text-amber-700">
+              {uiText(planning.formula.warning)}
+            </div>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <MetricInline
+            label="Регионов"
+            value={`${formatNumber(scopeSummary.regions)}/${formatNumber(
+              scopeSummary.allRegions,
+            )}`}
+          />
+          <MetricInline
+            label="Складов"
+            value={`${formatNumber(scopeSummary.warehouses)}/${formatNumber(
+              scopeSummary.allWarehouses,
+            )}`}
+          />
+          <MetricInline
+            label="Дефицит"
+            value={`+${formatNumber(selectedOption?.shortage_qty ?? 0)}`}
+          />
+          <MetricInline
+            label="Излишек"
+            value={formatNumber(selectedOption?.excess_qty ?? 0)}
+          />
+        </div>
+        {movements.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Truck className="h-4 w-4" />
+              Движения из контроля остатков
+            </div>
+            {movements.map((movement) => (
+              <div key={movement.id} className="rounded-md border px-3 py-2">
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="min-w-0 truncate">
+                    {movement.recipient_warehouse ||
+                      movement.recipient_region ||
+                      "направление"}
+                  </span>
+                  <Badge variant="secondary">
+                    +{formatNumber(movement.quantity)}
+                  </Badge>
+                </div>
+                <div className="mt-1 truncate text-[11px] text-muted-foreground">
+                  {movement.vendor_code ||
+                    movement.barcode ||
+                    movement.nm_id ||
+                    "артикул"}{" "}
+                  ·{" "}
+                  {uiText(movement.business_explanation) ||
+                    "перенос по дефициту"}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -2309,25 +3342,31 @@ function ShipmentTable({
   table,
   rows,
   toggleLine,
+  compact = false,
 }: {
   table: ReactTableInstance<ShipmentLine>;
   rows: ShipmentLine[];
   toggleLine: (id: string, checked: boolean) => void;
+  compact?: boolean;
 }) {
+  const cards = rows.map((row) => (
+    <ShipmentLineCard
+      key={row.id}
+      row={row}
+      checked={row.selected}
+      onCheckedChange={(checked) => toggleLine(row.id, checked)}
+    />
+  ));
+
+  if (compact) {
+    return <div className="divide-y">{cards}</div>;
+  }
+
   return (
     <>
-      <div className="divide-y md:hidden">
-        {rows.map((row) => (
-          <ShipmentLineCard
-            key={row.id}
-            row={row}
-            checked={row.selected}
-            onCheckedChange={(checked) => toggleLine(row.id, checked)}
-          />
-        ))}
-      </div>
+      <div className="divide-y md:hidden">{cards}</div>
       <div className="hidden overflow-x-auto md:block">
-        <Table>
+        <Table className="min-w-[920px]">
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
@@ -2420,17 +3459,21 @@ function ShipmentLineCard({
         </div>
         <RiskBadge level={row.risk_level} />
       </div>
-      <div className="grid grid-cols-4 gap-2 text-xs">
+      <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
         <MetricInline label="Остаток" value={formatNumber(row.stock_units)} />
         <MetricInline
           label="Скорость"
           value={formatNumber(row.avg_daily_sales)}
         />
+        <MetricInline label="Цель" value={formatNumber(row.targetStock)} />
         <MetricInline
           label="Отгрузка"
           value={`+${formatNumber(row.shipmentQty)}`}
         />
-        <MetricInline label="Эффект" value={formatMoney(row.shipmentNet)} />
+        <MetricInline
+          label="Чистый эффект"
+          value={formatMoney(row.shipmentNet)}
+        />
       </div>
     </div>
   );
@@ -2588,7 +3631,7 @@ function WarehouseWorkspace({
 
   return (
     <>
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_390px]">
+      <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_390px]">
         <div className="space-y-4">
           <WarehouseControlsPanel
             rows={controls}
@@ -2667,11 +3710,11 @@ function WarehouseControlsPanel({
             disabled={exporting}
           >
             <Download className="h-4 w-4" />
-            CSV
+            Экспорт
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="grid gap-0 p-0 md:grid-cols-2 xl:grid-cols-4">
+      <CardContent className="grid gap-0 p-0 md:grid-cols-2 2xl:grid-cols-4">
         {rows.slice(0, 8).map((row) => {
           const enabled = !disabledWarehouses.has(row.warehouse_name);
           return (
@@ -2680,14 +3723,14 @@ function WarehouseControlsPanel({
               className="grid gap-3 border-b px-4 py-3 md:border-r"
             >
               <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="truncate font-medium">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="min-w-0 font-medium leading-tight">
                     {row.warehouse_name}
                   </span>
                   <WarehouseModeBadge mode={row.recommended_mode} />
                 </div>
                 <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                  {row.reason || "Склад в рабочем контуре."}
+                  {uiText(row.reason) || "Склад в рабочем контуре."}
                 </div>
               </div>
               <div className="flex items-center justify-between gap-3">
@@ -2923,7 +3966,7 @@ function WarehouseSidePanel({
     .slice(0, 3);
 
   return (
-    <Card className="rounded-md xl:sticky xl:top-20 xl:self-start">
+    <Card className="rounded-md 2xl:sticky 2xl:top-20 2xl:self-start">
       <CardHeader className="border-b p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -2975,7 +4018,7 @@ function WarehouseSidePanel({
           <Gauge className="h-4 w-4" />
           <AlertTitle>{calc.priority}</AlertTitle>
           <AlertDescription className="mt-1 text-sm">
-            {row.recommendation ||
+            {uiText(row.recommendation) ||
               "Склад держит нормальный запас и приемлемую стоимость логистики."}
           </AlertDescription>
         </Alert>
@@ -3019,7 +4062,13 @@ function WarehouseDeepDiveSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="flex w-full flex-col overflow-hidden p-0 sm:max-w-[min(1120px,calc(100vw-2rem))]">
+      <SheetContent
+        className="flex !max-w-none flex-col overflow-hidden p-0 data-[state=closed]:duration-150 data-[state=open]:duration-200"
+        style={{
+          width: "min(1120px, calc(100vw - 2rem))",
+          maxWidth: "none",
+        }}
+      >
         <div className="border-b px-5 py-4">
           <SheetHeader className="pr-8 text-left">
             <div className="flex flex-wrap items-center gap-2">
@@ -3035,22 +4084,37 @@ function WarehouseDeepDiveSheet({
         {row && calc && (
           <div className="min-h-0 flex-1 overflow-y-auto p-5">
             <Tabs defaultValue="money">
-              <TabsList className="h-auto flex-wrap">
-                <TabsTrigger value="money" className="text-xs">
-                  Деньги
-                </TabsTrigger>
-                <TabsTrigger value="stock" className="text-xs">
-                  Остатки
-                </TabsTrigger>
-                <TabsTrigger value="sku" className="text-xs">
-                  Артикулы
-                </TabsTrigger>
-                <TabsTrigger value="acceptance" className="text-xs">
-                  Приёмка
-                </TabsTrigger>
-                <TabsTrigger value="plan" className="text-xs">
-                  План
-                </TabsTrigger>
+              <TabsList className="grid h-auto w-full grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-5">
+                <DeepDiveTab
+                  value="money"
+                  label="Деньги"
+                  detail="выручка, маржа"
+                  icon={CircleDollarSign}
+                />
+                <DeepDiveTab
+                  value="stock"
+                  label="Остатки"
+                  detail="запас и путь"
+                  icon={Boxes}
+                />
+                <DeepDiveTab
+                  value="sku"
+                  label="Артикулы"
+                  detail="товары внутри"
+                  icon={FileSpreadsheet}
+                />
+                <DeepDiveTab
+                  value="acceptance"
+                  label="Приёмка"
+                  detail="слоты и тариф"
+                  icon={PackageCheck}
+                />
+                <DeepDiveTab
+                  value="plan"
+                  label="План"
+                  detail="что довезти"
+                  icon={ClipboardList}
+                />
               </TabsList>
               <TabsContent
                 value="money"
@@ -3161,7 +4225,7 @@ function WarehouseDeepDiveSheet({
                   <Gauge className="h-4 w-4" />
                   <AlertTitle>{calc.priority}</AlertTitle>
                   <AlertDescription>
-                    {row.recommendation ||
+                    {uiText(row.recommendation) ||
                       "Склад держит нормальный запас и приемлемую стоимость логистики."}
                   </AlertDescription>
                 </Alert>
@@ -3197,6 +4261,38 @@ function WarehouseDeepDiveSheet({
   );
 }
 
+function DeepDiveTab({
+  value,
+  label,
+  detail,
+  icon: Icon,
+}: {
+  value: string;
+  label: string;
+  detail: string;
+  icon: LucideIcon;
+}) {
+  return (
+    <TabsTrigger
+      value={value}
+      aria-label={label}
+      className="h-full justify-start gap-2 whitespace-normal rounded-md border bg-background p-3 text-left data-[state=active]:border-primary data-[state=active]:bg-primary/5"
+    >
+      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-foreground">
+        <Icon className="h-4 w-4" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold leading-tight">
+          {label}
+        </span>
+        <span className="block text-xs font-normal leading-tight text-muted-foreground">
+          {detail}
+        </span>
+      </span>
+    </TabsTrigger>
+  );
+}
+
 function LogisticsDetailsWorkspace({
   paidStorage,
   acceptance,
@@ -3227,7 +4323,7 @@ function LogisticsDetailsWorkspace({
     <div className="space-y-4">
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <ExecutiveMetric
-          title="Хранение по SKU"
+          title="Хранение по артикулам"
           value={formatMoney(storageTotal)}
           detail={`${formatNumber(paidStorage.length)} строк детализации`}
           icon={Layers3}
@@ -3257,22 +4353,37 @@ function LogisticsDetailsWorkspace({
       </div>
 
       <Tabs defaultValue="storage" className="w-full">
-        <TabsList className="h-auto flex-wrap">
-          <TabsTrigger value="storage" className="text-xs">
-            Хранение
-          </TabsTrigger>
-          <TabsTrigger value="acceptance" className="text-xs">
-            Приёмка
-          </TabsTrigger>
-          <TabsTrigger value="transit" className="text-xs">
-            Транзит
-          </TabsTrigger>
-          <TabsTrigger value="seller" className="text-xs">
-            FBS/DBW
-          </TabsTrigger>
-          <TabsTrigger value="sources" className="text-xs">
-            Источники
-          </TabsTrigger>
+        <TabsList className="grid h-auto w-full grid-cols-1 gap-2 bg-transparent p-0 sm:grid-cols-2 xl:grid-cols-5">
+          <DeepDiveTab
+            value="storage"
+            label="Хранение"
+            detail="артикулы и сумма"
+            icon={Layers3}
+          />
+          <DeepDiveTab
+            value="acceptance"
+            label="Приёмка"
+            detail="операции"
+            icon={PackageCheck}
+          />
+          <DeepDiveTab
+            value="transit"
+            label="Транзит"
+            detail="маршруты"
+            icon={RouteIcon}
+          />
+          <DeepDiveTab
+            value="seller"
+            label="FBS/DBW"
+            detail="склады продавца"
+            icon={Warehouse}
+          />
+          <DeepDiveTab
+            value="sources"
+            label="Источники"
+            detail="API и загрузка"
+            icon={Database}
+          />
         </TabsList>
         <TabsContent value="storage" className="mt-3">
           <PaidStorageDetailsTable
@@ -3401,9 +4512,9 @@ function PaidStorageDetailsTable({
   return (
     <DetailsTableShell
       title="Детальный отчёт платного хранения"
-      description="Товары, склады, даты и сумма хранения из отдельного WB report."
+      description="Товары, склады, даты и сумма хранения из отдельного отчёта WB."
       emptyTitle="Детализация хранения ещё не загружена"
-      emptyText="Запустите sync logistics: модуль создаст отчёт /api/v1/paid_storage и скачает детализацию."
+      emptyText="Запустите загрузку логистики: модуль создаст отчёт /api/v1/paid_storage и скачает детализацию."
       rowsLength={rows.length}
       onExport={onExport}
       exporting={exporting}
@@ -3502,7 +4613,7 @@ function AcceptanceDetailsTable({
       title="Детальный отчёт расходов приёмки"
       description="Сверка по операциям, складам и товарам из /api/v1/acceptance_report."
       emptyTitle="Детализация приёмки ещё не загружена"
-      emptyText="Запустите sync logistics: модуль скачает acceptance report и покажет операции вместо одной общей суммы из finance detailed."
+      emptyText="Запустите загрузку логистики: модуль скачает отчёт приёмки и покажет операции вместо одной общей суммы из финансовой детализации."
       rowsLength={rows.length}
       onExport={onExport}
       exporting={exporting}
@@ -3617,9 +4728,9 @@ function TransitTariffTable({
   return (
     <DetailsTableShell
       title="Транзитные направления и тарифы"
-      description="Маршруты supplies-api для выбора поставки через транзитный склад."
+      description="Маршруты API поставок для выбора через транзитный склад."
       emptyTitle="Транзитные тарифы ещё не загружены"
-      emptyText="Нужен supplies token и sync logistics: модуль запросит /api/v1/transit-tariffs."
+      emptyText="Нужен токен поставок и загрузка логистики: модуль запросит /api/v1/transit-tariffs."
       rowsLength={rows.length}
       onExport={onExport}
       exporting={exporting}
@@ -3736,9 +4847,9 @@ function SellerWarehouseTable({
   return (
     <DetailsTableShell
       title="Склады продавца FBS/DBW и остатки"
-      description="Marketplace API: список складов и остатки по chrtId для склада продавца."
+      description="Маркетплейс API: список складов продавца и остатки по размеру товара."
       emptyTitle="Склады продавца ещё не загружены"
-      emptyText="Нужен marketplace token и sync logistics. Для остатков используются chrtId из карточек товаров."
+      emptyText="Нужен токен маркетплейса и загрузка логистики. Для остатков используются размеры из карточек товаров."
       rowsLength={rows.length}
       onExport={onExport}
       exporting={exporting}
@@ -3757,6 +4868,19 @@ function SourceCoveragePanel({
 }) {
   const okCount = sources.filter((source) => source.status === "ok").length;
   const pct = sources.length ? (okCount / sources.length) * 100 : 0;
+  const totalRows = sources.reduce((sum, source) => sum + source.rows, 0);
+  const latestAt = sources.reduce<string | null>((latest, source) => {
+    if (!source.latest_at) return latest;
+    if (!latest) return source.latest_at;
+    return Date.parse(source.latest_at) > Date.parse(latest)
+      ? source.latest_at
+      : latest;
+  }, null);
+  const activeCapabilities = capabilities.filter((item) =>
+    isHealthyDataStatus(item.status),
+  ).length;
+  const missingSources = Math.max(sources.length - okCount, 0);
+
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_390px]">
       <Card className="rounded-md">
@@ -3786,13 +4910,42 @@ function SourceCoveragePanel({
                   </div>
                   {source.note && (
                     <div className="mt-0.5 line-clamp-2 text-xs text-amber-700">
-                      {source.note}
+                      {uiText(source.note)}
                     </div>
                   )}
                 </div>
                 <StatusBadge status={source.status} />
               </div>
             ))}
+          </div>
+          <div className="grid gap-2 md:grid-cols-3">
+            <CompactFact
+              label="Строк в расчёте"
+              value={formatNumber(totalRows)}
+              note="из WB-источников"
+            />
+            <CompactFact
+              label="Последняя загрузка"
+              value={latestAt ? formatDateTime(latestAt) : "нет данных"}
+              note="для сверки цифр"
+            />
+            <CompactFact
+              label="Нужно проверить"
+              value={formatNumber(missingSources)}
+              note={`${formatNumber(activeCapabilities)}/${formatNumber(capabilities.length)} API активны`}
+            />
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            <DataStatusLine
+              label="Деньги и спрос"
+              value="выручка, заказы, потери спроса"
+              status={okCount > 0 ? "ok" : "warning"}
+            />
+            <DataStatusLine
+              label="Расходы и маршруты"
+              value="логистика, хранение, приёмка, транзит"
+              status={missingSources === 0 ? "ok" : "warning"}
+            />
           </div>
         </CardContent>
       </Card>
@@ -3871,7 +5024,7 @@ function DetailsTableShell({
             disabled={exporting}
           >
             <Download className="h-4 w-4" />
-            CSV
+            Экспорт
           </Button>
         </div>
       </CardHeader>
@@ -4072,96 +5225,105 @@ function ProductMiniTable({
   }
 
   if (compact) {
-    return (
-      <div className="overflow-hidden rounded-md border">
-        <div className="divide-y">
-          {products.map((product) => (
-            <div key={product.id} className="grid gap-2 px-3 py-3 text-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="truncate font-medium">
-                    {productLabel(product)}
-                  </div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    WB {product.nm_id ?? "—"} · {product.brand || "бренд —"}
-                  </div>
-                </div>
-                <RiskBadge level={product.risk_level} />
-              </div>
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                <MetricInline
-                  label="Остаток"
-                  value={formatNumber(product.stock_units)}
-                />
-                <MetricInline
-                  label="30 дн."
-                  value={`+${formatNumber(product.recommended_supply_30)}`}
-                />
-                <MetricInline
-                  label="Эффект"
-                  value={formatMoney(product.expected_net_effect)}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
+    return <ProductMiniCards products={products} />;
   }
 
   return (
-    <div className="overflow-hidden rounded-md border">
-      <div className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="min-w-[220px]">Артикул</TableHead>
-              <TableHead>Риск</TableHead>
-              <TableHead className="text-right">Остаток</TableHead>
-              <TableHead className="text-right">Продажи</TableHead>
-              <TableHead className="text-right">План 30 дн.</TableHead>
-              <TableHead className="text-right">Чистый эффект</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {products.map((product) => (
-              <TableRow key={product.id}>
-                <TableCell>
-                  <div className="min-w-0">
-                    <div className="truncate font-medium">
-                      {productLabel(product)}
-                    </div>
-                    <div className="truncate text-xs text-muted-foreground">
-                      WB {product.nm_id ?? "—"} · {product.brand || "бренд —"}
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <RiskBadge level={product.risk_level} />
-                </TableCell>
-                <TableCell className="text-right">
-                  {formatNumber(product.stock_units)}
-                </TableCell>
-                <TableCell className="text-right">
-                  <NumberCell
-                    value={formatNumber(product.sales_qty)}
-                    note={`${formatNumber(product.avg_daily_sales)} / день`}
-                  />
-                </TableCell>
-                <TableCell className="text-right font-medium">
-                  +{formatNumber(product.recommended_supply_30)}
-                </TableCell>
-                <TableCell className="text-right">
-                  <NumberCell
-                    value={formatMoney(product.expected_net_effect)}
-                    note={formatMoney(product.potential_revenue)}
-                    strong
-                  />
-                </TableCell>
+    <>
+      <div className="sm:hidden">
+        <ProductMiniCards products={products} />
+      </div>
+      <div className="hidden overflow-hidden rounded-md border sm:block">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="min-w-[220px]">Артикул</TableHead>
+                <TableHead>Риск</TableHead>
+                <TableHead className="text-right">Остаток</TableHead>
+                <TableHead className="text-right">Продажи</TableHead>
+                <TableHead className="text-right">План 30 дн.</TableHead>
+                <TableHead className="text-right">Чистый эффект</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {products.map((product) => (
+                <TableRow key={product.id}>
+                  <TableCell>
+                    <div className="min-w-0">
+                      <div className="truncate font-medium">
+                        {productLabel(product)}
+                      </div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        WB {product.nm_id ?? "—"} · {product.brand || "бренд —"}
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <RiskBadge level={product.risk_level} />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {formatNumber(product.stock_units)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <NumberCell
+                      value={formatNumber(product.sales_qty)}
+                      note={`${formatNumber(product.avg_daily_sales)} / день`}
+                    />
+                  </TableCell>
+                  <TableCell className="text-right font-medium">
+                    +{formatNumber(product.recommended_supply_30)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <NumberCell
+                      value={formatMoney(product.expected_net_effect)}
+                      note={formatMoney(product.potential_revenue)}
+                      strong
+                    />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function ProductMiniCards({ products }: { products: ProductRow[] }) {
+  return (
+    <div className="overflow-hidden rounded-md border">
+      <div className="divide-y">
+        {products.map((product) => (
+          <div key={product.id} className="grid gap-2 px-3 py-3 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate font-medium">
+                  {productLabel(product)}
+                </div>
+                <div className="truncate text-xs text-muted-foreground">
+                  WB {product.nm_id ?? "—"} · {product.brand || "бренд —"}
+                </div>
+              </div>
+              <RiskBadge level={product.risk_level} />
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <MetricInline
+                label="Остаток"
+                value={formatNumber(product.stock_units)}
+              />
+              <MetricInline
+                label="30 дн."
+                value={`+${formatNumber(product.recommended_supply_30)}`}
+              />
+              <MetricInline
+                label="Эффект"
+                value={formatMoney(product.expected_net_effect)}
+              />
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -4381,6 +5543,288 @@ function getInclusiveDays(from?: string, to?: string) {
   return Math.max(Math.round((end - start) / 86_400_000) + 1, 1);
 }
 
+function buildFallbackRegionOptions(
+  warehouses: WarehouseRow[],
+  products: ProductRow[],
+  periodDays: number,
+): ShipmentScopeOption[] {
+  const stats = new Map<
+    string,
+    ShipmentScopeOption & { productKeys: Set<string> }
+  >();
+  for (const row of warehouses) {
+    const label = row.region_name || "Регион не определён";
+    const item = ensureFallbackScope(stats, "region", label);
+    const recommended = fallbackScopeShortage(
+      row.stock_units,
+      row.sales_qty,
+      periodDays,
+    );
+    item.region_name = label;
+    item.stock_units += row.stock_units;
+    item.current_stock_qty += row.stock_units;
+    item.target_stock_qty += row.stock_units + recommended;
+    item.delta_qty += recommended;
+    item.shortage_qty += recommended;
+    item.sales_qty += row.sales_qty;
+    item.revenue += row.revenue;
+    item.risk_level = worseRiskLevel(item.risk_level, row.risk_level);
+    if (row.acceptance_status === "closed") {
+      item.reason = item.reason || "Есть склад с закрытой приёмкой.";
+    }
+  }
+  for (const product of products) {
+    ensureFallbackScope(
+      stats,
+      "region",
+      productRegionLabel(product),
+    ).productKeys.add(product.id);
+  }
+  return finishFallbackOptions(stats);
+}
+
+function buildFallbackWarehouseOptions(
+  warehouses: WarehouseRow[],
+  products: ProductRow[],
+  periodDays: number,
+): ShipmentScopeOption[] {
+  const stats = new Map<
+    string,
+    ShipmentScopeOption & { productKeys: Set<string> }
+  >();
+  for (const row of warehouses) {
+    const item = ensureFallbackScope(stats, "warehouse", row.warehouse_name);
+    const recommended = fallbackScopeShortage(
+      row.stock_units,
+      row.sales_qty,
+      periodDays,
+    );
+    item.region_name = row.region_name || "Регион не определён";
+    item.warehouse_id = row.warehouse_id;
+    item.warehouse_name = row.warehouse_name;
+    item.acceptance_status = row.acceptance_status;
+    item.stock_units += row.stock_units;
+    item.current_stock_qty += row.stock_units;
+    item.target_stock_qty += row.stock_units + recommended;
+    item.delta_qty += recommended;
+    item.shortage_qty += recommended;
+    item.sales_qty += row.sales_qty;
+    item.revenue += row.revenue;
+    item.risk_level = worseRiskLevel(item.risk_level, row.risk_level);
+    if (row.acceptance_status === "closed") {
+      item.enabled_by_default = false;
+      item.reason = "Приёмка закрыта: включайте склад только вручную.";
+    }
+  }
+  for (const product of products) {
+    ensureFallbackScope(
+      stats,
+      "warehouse",
+      product.warehouse_name,
+    ).productKeys.add(product.id);
+  }
+  return finishFallbackOptions(stats);
+}
+
+function ensureFallbackScope(
+  map: Map<string, ShipmentScopeOption & { productKeys: Set<string> }>,
+  scopeType: "region" | "warehouse",
+  label: string,
+) {
+  const key = shipmentScopeKey(scopeType, label);
+  const existing = map.get(key);
+  if (existing) return existing;
+  const created: ShipmentScopeOption & { productKeys: Set<string> } = {
+    key,
+    label,
+    scope_type: scopeType,
+    region_name: scopeType === "region" ? label : null,
+    warehouse_id: null,
+    warehouse_name: scopeType === "warehouse" ? label : null,
+    enabled_by_default: true,
+    selectable: true,
+    reason: null,
+    risk_level: "ok",
+    acceptance_status: null,
+    stock_units: 0,
+    current_stock_qty: 0,
+    target_stock_qty: 0,
+    delta_qty: 0,
+    shortage_qty: 0,
+    excess_qty: 0,
+    inbound_qty: 0,
+    outbound_qty: 0,
+    sales_qty: 0,
+    revenue: 0,
+    product_count: 0,
+    productKeys: new Set<string>(),
+  };
+  map.set(key, created);
+  return created;
+}
+
+function finishFallbackOptions(
+  map: Map<string, ShipmentScopeOption & { productKeys: Set<string> }>,
+) {
+  return Array.from(map.values())
+    .map(({ productKeys, ...option }) => ({
+      ...option,
+      product_count: productKeys.size,
+      reason:
+        option.reason ||
+        (option.shortage_qty > 0
+          ? `Логистика: дефицит ${formatNumber(option.shortage_qty)} шт.`
+          : "Можно включить в расчёт поставки вручную."),
+    }))
+    .sort((a, b) => {
+      const enabledDelta =
+        Number(b.enabled_by_default) - Number(a.enabled_by_default);
+      if (enabledDelta) return enabledDelta;
+      const shortageDelta = b.shortage_qty - a.shortage_qty;
+      if (shortageDelta) return shortageDelta;
+      return a.label.localeCompare(b.label, "ru");
+    });
+}
+
+function mergeScopeOptions(
+  primary: ShipmentScopeOption[],
+  fallback: ShipmentScopeOption[],
+) {
+  const byIdentity = new Map<string, ShipmentScopeOption>();
+  for (const option of fallback) {
+    byIdentity.set(scopeIdentity(option), option);
+  }
+  for (const option of primary) {
+    const fallbackOption = byIdentity.get(scopeIdentity(option));
+    byIdentity.set(scopeIdentity(option), {
+      ...fallbackOption,
+      ...option,
+      product_count: option.product_count || fallbackOption?.product_count || 0,
+      stock_units: option.stock_units || fallbackOption?.stock_units || 0,
+      sales_qty: option.sales_qty || fallbackOption?.sales_qty || 0,
+      revenue: option.revenue || fallbackOption?.revenue || 0,
+      key:
+        option.key ||
+        shipmentScopeKey(
+          option.scope_type === "region" ? "region" : "warehouse",
+          option.label,
+        ),
+    });
+  }
+  return Array.from(byIdentity.values()).sort((a, b) => {
+    const enabledDelta =
+      Number(b.enabled_by_default) - Number(a.enabled_by_default);
+    if (enabledDelta) return enabledDelta;
+    const shortageDelta = b.shortage_qty - a.shortage_qty;
+    if (shortageDelta) return shortageDelta;
+    return a.label.localeCompare(b.label, "ru");
+  });
+}
+
+function defaultScopeKeys(options: ShipmentScopeOption[]) {
+  return new Set(
+    options
+      .filter(
+        (option) => option.selectable !== false && option.enabled_by_default,
+      )
+      .map((option) => option.key),
+  );
+}
+
+function toggleSetValue(prev: Set<string>, key: string) {
+  const next = new Set(prev);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  return next;
+}
+
+function buildMovementQuantityIndex(movements: ShipmentMovementRow[]) {
+  const index = new Map<string, number>();
+  for (const movement of movements) {
+    const qty = Number(movement.quantity || 0);
+    if (qty <= 0) continue;
+    const scopeKeys = [
+      movement.recipient_warehouse
+        ? shipmentScopeKey("warehouse", movement.recipient_warehouse)
+        : null,
+      movement.recipient_region
+        ? shipmentScopeKey("region", movement.recipient_region)
+        : null,
+    ].filter((value): value is string => Boolean(value));
+    const productKeys = movementProductKeys(movement);
+    for (const scopeKey of scopeKeys) {
+      for (const productKey of productKeys) {
+        const key = `${scopeKey}|${productKey}`;
+        index.set(key, (index.get(key) || 0) + qty);
+      }
+    }
+  }
+  return index;
+}
+
+function stockControlMovementQty(
+  product: ProductRow,
+  option: ShipmentScopeOption | null,
+  index: Map<string, number>,
+) {
+  if (!option) return 0;
+  return productIdentityKeys(product).reduce(
+    (sum, productKey) => sum + (index.get(`${option.key}|${productKey}`) || 0),
+    0,
+  );
+}
+
+function movementProductKeys(movement: ShipmentMovementRow) {
+  return [
+    movement.nm_id ? `nm:${movement.nm_id}` : null,
+    movement.vendor_code ? `vendor:${movement.vendor_code}` : null,
+    movement.barcode ? `barcode:${movement.barcode}` : null,
+  ].filter((value): value is string => Boolean(value));
+}
+
+function productIdentityKeys(product: ProductRow) {
+  return [
+    product.nm_id ? `nm:${product.nm_id}` : null,
+    product.vendor_code ? `vendor:${product.vendor_code}` : null,
+    product.barcode ? `barcode:${product.barcode}` : null,
+  ].filter((value): value is string => Boolean(value));
+}
+
+function fallbackScopeShortage(
+  stockUnits: number,
+  salesQty: number,
+  periodDays: number,
+) {
+  const avgDailySales = divide(salesQty, periodDays) || 0;
+  return Math.max(
+    Math.round(avgDailySales * PRODUCTION_PLANNING_DAYS - stockUnits),
+    0,
+  );
+}
+
+function productRegionLabel(product: ProductRow) {
+  return product.region_name || "Регион не определён";
+}
+
+function scopeIdentity(option: ShipmentScopeOption) {
+  return `${option.scope_type}:${option.label}`;
+}
+
+function shipmentScopeKey(scopeType: "region" | "warehouse", label: string) {
+  return `${scopeType}:${scopeSlug(label)}`;
+}
+
+function scopeSlug(value: string) {
+  return value
+    .toLocaleLowerCase("ru")
+    .replace(/[\\/:]/g, "-")
+    .replace(/\s+/g, "-");
+}
+
+function worseRiskLevel(current: string, incoming: string) {
+  return riskWeight(incoming) < riskWeight(current) ? incoming : current;
+}
+
 function disabledWarehouseKey(accountId: number) {
   return `wb.logistics.disabled_warehouses.${accountId}`;
 }
@@ -4467,6 +5911,20 @@ function tokenCategoryLabel(value: string) {
   );
 }
 
+function uiText(value?: string | null) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return text
+    .replace(/быстрому\s+SKU\b/gi, "быстрому артикулу")
+    .replace(/топовые\s+SKU\b/gi, "топовые артикулы")
+    .replace(/остаток\s+SKU\b/gi, "остаток товаров")
+    .replace(/\bSKU\b/gi, "артикулы")
+    .replace(/\bsync\b/gi, "загрузка")
+    .replace(/\breport\b/gi, "отчёт")
+    .replace(/\btoken\b/gi, "токен")
+    .replace(/\bmarketplace\b/gi, "маркетплейс");
+}
+
 function statusLabel(status: string) {
   return (
     {
@@ -4484,6 +5942,12 @@ function statusLabel(status: string) {
       danger: "Критично",
       watch: "Наблюдать",
     }[status] || status
+  );
+}
+
+function isHealthyDataStatus(status?: string | null) {
+  return ["ok", "active", "ready", "synced", "fresh", "completed"].includes(
+    String(status || "").toLowerCase(),
   );
 }
 

@@ -133,6 +133,7 @@ export const API_ENDPOINTS = {
     doctor: "/portal/doctor",
     overview: "/portal/overview",
     actions: "/portal/actions",
+    actionCenterCapabilities: "/portal/action-center/capabilities",
     manualActionCreate: "/portal/actions/manual",
     manualTaskItemUpdate: (actionId: number | string, itemKey: string) =>
       `/portal/actions/${actionId}/manual-items/${encodeURIComponent(itemKey)}`,

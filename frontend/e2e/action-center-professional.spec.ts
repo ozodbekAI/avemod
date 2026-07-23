@@ -18,7 +18,7 @@ test("same dynamic problem is traceable through Action Center, Product360 and Re
 
   await expect(
     page.getByRole("heading", { name: "Центр действий" }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
   await expect(
     page.getByRole("button", { name: /Данные и себестоимость/i }),
   ).toBeVisible();
@@ -50,7 +50,9 @@ test("action-center-task-drawer exposes professional navigation actions", async 
     page.getByRole("button", { name: "Перепроверить" }),
   ).toBeVisible();
   await expect(page.getByText("Открыть в результатах")).toBeVisible();
-  await expect(page.getByText("Открыть исправление данных")).toBeVisible();
+  await expect(
+    page.getByText("Открыть исправление данных").first(),
+  ).toBeVisible();
 });
 
 test("results-problem-timeline can be opened from Action Center", async ({

@@ -8,7 +8,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.models.finance import WBRealizationReportRow
-from app.schemas.logistics import LogisticsDataSourceStatus, LogisticsWarehouseRow
+from app.schemas.logistics import (
+    LogisticsDataSourceStatus,
+    LogisticsProductRow,
+    LogisticsWarehouseRow,
+)
 from app.services.logistics import LogisticsService
 
 
@@ -430,4 +434,99 @@ def test_regional_shipments_use_region_sale_demand_without_local_sales() -> None
     assert shipments
     assert shipments[0].recommended_supply_qty == pytest.approx(60)
     assert shipments[0].region_sales_qty == pytest.approx(28)
-    assert "Region-sale" in shipments[0].reason
+    assert "Региональная аналитика" in shipments[0].reason
+
+
+@pytest.mark.asyncio
+async def test_shipment_planning_uses_stock_control_scope_and_exclusions() -> None:
+    service = LogisticsService()
+    service.stock_control_repo = SimpleNamespace(
+        latest_successful_run=AsyncMock(
+            return_value=SimpleNamespace(
+                id=44,
+                run_type="return_excess",
+                finished_at=None,
+                settings_snapshot_json={"excluded_regions_json": ["Центральный"]},
+                result_summary_json={"products": 1},
+            )
+        ),
+        list_region_rows=AsyncMock(
+            return_value=(
+                1,
+                [
+                    SimpleNamespace(
+                        id=1,
+                        region="Центральный",
+                        warehouse_name="Коледино",
+                        nm_id=1001,
+                        barcode="4601",
+                        vendor_code="SKU-1",
+                        chrt_id=None,
+                        current_stock_qty=3,
+                        target_stock_qty=11,
+                        delta_qty=8,
+                    )
+                ],
+            )
+        ),
+        list_movements=AsyncMock(
+            return_value=(
+                1,
+                [
+                    SimpleNamespace(
+                        id=5,
+                        movement_type="regional_redistribution",
+                        nm_id=1001,
+                        vendor_code="SKU-1",
+                        barcode="4601",
+                        size_name="M",
+                        donor_region="Южный",
+                        donor_warehouse="Тула",
+                        recipient_region="Центральный",
+                        recipient_warehouse="Коледино",
+                        quantity=8,
+                        priority="P1",
+                        reason_code="regional_shortage",
+                        business_explanation="Дефицит по региону.",
+                        confidence="high",
+                        status="new",
+                    )
+                ],
+            )
+        ),
+    )
+
+    planning = await service._shipment_planning(
+        SimpleNamespace(),  # type: ignore[arg-type]
+        account_id=1,
+        rows=[
+            LogisticsWarehouseRow(
+                warehouse_name="Коледино",
+                region_name="Центральный",
+                stock_units=3,
+                sales_qty=10,
+                revenue=1000,
+                acceptance_status="available",
+            )
+        ],
+        products=[
+            LogisticsProductRow(
+                id="product:kol:1001",
+                nm_id=1001,
+                vendor_code="SKU-1",
+                barcode="4601",
+                warehouse_name="Коледино",
+                region_name="Центральный",
+            )
+        ],
+        day_count=10,
+    )
+
+    assert planning.status == "stock_control"
+    assert planning.formula.title == "Формула контроля остатков"
+    assert planning.excluded_regions == ["Центральный"]
+    assert planning.regions[0].label == "Центральный"
+    assert planning.regions[0].enabled_by_default is False
+    assert planning.regions[0].shortage_qty == pytest.approx(8)
+    assert planning.warehouses[0].inbound_qty == pytest.approx(8)
+    assert planning.movements[0].quantity == pytest.approx(8)

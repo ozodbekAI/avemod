@@ -3773,7 +3773,6 @@ class DashboardService:
         revenue_without_cost = float(revenue_without_cost_decimal)
         revenue_with_real_cost_decimal = self._decimal(mart_revenue_stats[4])
         revenue_with_placeholder_cost_decimal = self._decimal(mart_revenue_stats[5])
-        revenue_with_real_cost = float(revenue_with_real_cost_decimal)
         revenue_with_placeholder_cost = float(revenue_with_placeholder_cost_decimal)
         revenue_with_supplier_confirmed_cost_decimal = revenue_with_real_cost_decimal
         revenue_with_supplier_confirmed_cost = float(
@@ -3783,7 +3782,6 @@ class DashboardService:
             Decimal("0"),
             revenue_with_cost_decimal - revenue_with_placeholder_cost_decimal,
         )
-        revenue_with_trusted_cost = float(revenue_with_trusted_cost_decimal)
         supplier_confirmed_revenue_coverage_percent = self._percent(
             revenue_with_supplier_confirmed_cost_decimal,
             revenue_with_cost_decimal + revenue_without_cost_decimal,

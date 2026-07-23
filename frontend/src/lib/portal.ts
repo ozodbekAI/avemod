@@ -269,6 +269,69 @@ export interface PortalManualTaskItemUpdatePayload {
   comment?: string | null;
 }
 
+export type PortalActionCenterCapabilityDetectStatus =
+  | "ready"
+  | "partial"
+  | "manual"
+  | "planned"
+  | "not_supported"
+  | string;
+
+export type PortalActionCenterCapabilityExecuteStatus =
+  | "ready"
+  | "preview_only"
+  | "manual"
+  | "missing_wb_write"
+  | "planned"
+  | "not_supported"
+  | string;
+
+export interface PortalActionCenterCapability {
+  key: string;
+  domain: string;
+  title: string;
+  description: string;
+  detect_status: PortalActionCenterCapabilityDetectStatus;
+  execute_status: PortalActionCenterCapabilityExecuteStatus;
+  executor_key?: string | null;
+  safe_write?: boolean;
+  confirm_required?: boolean;
+  required_token_categories?: string[];
+  problem_codes?: string[];
+  action_codes?: string[];
+  task_examples?: string[];
+  ui_route?: string | null;
+  jvo_reference_urls?: string[];
+  wb_connector_ids?: string[];
+  wb_api_endpoints?: string[];
+  wb_reference_urls?: string[];
+  wb_tracking_status?: string;
+  token_categories?: string[];
+  rate_limit_notes?: string[];
+  unknown_connector_ids?: string[];
+  implementation_gaps?: string[];
+  safety_requirements?: string[];
+  current_support_note?: string | null;
+}
+
+export interface PortalActionCenterCapabilityDomain {
+  key: string;
+  title: string;
+  description: string;
+  priority?: number;
+  icon?: string | null;
+  first_step?: string | null;
+  capabilities: PortalActionCenterCapability[];
+  jvo_reference_urls?: string[];
+}
+
+export interface PortalActionCenterCapabilities {
+  protocol: "action-center-capabilities-v1" | string;
+  domains: PortalActionCenterCapabilityDomain[];
+  summary?: Record<string, number>;
+  source_notes?: string[];
+}
+
 export type AllowedActionCode =
   | "create_task"
   | "assign"
@@ -710,6 +773,16 @@ export const fetchPortalActions = (
       ...(extra ?? {}),
     },
   });
+
+export const fetchActionCenterCapabilities = (
+  accountId: number | null | undefined,
+) =>
+  api<PortalActionCenterCapabilities>(
+    API_ENDPOINTS.portal.actionCenterCapabilities,
+    {
+      query: requireAcc(accountId),
+    },
+  );
 
 export async function fetchAllPortalActions(
   accountId: number | null | undefined,

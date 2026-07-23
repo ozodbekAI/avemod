@@ -6402,7 +6402,7 @@ class CardQualityAnalysisService:
         if card is None:
             raise ValueError("product_card_not_found")
         try:
-            token = await self.accounts.get_decrypted_token(
+            await self.accounts.get_decrypted_token(
                 session, account_id, WBAPICategory.CONTENT.value
             )
         except Exception as exc:

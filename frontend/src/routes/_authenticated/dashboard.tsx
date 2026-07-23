@@ -4963,7 +4963,7 @@ function buildSourceRows(
   health: DashboardDataHealth | undefined,
   model: ReturnType<typeof buildOwnerModel>,
 ) {
-  const domainRows = ((health?.domains ?? []) as any[]).map((domain) => ({
+  const domainRows = normalizeHealthDomains(health?.domains).map((domain) => ({
     raw: domain,
     name: String(domain?.domain ?? domain?.name ?? "").toLowerCase(),
     latestStatus: String(domain?.latest_status ?? "").toLowerCase(),
@@ -5092,6 +5092,17 @@ function buildSourceRows(
       ...status(["ads", "advert", "campaign"]),
     },
   ];
+}
+
+function normalizeHealthDomains(value: unknown): any[] {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value as Record<string, unknown>).map(
+    ([domain, raw]) =>
+      raw && typeof raw === "object" && !Array.isArray(raw)
+        ? { domain, ...(raw as Record<string, unknown>) }
+        : { domain, latest_status: raw },
+  );
 }
 
 function buildTrustMessage(

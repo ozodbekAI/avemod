@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import BigInteger, create_engine, select
+from sqlalchemy import BigInteger, create_engine
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from io import BytesIO
-from typing import Iterable
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse

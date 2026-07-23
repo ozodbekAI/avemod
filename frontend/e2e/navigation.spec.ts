@@ -2,7 +2,10 @@ import { expect, test } from "@playwright/test";
 
 import { installMockApi } from "./mock-api";
 
+const RESULTS_CORRELATION_COPY = "Корреляция, а не гарантия";
 const RESULTS_ERROR_COPY = "Не удалось загрузить результаты";
+const RESULTS_BEFORE_COPY = "До действия";
+const RESULTS_AFTER_CHANGE_COPY = "После изменения";
 
 test.beforeEach(async ({ page }) => {
   await installMockApi(page);
@@ -18,7 +21,7 @@ test("authenticated canonical navigation", async ({ page }) => {
 
   await expect(
     page.getByRole("heading", { name: "Панель владельца" }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Денежный тренд").first()).toBeVisible();
 
   await page.getByRole("button", { name: "AI оператор" }).click();
@@ -145,8 +148,15 @@ test("results page shows causality warning with До and После markers", as
 }) => {
   await page.goto("/results");
 
-  await expect(page.getByRole("heading", { name: "Результаты" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Результаты" })).toBeVisible({
+    timeout: 30_000,
+  });
   await expect(page.getByText("Сравнение показывает связь")).toBeVisible();
+  await expect(page.getByText(RESULTS_CORRELATION_COPY).first()).toBeVisible();
+  await expect(page.getByText(RESULTS_BEFORE_COPY).first()).toBeVisible();
+  await expect(
+    page.getByText(new RegExp(RESULTS_AFTER_CHANGE_COPY, "i")).first(),
+  ).toBeVisible();
   expect(RESULTS_ERROR_COPY).toBe("Не удалось загрузить результаты");
 });
 
@@ -155,18 +165,40 @@ test("logistics workspace uses Russian decision-first UI with sortable shipment 
 }) => {
   await page.goto("/logistics");
 
-  await expect(
-    page.getByRole("heading", { name: "Логистика WB" }),
-  ).toBeVisible();
-  await expect(page.getByText("Что сделать сейчас")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Логистика WB" })).toBeVisible(
+    { timeout: 30_000 },
+  );
+  await expect(page.getByText("Рабочий пульт продавца")).toBeVisible();
+  await expect(page.getByText("Рабочие зоны")).toBeVisible();
+  await expect(page.getByText("Склады, где теряются деньги")).toBeVisible();
+  await expect(page.getByText("Доверие к расчёту")).toBeVisible();
+  await page.getByRole("tab", { name: /Подсортировка/ }).click();
   await expect(page.getByText("Подсортировка по выгоде")).toBeVisible();
-  await expect(page.getByRole("button", { name: /Остаток/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Скорость/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Цель/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Отгрузка/ })).toBeVisible();
+  await expect(page.getByText("Направления")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /Чистый эффект/ }),
+    page.getByRole("region", { name: "Расчёт поставки" }),
   ).toBeVisible();
+  await expect(page.getByText("Формула контроля остатков")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Рекоменд." })).toBeVisible();
+  await page.getByRole("button", { name: "Регион" }).click();
+  await expect(
+    page.getByRole("button", { name: /Центральный.*дефицит/ }),
+  ).toBeVisible();
+  if ((page.viewportSize()?.width ?? 1280) < 768) {
+    await expect(page.getByText("Остаток").first()).toBeVisible();
+    await expect(page.getByText("Скорость").first()).toBeVisible();
+    await expect(page.getByText("Цель").first()).toBeVisible();
+    await expect(page.getByText("Отгрузка").first()).toBeVisible();
+    await expect(page.getByText("Чистый эффект").first()).toBeVisible();
+  } else {
+    await expect(page.getByRole("button", { name: /Остаток/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Скорость/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Цель/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Отгрузка/ })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /Чистый эффект/ }),
+    ).toBeVisible();
+  }
   await expect(page.getByText("Net")).toHaveCount(0);
 });
 

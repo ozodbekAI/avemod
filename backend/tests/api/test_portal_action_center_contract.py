@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -321,6 +320,45 @@ def test_action_center_get_requires_authorized_account_access(action_center_serv
         app.dependency_overrides.clear()
 
     assert response.status_code == 403
+
+
+def test_action_center_capabilities_returns_jvo_like_contract() -> None:
+    _install_overrides(user=_normal_user(), allowed_account_ids={1}, roles={1: "viewer"})
+    try:
+        with TestClient(app) as client:
+            response = client.get("/api/v1/portal/action-center/capabilities?account_id=1")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["protocol"] == "action-center-capabilities-v1"
+    assert payload["summary"]["execute_missing_wb_write"] >= 2
+    domains = {domain["key"]: domain for domain in payload["domains"]}
+    assert {"data_blockers", "price", "ads_promo", "manual_tasks"}.issubset(domains)
+    assert any(
+        capability["key"] == "wb_price_discount_write"
+        and capability["execute_status"] == "missing_wb_write"
+        for capability in domains["price"]["capabilities"]
+    )
+    price_write = next(
+        capability
+        for capability in domains["price"]["capabilities"]
+        if capability["key"] == "wb_price_discount_write"
+    )
+    assert price_write["wb_tracking_status"] == "write_gap"
+    assert (
+        "https://discounts-prices-api.wildberries.ru/api/v2/upload/task"
+        in price_write["wb_api_endpoints"]
+    )
+    assert price_write["implementation_gaps"]
+    card_text = next(
+        capability
+        for capability in domains["card_quality"]["capabilities"]
+        if capability["key"] == "card_text_inline_fix"
+    )
+    assert card_text["wb_tracking_status"] == "tracked"
+    assert "product_cards.update_card" in card_text["wb_connector_ids"]
 
 
 def test_action_center_get_returns_stable_contract_and_default_mvp_scope(action_center_service) -> None:

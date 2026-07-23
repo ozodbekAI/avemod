@@ -286,6 +286,7 @@ def build_checker_problem_bridge(
         "problem_code": code,
         "detector_code": code,
         "issue_code": code,
+        "title": title,
         "category": category,
         "field_path": field_name,
         "field_name": field_name,

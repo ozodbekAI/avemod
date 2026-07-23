@@ -319,9 +319,6 @@ class CheckerAdapter:
             "score_impact": self._int(issue.get("score_impact")) or 0,
             "status": issue.get("status"),
             "requires_human_check": bool(issue.get("requires_human_check")),
-            "photo_evidence": issue.get("photo_evidence")
-            if isinstance(issue.get("photo_evidence"), list)
-            else [],
         }
 
     def _action_from_issue(

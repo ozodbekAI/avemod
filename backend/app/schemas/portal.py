@@ -80,6 +80,7 @@ SAFE_SECRET_FIELD_NAMES = {
     "configured_token_categories",
     "missing_token_categories",
     "required_token_categories",
+    "token_categories",
     "token_category",
     "token_configured",
     "token_ok",
@@ -2803,9 +2804,7 @@ class PortalActionRead(PortalBaseModel):
             return "read_only_signal" if not self.can_update else "missing_evidence"
         formula_code = str(self.evidence_ledger.formula_code or "")
         formula_human = str(self.evidence_ledger.formula_human or "")
-        synthetic = bool(self.evidence_ledger.is_synthetic) or formula_code.startswith(
-            "portal_action."
-        )
+        synthetic = bool(self.evidence_ledger.is_synthetic) or formula_code.startswith("portal_action.")
         has_formula = bool(
             formula_human.strip()
             or formula_code.strip()
@@ -2832,6 +2831,71 @@ class PortalActionsPage(PortalBaseModel):
     offset: int
     items: list[PortalActionRead]
     unavailable_sources: list[str] = Field(default_factory=list)
+
+
+ActionCenterCapabilityDetectStatus = Literal[
+    "ready",
+    "partial",
+    "manual",
+    "planned",
+    "not_supported",
+]
+ActionCenterCapabilityExecuteStatus = Literal[
+    "ready",
+    "preview_only",
+    "manual",
+    "missing_wb_write",
+    "planned",
+    "not_supported",
+]
+
+
+class PortalActionCenterCapabilityRead(PortalBaseModel):
+    key: str
+    domain: str
+    title: str
+    description: str
+    detect_status: ActionCenterCapabilityDetectStatus = "planned"
+    execute_status: ActionCenterCapabilityExecuteStatus = "planned"
+    executor_key: str | None = None
+    safe_write: bool = False
+    confirm_required: bool = True
+    required_token_categories: list[str] = Field(default_factory=list)
+    problem_codes: list[str] = Field(default_factory=list)
+    action_codes: list[str] = Field(default_factory=list)
+    task_examples: list[str] = Field(default_factory=list)
+    ui_route: str | None = None
+    jvo_reference_urls: list[str] = Field(default_factory=list)
+    wb_connector_ids: list[str] = Field(default_factory=list)
+    wb_api_endpoints: list[str] = Field(default_factory=list)
+    wb_reference_urls: list[str] = Field(default_factory=list)
+    wb_tracking_status: str = "partial"
+    token_categories: list[str] = Field(default_factory=list)
+    rate_limit_notes: list[str] = Field(default_factory=list)
+    unknown_connector_ids: list[str] = Field(default_factory=list)
+    implementation_gaps: list[str] = Field(default_factory=list)
+    safety_requirements: list[str] = Field(default_factory=list)
+    current_support_note: str | None = None
+
+
+class PortalActionCenterDomainRead(PortalBaseModel):
+    key: str
+    title: str
+    description: str
+    priority: int = 0
+    icon: str | None = None
+    first_step: str | None = None
+    capabilities: list[PortalActionCenterCapabilityRead] = Field(default_factory=list)
+    jvo_reference_urls: list[str] = Field(default_factory=list)
+
+
+class PortalActionCenterCapabilitiesRead(PortalBaseModel):
+    protocol: Literal["action-center-capabilities-v1"] = (
+        "action-center-capabilities-v1"
+    )
+    domains: list[PortalActionCenterDomainRead] = Field(default_factory=list)
+    summary: dict[str, int] = Field(default_factory=dict)
+    source_notes: list[str] = Field(default_factory=list)
 
 
 class PortalAssignableUserRead(PortalBaseModel):

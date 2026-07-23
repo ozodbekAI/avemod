@@ -12,7 +12,6 @@ from app.schemas.dashboard import ArticleManualCostMatch, SKUProfitabilityRow
 
 
 def test_profit_formula_shape() -> None:
-    service = DashboardService()
     bucket = {
         "for_pay": Decimal("100"),
         "acquiring_fee": Decimal("5"),

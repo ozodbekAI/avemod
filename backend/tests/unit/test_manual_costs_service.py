@@ -47,7 +47,6 @@ def test_parse_csv_cost_file() -> None:
         "vendorCode,unitCost,nmId,barcode,techSize,currency,validFrom,validTo,comment\n"
         "SKU-1,123.45,1001,460000000001,42,RUB,2026-05-01,2026-06-01,test row\n"
     ).encode("utf-8")
-    file = UploadFile(filename="costs.csv", file=io.BytesIO(payload))
 
     rows = service._parse_csv(payload)
 

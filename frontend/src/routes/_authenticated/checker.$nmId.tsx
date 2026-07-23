@@ -52,7 +52,7 @@ import {
   fetchAssignableUsers,
   markCardQualityIssueFixed,
   recheckCardQualityIssue,
-  recheckProductCardQuality,
+  analyzeProductCardQuality,
 } from "@/lib/portal";
 import { EndpointError } from "@/components/EndpointError";
 import { NoAccountSelected } from "@/components/portal/NoAccountSelected";
@@ -628,7 +628,7 @@ function CheckerProductPage() {
 
   const analyzeMutation = useMutation({
     mutationFn: (force: boolean) =>
-      recheckProductCardQuality(nmId, activeId, { force }),
+      analyzeProductCardQuality(nmId, activeId, { force }),
     onSuccess: () => {
       toast.success("Перепроверка карточки выполнена, результат записан");
       invalidateChecker();

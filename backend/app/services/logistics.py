@@ -10,9 +10,14 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.current_state import orders_current_subquery, sales_current_subquery
 from app.core.time import utcnow
+from app.domain.stock_control.regions import (
+    normalize_excluded_regions,
+    normalize_region,
+)
 from app.models.analytics import WBRegionSalesDaily
 from app.models.finance import WBRealizationReport, WBRealizationReportRow
 from app.models.logistics import (
@@ -28,6 +33,7 @@ from app.models.sales import WBSale
 from app.models.stocks import WBStockSnapshot, WBStockSnapshotRow
 from app.models.supplies import WBSupply, WBSupplyGood
 from app.models.tariffs import WBTariffAcceptance, WBTariffBox
+from app.repositories.stock_control import StockControlRepository
 from app.schemas.logistics import (
     LogisticsAcceptanceDetailRow,
     LogisticsApiCapability,
@@ -40,6 +46,10 @@ from app.schemas.logistics import (
     LogisticsRecommendation,
     LogisticsRegionalShipmentRow,
     LogisticsSellerWarehouseRow,
+    LogisticsShipmentFormulaRead,
+    LogisticsShipmentMovementRow,
+    LogisticsShipmentPlanningRead,
+    LogisticsShipmentScopeOption,
     LogisticsSupplyRow,
     LogisticsTaskRow,
     LogisticsTransitTariffRow,
@@ -72,6 +82,9 @@ TARIFF_FRESHNESS_DAYS = 2
 
 
 class LogisticsService:
+    def __init__(self) -> None:
+        self.stock_control_repo = StockControlRepository()
+
     async def overview(
         self,
         session: AsyncSession,
@@ -238,6 +251,13 @@ class LogisticsService:
             filtered_rows, day_count=day_count
         )
         warehouse_controls = self._warehouse_controls(filtered_rows, tasks)
+        shipment_planning = await self._shipment_planning(
+            session,
+            account_id=account_id,
+            rows=filtered_rows,
+            products=products,
+            day_count=day_count,
+        )
         paid_storage_details = await self._paid_storage_details(
             session, account_id=account_id, start=start, end=end, limit=80
         )
@@ -272,6 +292,7 @@ class LogisticsService:
             acceptance_details=acceptance_details,
             transit_tariffs=transit_tariffs,
             seller_warehouses=seller_warehouses,
+            shipment_planning=shipment_planning,
             data_sources=data_sources,
             api_capabilities=self._api_capabilities(),
             recommendations=recommendations,
@@ -1837,7 +1858,7 @@ class LogisticsService:
     ) -> list[str]:
         tags = []
         if stock_units <= 0:
-            tags.append("OOS")
+            tags.append("нет остатка")
         if turnover_days is not None and turnover_days < OOS_FAST_DAYS:
             tags.append("14 дней")
         if turnover_days is not None and turnover_days < OOS_PLANNING_DAYS:
@@ -2701,7 +2722,7 @@ class LogisticsService:
                     or 0
                 )
         stock_status = "ok" if stock_rows else "empty"
-        stock_note = None if stock_rows else "Нет свежего warehouse remains snapshot."
+        stock_note = None if stock_rows else "Нет свежей выгрузки остатков по складам."
         if latest_stock_at is not None:
             stock_age_days = (
                 utcnow().astimezone(MOSCOW_TZ).date()
@@ -2709,7 +2730,7 @@ class LogisticsService:
             ).days
             if stock_age_days > STOCK_FRESHNESS_DAYS:
                 stock_status = "stale"
-                stock_note = "Остатки устарели: обновите warehouse remains snapshot."
+                stock_note = "Остатки устарели: обновите выгрузку остатков по складам."
         result.insert(
             2,
             LogisticsDataSourceStatus(
@@ -2811,7 +2832,7 @@ class LogisticsService:
                         row,
                         task_type="oos_fast",
                         severity="danger",
-                        title=f"OOS на складе {row.warehouse_name}",
+                        title=f"Нет остатка на складе {row.warehouse_name}",
                         detail=(
                             "Товар закончился на складе: карточка теряет скорость "
                             "доставки, показы и заказы в этом регионе."
@@ -2829,7 +2850,7 @@ class LogisticsService:
                         potential_revenue=max(
                             row.missed_revenue, avg_order_value * max(supply_14, 1)
                         ),
-                        tags=["OOS", "14 дней", "критично"],
+                        tags=["нет остатка", "14 дней", "критично"],
                     )
                 )
             elif stockout_in_days is not None and stockout_in_days < OOS_FAST_DAYS:
@@ -2841,7 +2862,7 @@ class LogisticsService:
                         title=f"Запас на {stockout_in_days:.0f} дн.: {row.warehouse_name}",
                         detail=(
                             "Запас заканчивается быстрее логистического плеча. "
-                            "Если не довезти товар, склад попадёт в OOS."
+                            "Если не довезти товар, склад уйдёт в дефицит."
                         ),
                         action="Довезите товар до покрытия минимум на 14 дней.",
                         forecast_days=OOS_FAST_DAYS,
@@ -2853,7 +2874,7 @@ class LogisticsService:
                         potential_revenue=max(
                             row.missed_revenue, avg_order_value * max(supply_14, 1)
                         ),
-                        tags=["near OOS", "14 дней"],
+                        tags=["риск дефицита", "14 дней"],
                     )
                 )
             elif stockout_in_days is not None and stockout_in_days < OOS_PLANNING_DAYS:
@@ -2862,7 +2883,7 @@ class LogisticsService:
                         row,
                         task_type="oos_planning",
                         severity="watch",
-                        title=f"OOS прогноз на 30 дней: {row.warehouse_name}",
+                        title=f"Риск дефицита на 30 дней: {row.warehouse_name}",
                         detail=(
                             "Остатка хватает меньше чем на месяц. Это ранний "
                             "сигнал для плановой поставки."
@@ -2873,7 +2894,7 @@ class LogisticsService:
                         recommended_supply_qty=supply_30,
                         potential_orders_qty=avg_daily_sales * 14,
                         potential_revenue=avg_order_value * max(supply_30, 1),
-                        tags=["OOS forecast", "30 дней"],
+                        tags=["прогноз дефицита", "30 дней"],
                     )
                 )
 
@@ -2888,7 +2909,7 @@ class LogisticsService:
                         title=f"Упущенные заказы: {row.warehouse_name}",
                         detail=(
                             f"За период потеряно {row.missed_orders_qty:.0f} заказов. "
-                            "Это может быть OOS, закрытая приёмка или слабое покрытие региона."
+                            "Это может быть дефицит, закрытая приёмка или слабое покрытие региона."
                         ),
                         action="Сверьте остаток, приёмку и цену доставки; затем сформируйте поставку.",
                         forecast_days=OOS_FAST_DAYS,
@@ -2944,7 +2965,7 @@ class LogisticsService:
                         title=f"Выкуп просел: {row.warehouse_name}",
                         detail=(
                             f"Выкуп {row.buyout_percent:.1f}% ниже безопасного уровня. "
-                            "Проверьте OOS по складам, цену, отзывы и упаковку."
+                            "Проверьте дефицит по складам, цену, отзывы и упаковку."
                         ),
                         action="Откройте анализ причин и устраните факторы до новой поставки.",
                         buyout_percent=row.buyout_percent,
@@ -3165,6 +3186,436 @@ class LogisticsService:
         )
         return result
 
+    async def _shipment_planning(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+        rows: list[LogisticsWarehouseRow],
+        products: list[LogisticsProductRow],
+        day_count: int,
+    ) -> LogisticsShipmentPlanningRead:
+        region_stats, warehouse_stats = self._base_shipment_scope_stats(
+            rows, products, day_count=day_count
+        )
+        fallback = self._shipment_planning_read(
+            status="fallback",
+            source="logistics",
+            title="Логистическая формула",
+            detail=(
+                "Цель = средняя скорость продаж за период × горизонт запаса; "
+                "отгрузка = максимум(цель - текущий остаток, 0)."
+            ),
+            region_stats=region_stats,
+            warehouse_stats=warehouse_stats,
+            excluded_regions=[],
+            movements=[],
+            run=None,
+            summary={
+                "regions": len(region_stats),
+                "warehouses": len(warehouse_stats),
+                "products": len(products),
+                "formula_source": "logistics",
+            },
+        )
+        if session is None:
+            return fallback
+
+        try:
+            run = await self.stock_control_repo.latest_successful_run(
+                session, account_id=account_id
+            )
+            if run is None:
+                return fallback
+            (
+                _region_total,
+                stock_region_rows,
+            ) = await self.stock_control_repo.list_region_rows(
+                session,
+                account_id=account_id,
+                run_id=run.id,
+                limit=2_000,
+                offset=0,
+            )
+            (
+                _movement_total,
+                movement_rows,
+            ) = await self.stock_control_repo.list_movements(
+                session,
+                account_id=account_id,
+                run_id=run.id,
+                limit=300,
+                offset=0,
+            )
+        except SQLAlchemyError:
+            fallback.formula.warning = (
+                "Расчёт контроля остатков временно недоступен; показана резервная "
+                "логистическая формула."
+            )
+            return fallback
+
+        settings = dict(run.settings_snapshot_json or {})
+        excluded_regions = sorted(
+            normalize_excluded_regions(settings.get("excluded_regions_json") or [])
+        )
+        excluded_region_keys = {self._region_key(region) for region in excluded_regions}
+        for item in stock_region_rows:
+            region_label = normalize_region(item.region)
+            product_key = self._stock_control_product_key(item)
+            region_stat = region_stats[region_label]
+            region_stat["label"] = region_label
+            region_stat["region_name"] = region_label
+            self._add_stock_control_delta(region_stat, item, product_key)
+            if item.warehouse_name:
+                warehouse_label = self._warehouse_key(item.warehouse_name)
+                warehouse_stat = warehouse_stats[warehouse_label]
+                warehouse_stat["label"] = warehouse_label
+                warehouse_stat["warehouse_name"] = warehouse_label
+                warehouse_stat["region_name"] = (
+                    warehouse_stat.get("region_name") or region_label
+                )
+                self._add_stock_control_delta(warehouse_stat, item, product_key)
+
+        movement_reads: list[LogisticsShipmentMovementRow] = []
+        for item in movement_rows:
+            qty = self._float(item.quantity)
+            if item.recipient_region:
+                region_label = normalize_region(item.recipient_region)
+                region_stats[region_label]["inbound_qty"] += qty
+            if item.donor_region:
+                region_label = normalize_region(item.donor_region)
+                region_stats[region_label]["outbound_qty"] += qty
+            if item.recipient_warehouse:
+                warehouse_stats[self._warehouse_key(item.recipient_warehouse)][
+                    "inbound_qty"
+                ] += qty
+            if item.donor_warehouse:
+                warehouse_stats[self._warehouse_key(item.donor_warehouse)][
+                    "outbound_qty"
+                ] += qty
+            movement_reads.append(
+                LogisticsShipmentMovementRow(
+                    id=int(item.id),
+                    movement_type=item.movement_type,
+                    nm_id=item.nm_id,
+                    vendor_code=item.vendor_code,
+                    barcode=item.barcode,
+                    size_name=item.size_name,
+                    donor_region=item.donor_region,
+                    donor_warehouse=item.donor_warehouse,
+                    recipient_region=item.recipient_region,
+                    recipient_warehouse=item.recipient_warehouse,
+                    quantity=qty,
+                    priority=item.priority,
+                    reason_code=item.reason_code,
+                    business_explanation=item.business_explanation,
+                    confidence=item.confidence,
+                    status=item.status,
+                )
+            )
+
+        for stats in (*region_stats.values(), *warehouse_stats.values()):
+            region_name = stats.get("region_name") or stats.get("label")
+            if self._region_key(region_name) in excluded_region_keys:
+                stats["enabled_by_default"] = False
+                stats["disabled_reason"] = (
+                    "Регион исключён в настройках контроля остатков."
+                )
+
+        summary = {
+            **dict(run.result_summary_json or {}),
+            "regions": len(region_stats),
+            "warehouses": len(warehouse_stats),
+            "movements": len(movement_reads),
+            "formula_source": "stock_control",
+        }
+        planning = self._shipment_planning_read(
+            status="stock_control" if stock_region_rows else "fallback",
+            source="stock_control" if stock_region_rows else "logistics",
+            title="Формула контроля остатков"
+            if stock_region_rows
+            else "Логистическая формула",
+            detail=(
+                "Цель = общий остаток SKU × доля спроса региона; дельта = "
+                "цель - текущий остаток. Положительная дельта идёт в отгрузку, "
+                "отрицательная дельта показывает излишек и донора для переноса."
+            )
+            if stock_region_rows
+            else fallback.formula.detail,
+            region_stats=region_stats,
+            warehouse_stats=warehouse_stats,
+            excluded_regions=excluded_regions,
+            movements=movement_reads,
+            run=run,
+            summary=summary,
+        )
+        if not stock_region_rows:
+            planning.formula.warning = (
+                "Последний расчёт контроля остатков найден, но строк по регионам нет; "
+                "используется резервный расчёт логистики."
+            )
+        return planning
+
+    def _base_shipment_scope_stats(
+        self,
+        rows: list[LogisticsWarehouseRow],
+        products: list[LogisticsProductRow],
+        *,
+        day_count: int,
+    ) -> tuple[defaultdict[str, dict[str, Any]], defaultdict[str, dict[str, Any]]]:
+        region_stats: defaultdict[str, dict[str, Any]] = defaultdict(
+            self._empty_shipment_scope_stats
+        )
+        warehouse_stats: defaultdict[str, dict[str, Any]] = defaultdict(
+            self._empty_shipment_scope_stats
+        )
+        for row in rows:
+            region_label = row.region_name or "Регион не определён"
+            warehouse_label = row.warehouse_name
+            recommended_qty = self._recommended_supply(
+                row, OOS_PLANNING_DAYS, day_count
+            )
+            for stats, label, scope_type in (
+                (region_stats[region_label], region_label, "region"),
+                (warehouse_stats[warehouse_label], warehouse_label, "warehouse"),
+            ):
+                stats["label"] = label
+                stats["scope_type"] = scope_type
+                stats["region_name"] = region_label
+                if scope_type == "warehouse":
+                    stats["warehouse_name"] = warehouse_label
+                    stats["warehouse_id"] = row.warehouse_id
+                    stats["acceptance_status"] = row.acceptance_status
+                    if row.acceptance_status == "closed":
+                        stats["enabled_by_default"] = False
+                        stats["disabled_reason"] = (
+                            "Приёмка закрыта: склад лучше включать только вручную."
+                        )
+                stats["stock_units"] += row.stock_units
+                stats["fallback_current_stock_qty"] += row.stock_units
+                stats["fallback_target_stock_qty"] += row.stock_units + recommended_qty
+                stats["fallback_delta_qty"] += recommended_qty
+                stats["fallback_shortage_qty"] += recommended_qty
+                stats["sales_qty"] += row.sales_qty
+                stats["revenue"] += row.revenue
+                stats["risk_level"] = self._worst_risk(
+                    str(stats.get("risk_level") or "ok"), row.risk_level
+                )
+        for product in products:
+            product_key = product.id
+            region_label = product.region_name or "Регион не определён"
+            warehouse_label = product.warehouse_name
+            region_stats[region_label]["product_keys"].add(product_key)
+            warehouse_stats[warehouse_label]["product_keys"].add(product_key)
+        return region_stats, warehouse_stats
+
+    @staticmethod
+    def _empty_shipment_scope_stats() -> dict[str, Any]:
+        return {
+            "label": "",
+            "scope_type": "",
+            "region_name": None,
+            "warehouse_id": None,
+            "warehouse_name": None,
+            "enabled_by_default": True,
+            "disabled_reason": None,
+            "risk_level": "ok",
+            "acceptance_status": None,
+            "stock_units": 0.0,
+            "fallback_current_stock_qty": 0.0,
+            "fallback_target_stock_qty": 0.0,
+            "fallback_delta_qty": 0.0,
+            "fallback_shortage_qty": 0.0,
+            "fallback_excess_qty": 0.0,
+            "stock_control_current_stock_qty": 0.0,
+            "stock_control_target_stock_qty": 0.0,
+            "stock_control_delta_qty": 0.0,
+            "stock_control_shortage_qty": 0.0,
+            "stock_control_excess_qty": 0.0,
+            "inbound_qty": 0.0,
+            "outbound_qty": 0.0,
+            "sales_qty": 0.0,
+            "revenue": 0.0,
+            "product_keys": set(),
+            "stock_control_product_keys": set(),
+        }
+
+    def _add_stock_control_delta(
+        self,
+        stats: dict[str, Any],
+        item: Any,
+        product_key: str,
+    ) -> None:
+        current = self._float(item.current_stock_qty)
+        target = self._float(item.target_stock_qty)
+        delta = self._float(item.delta_qty)
+        stats["stock_control_current_stock_qty"] += current
+        stats["stock_control_target_stock_qty"] += target
+        stats["stock_control_delta_qty"] += delta
+        stats["stock_control_shortage_qty"] += max(delta, 0)
+        stats["stock_control_excess_qty"] += max(-delta, 0)
+        stats["stock_control_product_keys"].add(product_key)
+
+    def _shipment_planning_read(
+        self,
+        *,
+        status: str,
+        source: str,
+        title: str,
+        detail: str,
+        region_stats: dict[str, dict[str, Any]],
+        warehouse_stats: dict[str, dict[str, Any]],
+        excluded_regions: list[str],
+        movements: list[LogisticsShipmentMovementRow],
+        run: Any | None,
+        summary: dict[str, Any],
+    ) -> LogisticsShipmentPlanningRead:
+        return LogisticsShipmentPlanningRead(
+            status=status,
+            formula=LogisticsShipmentFormulaRead(
+                source=source,
+                title=title,
+                detail=detail,
+                latest_run_id=int(run.id) if run is not None else None,
+                latest_run_type=run.run_type if run is not None else None,
+                latest_run_finished_at=run.finished_at if run is not None else None,
+            ),
+            regions=[
+                self._shipment_scope_option(stats, "region")
+                for stats in sorted(
+                    region_stats.values(),
+                    key=lambda item: (
+                        not bool(item.get("enabled_by_default", True)),
+                        -self._scope_shortage(item),
+                        str(item.get("label") or ""),
+                    ),
+                )
+                if stats.get("label")
+            ],
+            warehouses=[
+                self._shipment_scope_option(stats, "warehouse")
+                for stats in sorted(
+                    warehouse_stats.values(),
+                    key=lambda item: (
+                        not bool(item.get("enabled_by_default", True)),
+                        self._risk_sort(str(item.get("risk_level") or "ok")),
+                        -self._scope_shortage(item),
+                        str(item.get("label") or ""),
+                    ),
+                )
+                if stats.get("label")
+            ],
+            movements=movements,
+            excluded_regions=excluded_regions,
+            source_run_id=int(run.id) if run is not None else None,
+            source_run_type=run.run_type if run is not None else None,
+            source_run_finished_at=run.finished_at if run is not None else None,
+            summary=summary,
+        )
+
+    def _shipment_scope_option(
+        self, stats: dict[str, Any], scope_type: str
+    ) -> LogisticsShipmentScopeOption:
+        has_stock_control = bool(stats.get("stock_control_product_keys"))
+        prefix = "region" if scope_type == "region" else "warehouse"
+        label = str(stats.get("label") or "")
+        current_stock = self._scope_value(
+            stats, "current_stock_qty", has_stock_control=has_stock_control
+        )
+        target_stock = self._scope_value(
+            stats, "target_stock_qty", has_stock_control=has_stock_control
+        )
+        delta_qty = self._scope_value(
+            stats, "delta_qty", has_stock_control=has_stock_control
+        )
+        shortage_qty = self._scope_value(
+            stats, "shortage_qty", has_stock_control=has_stock_control
+        )
+        excess_qty = self._scope_value(
+            stats, "excess_qty", has_stock_control=has_stock_control
+        )
+        reason = stats.get("disabled_reason") or self._shipment_scope_reason(
+            shortage_qty=shortage_qty,
+            excess_qty=excess_qty,
+            inbound_qty=self._float(stats.get("inbound_qty")),
+            source="контроль остатков" if has_stock_control else "логистика",
+        )
+        product_keys = stats.get("stock_control_product_keys") or stats.get(
+            "product_keys"
+        )
+        return LogisticsShipmentScopeOption(
+            key=f"{prefix}:{self._slug(label)}",
+            label=label,
+            scope_type=scope_type,
+            region_name=stats.get("region_name"),
+            warehouse_id=stats.get("warehouse_id"),
+            warehouse_name=stats.get("warehouse_name"),
+            enabled_by_default=bool(stats.get("enabled_by_default", True)),
+            selectable=True,
+            reason=reason,
+            risk_level=str(stats.get("risk_level") or "ok"),
+            acceptance_status=stats.get("acceptance_status"),
+            stock_units=self._float(stats.get("stock_units")),
+            current_stock_qty=current_stock,
+            target_stock_qty=target_stock,
+            delta_qty=delta_qty,
+            shortage_qty=shortage_qty,
+            excess_qty=excess_qty,
+            inbound_qty=self._float(stats.get("inbound_qty")),
+            outbound_qty=self._float(stats.get("outbound_qty")),
+            sales_qty=self._float(stats.get("sales_qty")),
+            revenue=self._float(stats.get("revenue")),
+            product_count=len(product_keys or []),
+        )
+
+    @staticmethod
+    def _scope_value(
+        stats: dict[str, Any],
+        suffix: str,
+        *,
+        has_stock_control: bool,
+    ) -> float:
+        prefix = "stock_control" if has_stock_control else "fallback"
+        return LogisticsService._float(stats.get(f"{prefix}_{suffix}"))
+
+    @staticmethod
+    def _scope_shortage(stats: dict[str, Any]) -> float:
+        if stats.get("stock_control_product_keys"):
+            return LogisticsService._float(stats.get("stock_control_shortage_qty"))
+        return LogisticsService._float(stats.get("fallback_shortage_qty"))
+
+    @staticmethod
+    def _stock_control_product_key(item: Any) -> str:
+        for value in (item.nm_id, item.barcode, item.vendor_code, item.chrt_id):
+            if value:
+                return str(value)
+        return str(item.id)
+
+    @staticmethod
+    def _shipment_scope_reason(
+        *,
+        shortage_qty: float,
+        excess_qty: float,
+        inbound_qty: float,
+        source: str,
+    ) -> str:
+        if shortage_qty > 0:
+            return f"{source}: дефицит {shortage_qty:.0f} шт. для ближайшей поставки."
+        if inbound_qty > 0:
+            return f"{source}: уже есть входящее движение {inbound_qty:.0f} шт."
+        if excess_qty > 0:
+            return f"{source}: излишек {excess_qty:.0f} шт.; новые поставки не нужны."
+        return (
+            f"{source}: можно включить вручную, если магазин работает с направлением."
+        )
+
+    def _worst_risk(self, current: str, incoming: str) -> str:
+        return (
+            incoming
+            if self._risk_sort(incoming) < self._risk_sort(current)
+            else current
+        )
+
     def _task(
         self,
         row: LogisticsWarehouseRow,
@@ -3262,7 +3713,7 @@ class LogisticsService:
         if row.stock_units <= 0 or (
             row.turnover_days is not None and row.turnover_days < 14
         ):
-            tags.append("OOS")
+            tags.append("нет остатка")
         if (
             row.logistics_share_percent is not None
             and row.logistics_share_percent >= 20
@@ -3282,7 +3733,7 @@ class LogisticsService:
             )
         if row.region_sales_qty:
             return (
-                f"Region-sale показывает спрос {row.region_sales_qty:.0f} шт. "
+                f"Региональная аналитика показывает спрос {row.region_sales_qty:.0f} шт. "
                 f"за период, доля региона {row.region_sales_share_percent or 0:.1f}%."
             )
         if row.turnover_days is not None and row.turnover_days < OOS_PLANNING_DAYS:

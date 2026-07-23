@@ -99,6 +99,7 @@ from app.schemas.photo import (
     PhotoWBImportOut,
 )
 from app.schemas.portal import (
+    PortalActionCenterCapabilitiesRead,
     PortalActionRead,
     PortalActionsPage,
     PortalActionSourceUpdateRequest,
@@ -712,6 +713,24 @@ async def portal_data_sync_status(
         session, current_user, account_id=account_id
     )
     return await service.data_sync_status(session, account_id=account.id)
+
+
+@router.get(
+    "/portal/action-center/capabilities",
+    response_model=PortalActionCenterCapabilitiesRead,
+)
+async def portal_action_center_capabilities(
+    account_id: int = Query(...),
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> PortalActionCenterCapabilitiesRead:
+    account = await _required_portal_account_for_role(
+        session,
+        current_user,
+        account_id=account_id,
+        minimum_role="viewer",
+    )
+    return await service.action_center_capabilities(session, account_id=account.id)
 
 
 @router.get("/portal/actions", response_model=PortalActionsPage)

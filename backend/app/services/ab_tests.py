@@ -1326,7 +1326,7 @@ class ABTestService:
             if not local_candidate.exists() or not local_candidate.is_file():
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Cannot download photo variant: local file not found",
+                    detail="Cannot download photo variant: local file not found",
                 )
             return (
                 local_candidate.read_bytes(),

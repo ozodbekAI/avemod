@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -295,6 +296,73 @@ class LogisticsSellerWarehouseRow(BaseModel):
     latest_stock_at: datetime | None = None
 
 
+class LogisticsShipmentScopeOption(BaseModel):
+    key: str
+    label: str
+    scope_type: str
+    region_name: str | None = None
+    warehouse_id: int | None = None
+    warehouse_name: str | None = None
+    enabled_by_default: bool = True
+    selectable: bool = True
+    reason: str | None = None
+    risk_level: str = "ok"
+    acceptance_status: str | None = None
+    stock_units: float = 0
+    current_stock_qty: float = 0
+    target_stock_qty: float = 0
+    delta_qty: float = 0
+    shortage_qty: float = 0
+    excess_qty: float = 0
+    inbound_qty: float = 0
+    outbound_qty: float = 0
+    sales_qty: float = 0
+    revenue: float = 0
+    product_count: int = 0
+
+
+class LogisticsShipmentMovementRow(BaseModel):
+    id: int
+    movement_type: str
+    nm_id: int | None = None
+    vendor_code: str | None = None
+    barcode: str | None = None
+    size_name: str | None = None
+    donor_region: str | None = None
+    donor_warehouse: str | None = None
+    recipient_region: str | None = None
+    recipient_warehouse: str | None = None
+    quantity: float = 0
+    priority: str = "P3"
+    reason_code: str | None = None
+    business_explanation: str | None = None
+    confidence: str = "medium"
+    status: str = "new"
+
+
+class LogisticsShipmentFormulaRead(BaseModel):
+    source: str = "logistics"
+    title: str = "Логистическая формула"
+    detail: str
+    latest_run_id: int | None = None
+    latest_run_type: str | None = None
+    latest_run_finished_at: datetime | None = None
+    warning: str | None = None
+
+
+class LogisticsShipmentPlanningRead(BaseModel):
+    status: str = "fallback"
+    formula: LogisticsShipmentFormulaRead
+    regions: list[LogisticsShipmentScopeOption] = Field(default_factory=list)
+    warehouses: list[LogisticsShipmentScopeOption] = Field(default_factory=list)
+    movements: list[LogisticsShipmentMovementRow] = Field(default_factory=list)
+    excluded_regions: list[str] = Field(default_factory=list)
+    source_run_id: int | None = None
+    source_run_type: str | None = None
+    source_run_finished_at: datetime | None = None
+    summary: dict[str, Any] = Field(default_factory=dict)
+
+
 class LogisticsOverviewRead(BaseModel):
     account_id: int
     period: LogisticsPeriod
@@ -311,6 +379,7 @@ class LogisticsOverviewRead(BaseModel):
     acceptance_details: list[LogisticsAcceptanceDetailRow] = Field(default_factory=list)
     transit_tariffs: list[LogisticsTransitTariffRow] = Field(default_factory=list)
     seller_warehouses: list[LogisticsSellerWarehouseRow] = Field(default_factory=list)
+    shipment_planning: LogisticsShipmentPlanningRead | None = None
     data_sources: list[LogisticsDataSourceStatus] = Field(default_factory=list)
     api_capabilities: list[LogisticsApiCapability] = Field(default_factory=list)
     recommendations: list[LogisticsRecommendation] = Field(default_factory=list)

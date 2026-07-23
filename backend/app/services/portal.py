@@ -66,6 +66,9 @@ from app.schemas.data_quality import (
 from app.schemas.photo import PhotoExperimentCreateRequest
 from app.schemas.portal import (
     PortalAccountSummary,
+    PortalActionCenterCapabilitiesRead,
+    PortalActionCenterCapabilityRead,
+    PortalActionCenterDomainRead,
     PortalActionRead,
     PortalActionsPage,
     PortalAssignableUserRead,
@@ -438,6 +441,883 @@ class PortalService:
         ),
         "promotions": ("/api/v1/calendar/promotions",),
         "reputation": ("/api/v1/feedbacks", "/api/v1/questions"),
+    }
+    ACTION_CENTER_CAPABILITY_DOMAINS: tuple[dict[str, Any], ...] = (
+        {
+            "key": "data_blockers",
+            "title": "Данные и себестоимость",
+            "description": "Себестоимость, SKU, расходы, синхронизация и загрузки, без которых прибыль считается неверно.",
+            "priority": 10,
+            "icon": "database",
+            "first_step": "Сначала закрыть блокеры данных, потом запускать пересчет проблем.",
+            "jvo_reference_urls": (
+                "https://jvo.ru/help/stranica-moy-profil",
+                "https://jvo.ru/help/vi-sprosili-mi-otvechaem",
+            ),
+            "capabilities": (
+                {
+                    "key": "missing_cost_inline_fix",
+                    "title": "Заполнить себестоимость в Action Center",
+                    "description": "Находит товары без себестоимости и дает заполнить себестоимость и прочие расходы прямо в задаче.",
+                    "detect_status": "ready",
+                    "execute_status": "ready",
+                    "executor_key": "costs.inline_save",
+                    "problem_codes": ("missing_cost_blocks_profit",),
+                    "action_codes": ("review_cost", "upload_cost", "open_data_fix"),
+                    "task_examples": ("заполнить себестоимость", "указать прочие расходы", "пересчитать прибыль"),
+                    "ui_route": "/action-center?group=data_blockers",
+                    "current_support_note": "Локальное исправление работает через costs inline save, WB продажи и финальный отчет не редактируются.",
+                },
+                {
+                    "key": "sku_mapping_fix",
+                    "title": "Связать проблемную строку с правильным SKU",
+                    "description": "Показывает неподтвержденный товарный идентификатор и просит указать правильный SKU с причиной связи.",
+                    "detect_status": "ready",
+                    "execute_status": "manual",
+                    "executor_key": "data_quality.sku_mapping_review",
+                    "problem_codes": ("unmatched_sku", "manual_cost_unresolved_sku", "manual_cost_ambiguous_match"),
+                    "action_codes": ("map_sku", "open_data_fix"),
+                    "task_examples": ("сопоставить SKU", "объяснить связь", "перепроверить строку"),
+                    "ui_route": "/action-center?group=data_blockers",
+                    "current_support_note": "Сейчас фиксируется как проверенная оператором связка; автоматическое массовое слияние SKU остается отдельным executor.",
+                },
+                {
+                    "key": "expense_classification",
+                    "title": "Разнести неизвестные расходы",
+                    "description": "Находит расходы без категории, чтобы они попали в правильную экономику товара или аккаунта.",
+                    "detect_status": "ready",
+                    "execute_status": "manual",
+                    "executor_key": "data_quality.expense_classify",
+                    "problem_codes": ("expense_unclassified",),
+                    "action_codes": ("classify_expense", "open_data_fix"),
+                    "task_examples": ("выбрать категорию расхода", "проверить сумму", "пересчитать маржу"),
+                    "ui_route": "/action-center?group=data_blockers",
+                },
+                {
+                    "key": "sync_freshness",
+                    "title": "Контроль свежести API-данных",
+                    "description": "Проверяет, какие WB источники устарели или не настроены, и блокирует рискованные выводы.",
+                    "detect_status": "ready",
+                    "execute_status": "ready",
+                    "executor_key": "jobs.data_sync_status",
+                    "action_codes": ("refresh_data", "recheck"),
+                    "task_examples": ("обновить продажи", "обновить финансы", "обновить остатки"),
+                    "ui_route": "/data-quality",
+                },
+            ),
+        },
+        {
+            "key": "card_quality",
+            "title": "Карточки, SEO и контент",
+            "description": "Название, описание, характеристики, фото, SEO-позиции и события карточки.",
+            "priority": 20,
+            "icon": "file-text",
+            "first_step": "Открыть карточку, исправить поле, перепроверить качество.",
+            "jvo_reference_urls": (
+                "https://jvo.ru/help/tovary-sobytiya-analiz-konkurentov",
+                "https://jvo.ru/help/monitoring",
+            ),
+            "capabilities": (
+                {
+                    "key": "card_text_inline_fix",
+                    "title": "Исправить title или описание в задаче",
+                    "description": "Показывает проблемное поле карточки и дает подготовить исправление без ухода в WB.",
+                    "detect_status": "ready",
+                    "execute_status": "ready",
+                    "executor_key": "card_quality.apply_wb",
+                    "safe_write": True,
+                    "required_token_categories": ("content",),
+                    "problem_codes": ("low_conversion_card", "no_sales_with_views", "price_offer_blocks_conversion"),
+                    "action_codes": ("review_content", "check_card_quality", "run_checker"),
+                    "task_examples": ("исправить название", "улучшить описание", "перепроверить карточку"),
+                    "ui_route": "/action-center?group=card_quality",
+                    "current_support_note": "WB apply идет через card quality review и требует подтверждения.",
+                },
+                {
+                    "key": "characteristics_quality",
+                    "title": "Характеристики и заполненность карточки",
+                    "description": "Выявляет неполные характеристики, влияющие на SEO и фильтры каталога.",
+                    "detect_status": "partial",
+                    "execute_status": "preview_only",
+                    "executor_key": "card_quality.characteristics_review",
+                    "required_token_categories": ("content",),
+                    "task_examples": ("добавить характеристику", "проверить категорию", "сформировать draft"),
+                    "ui_route": "/checker",
+                },
+                {
+                    "key": "photo_media_quality",
+                    "title": "Фото и медиа карточки",
+                    "description": "Создает задачи на улучшение главного фото, визуала и медиа, которые влияют на CTR.",
+                    "detect_status": "partial",
+                    "execute_status": "preview_only",
+                    "executor_key": "photo_studio.review",
+                    "problem_codes": ("low_ads_ctr", "low_conversion_card"),
+                    "action_codes": ("review_content",),
+                    "task_examples": ("проверить главное фото", "поставить задачу дизайнеру", "сравнить CTR"),
+                    "ui_route": "/photo",
+                },
+                {
+                    "key": "seo_positions_events",
+                    "title": "SEO-позиции и события товара",
+                    "description": "Показывает, как изменения карточки, цены и рекламы связаны с позициями и конверсией.",
+                    "detect_status": "partial",
+                    "execute_status": "preview_only",
+                    "executor_key": "product360.events",
+                    "task_examples": ("проверить поисковые позиции", "сопоставить событие и метрику", "сформировать гипотезу"),
+                    "ui_route": "/products",
+                },
+            ),
+        },
+        {
+            "key": "price",
+            "title": "Цена, скидки и repricer",
+            "description": "Безопасная цена, промо, скидка продавца, первоначальная цена и сценарии умного изменения цены.",
+            "priority": 30,
+            "icon": "gauge",
+            "first_step": "Посчитать безопасную цену, затем отправить review или создать сценарий.",
+            "jvo_reference_urls": ("https://jvo.ru/help/agent-repricer",),
+            "capabilities": (
+                {
+                    "key": "safe_price_review",
+                    "title": "Safe price review перед изменением цены",
+                    "description": "Находит товар в минусе или ниже безопасной маржи и рассчитывает безопасную цену.",
+                    "detect_status": "ready",
+                    "execute_status": "preview_only",
+                    "executor_key": "pricing.review",
+                    "problem_codes": ("negative_unit_profit", "price_below_safe_margin", "promo_not_profitable"),
+                    "action_codes": ("open_price_review", "review_price", "pricing_review"),
+                    "task_examples": ("проверить цену", "рассчитать безопасную", "отправить на review"),
+                    "ui_route": "/action-center?group=price",
+                    "current_support_note": "Автоматический price-write endpoint не включен, поэтому изменение не отправляется напрямую в WB.",
+                },
+                {
+                    "key": "wb_price_discount_write",
+                    "title": "Изменить скидку продавца или первоначальную цену WB",
+                    "description": "Executor для отправки подтвержденного изменения цены или скидки в WB.",
+                    "detect_status": "ready",
+                    "execute_status": "missing_wb_write",
+                    "executor_key": "wb.prices.write",
+                    "required_token_categories": ("prices",),
+                    "problem_codes": ("negative_unit_profit", "price_below_safe_margin", "raise_price_possible_high_demand"),
+                    "action_codes": ("apply_price", "apply_discount"),
+                    "task_examples": ("поднять цену", "снизить скидку", "применить безопасную цену"),
+                    "current_support_note": "Нужен официальный WB write client для prices/discounts и review-lock перед включением.",
+                },
+                {
+                    "key": "repricer_scenarios",
+                    "title": "Сценарии repricer agent",
+                    "description": "Правила вида: поднять при низком остатке, снизить при падении спроса, распродать пересток.",
+                    "detect_status": "partial",
+                    "execute_status": "preview_only",
+                    "executor_key": "agent.price_scenarios",
+                    "problem_codes": ("stockout_risk_14d", "overstock_slow_moving", "dead_stock", "raise_price_possible_high_demand"),
+                    "action_codes": ("create_scenario", "price_agent_review"),
+                    "task_examples": ("сохранить товар до поставки", "реагировать на спрос", "балансировать цену по складу"),
+                    "ui_route": "/agent/scenarios",
+                },
+                {
+                    "key": "promo_profitability",
+                    "title": "Проверить промо до участия",
+                    "description": "Сравнивает промо-цену, себестоимость, рекламу и безопасную маржу.",
+                    "detect_status": "ready",
+                    "execute_status": "preview_only",
+                    "executor_key": "promotions.profit_review",
+                    "problem_codes": ("promo_not_profitable",),
+                    "action_codes": ("review_promo", "safe_promo", "reduce_promo"),
+                    "task_examples": ("проверить акцию", "убрать убыточное промо", "пересчитать маржу"),
+                    "ui_route": "/prices",
+                },
+            ),
+        },
+        {
+            "key": "ads_promo",
+            "title": "Реклама и продвижение",
+            "description": "DRR, CPO, CTR, ставки, бюджеты, запуск/остановка РК и рекламный агент.",
+            "priority": 40,
+            "icon": "bar-chart-3",
+            "first_step": "Проверить экономику кампании, затем менять ставку, бюджет или статус.",
+            "jvo_reference_urls": ("https://jvo.ru/help/agentrk",),
+            "capabilities": (
+                {
+                    "key": "ads_efficiency_detection",
+                    "title": "Найти рекламные расходы без результата",
+                    "description": "Находит высокий DRR/CPO, низкий CTR, расход без заказов и риск рекламы при нулевом остатке.",
+                    "detect_status": "ready",
+                    "execute_status": "preview_only",
+                    "executor_key": "ads.efficiency_review",
+                    "problem_codes": ("ads_spend_without_profit", "ads_spend_no_orders", "high_ad_drr", "high_ad_cpo", "low_ads_ctr", "ads_stockout_risk"),
+                    "action_codes": ("review_ads", "pause_ads", "lower_ads", "review_bids"),
+                    "task_examples": ("проверить DRR", "найти расход без заказов", "снизить ставку"),
+                    "ui_route": "/ads",
+                },
+                {
+                    "key": "ads_campaign_control",
+                    "title": "Остановить, запустить или убрать товар из РК",
+                    "description": "Write executor для управления статусом кампании и составом товаров.",
+                    "detect_status": "ready",
+                    "execute_status": "missing_wb_write",
+                    "executor_key": "wb.ads.campaign_control",
+                    "required_token_categories": ("promotion",),
+                    "action_codes": ("pause_ads", "start_ads", "remove_product_from_campaign"),
+                    "task_examples": ("остановить РК", "запустить после восстановления", "убрать убыточный товар"),
+                    "current_support_note": "Сейчас ads client читает статистику и кампании, write методы не подключены.",
+                },
+                {
+                    "key": "ads_bid_budget_control",
+                    "title": "Изменить ставку, кластер или дневной лимит",
+                    "description": "Управляет ставками WB CPM/CPC, исключениями кластеров и дневным бюджетом.",
+                    "detect_status": "partial",
+                    "execute_status": "missing_wb_write",
+                    "executor_key": "wb.ads.bid_budget_write",
+                    "required_token_categories": ("promotion",),
+                    "action_codes": ("change_bid", "exclude_cluster", "change_daily_budget"),
+                    "task_examples": ("снизить дневной лимит", "исключить кластер", "тестировать позицию"),
+                },
+                {
+                    "key": "ads_agent_scenarios",
+                    "title": "Рекламный агент по правилам",
+                    "description": "Сценарии с проверками DRR, CPO, CTR, остатков и бюджета по расписанию.",
+                    "detect_status": "partial",
+                    "execute_status": "preview_only",
+                    "executor_key": "agent.ads_scenarios",
+                    "action_codes": ("create_ads_scenario", "review_ads_scenario"),
+                    "task_examples": ("защита бюджета", "поиск лучшей позиции", "масштабирование без риска"),
+                    "ui_route": "/agent/scenarios",
+                },
+            ),
+        },
+        {
+            "key": "stock",
+            "title": "Остатки, поставки и логистика",
+            "description": "OOS, частичный OOS, пересток, оборачиваемость, складская экономика и план поставок.",
+            "priority": 50,
+            "icon": "package-search",
+            "first_step": "Проверить остаток и спрос, затем сформировать план поставки или распродажи.",
+            "jvo_reference_urls": ("https://jvo.ru/logistics",),
+            "capabilities": (
+                {
+                    "key": "stock_risk_detection",
+                    "title": "OOS, риск дефицита и быстрый расход",
+                    "description": "Находит полный/частичный out-of-stock, риск 14 дней и быстрый расход остатков.",
+                    "detect_status": "ready",
+                    "execute_status": "preview_only",
+                    "executor_key": "stockops.risk_review",
+                    "problem_codes": ("low_stock_risk", "stockout_now_with_recent_orders", "stockout_risk_14d", "fast_stock_depletion"),
+                    "action_codes": ("plan_supply", "review_stock"),
+                    "task_examples": ("проверить OOS", "оценить упущенную выручку", "подготовить поставку"),
+                    "ui_route": "/stock-control",
+                },
+                {
+                    "key": "overstock_turnover",
+                    "title": "Пересток и низкая оборачиваемость",
+                    "description": "Находит медленные продажи, dead stock, высокую стоимость хранения и предлагает цену/поставку.",
+                    "detect_status": "ready",
+                    "execute_status": "preview_only",
+                    "executor_key": "stockops.overstock_review",
+                    "problem_codes": ("overstock_slow_moving", "dead_stock", "storage_cost_pressure"),
+                    "action_codes": ("liquidate_stock", "review_price", "plan_supply"),
+                    "task_examples": ("разобрать пересток", "пересчитать хранение", "создать план распродажи"),
+                    "ui_route": "/stock-control",
+                },
+                {
+                    "key": "supply_builder",
+                    "title": "Сформировать отгрузку по складам или регионам",
+                    "description": "Планирует количество к поставке с учетом спроса, остатков, регионов, коэффициентов и кратности коробов.",
+                    "detect_status": "partial",
+                    "execute_status": "preview_only",
+                    "executor_key": "stockops.supply_plan",
+                    "action_codes": ("create_supply_plan", "export_supply"),
+                    "task_examples": ("выбрать склад", "учесть сезонность", "экспортировать подсортировку"),
+                    "ui_route": "/stock-control",
+                    "current_support_note": "Есть read/supply context. Автоматическое создание поставки в WB требует отдельного write executor.",
+                },
+                {
+                    "key": "acceptance_slots_coefficients",
+                    "title": "Коэффициенты приемки и выгодные слоты",
+                    "description": "Отслеживает склады, коэффициенты приемки и доступные слоты для поставки.",
+                    "detect_status": "partial",
+                    "execute_status": "manual",
+                    "executor_key": "supplies.acceptance_options",
+                    "required_token_categories": ("supplies",),
+                    "action_codes": ("review_acceptance_slot",),
+                    "task_examples": ("проверить коэффициент", "найти выгодный слот", "уведомить ответственного"),
+                    "ui_route": "/stock-control",
+                },
+            ),
+        },
+        {
+            "key": "profitability",
+            "title": "Прибыль, маржа и деньги",
+            "description": "Юнит-экономика, товары в минус, маржинальность, реклама и промо в прибыли.",
+            "priority": 60,
+            "icon": "trending-down",
+            "first_step": "Сначала убедиться, что данные не блокируют расчет, потом исправлять цену, рекламу или поставку.",
+            "jvo_reference_urls": (
+                "https://jvo.ru/help/calcwb",
+                "https://jvo.ru/help/blok-dannyh-svodka",
+            ),
+            "capabilities": (
+                {
+                    "key": "unit_profit_detection",
+                    "title": "Найти товар в минусе и низкую маржу",
+                    "description": "Считает прибыль на единицу, маржу и денежный риск с разделением подтвержденных и предварительных сумм.",
+                    "detect_status": "ready",
+                    "execute_status": "preview_only",
+                    "executor_key": "problem_engine.profitability",
+                    "problem_codes": ("negative_unit_profit", "price_below_safe_margin", "promo_not_profitable"),
+                    "action_codes": ("review_price", "review_ads", "review_promo"),
+                    "task_examples": ("разобрать прибыль", "найти причину минуса", "пересчитать результат"),
+                    "ui_route": "/action-center?group=profitability",
+                },
+                {
+                    "key": "money_trust_model",
+                    "title": "Разделить подтвержденные деньги и предварительный риск",
+                    "description": "Не показывает предварительную прибыль как финальный убыток, если данных WB еще не хватает.",
+                    "detect_status": "ready",
+                    "execute_status": "ready",
+                    "executor_key": "money_trust.classifier",
+                    "task_examples": ("пометить риск как предварительный", "ждать финансы WB", "убрать ложные убытки"),
+                    "ui_route": "/results",
+                },
+                {
+                    "key": "commercial_strategy_tasks",
+                    "title": "Коммерческие стратегии по спросу и остаткам",
+                    "description": "Создает задачи для роста заказов, сохранения остатков до поставки и распродажи неликвида.",
+                    "detect_status": "partial",
+                    "execute_status": "preview_only",
+                    "executor_key": "agent.commercial_scenarios",
+                    "problem_codes": ("raise_price_possible_high_demand", "fast_stock_depletion", "dead_stock"),
+                    "action_codes": ("create_scenario", "review_price"),
+                    "task_examples": ("рост спроса", "падение заказов", "растянуть остаток до поставки"),
+                    "ui_route": "/agent/scenarios",
+                },
+            ),
+        },
+        {
+            "key": "reputation",
+            "title": "Отзывы, вопросы и бренд",
+            "description": "Негативные отзывы, вопросы покупателей, рейтинг товара, drafts ответов и претензии.",
+            "priority": 70,
+            "icon": "message-square",
+            "first_step": "Разобрать входящие, подготовить ответ, затем подтвердить публикацию или действие.",
+            "jvo_reference_urls": (
+                "https://jvo.ru/help/monitoring",
+                "https://jvo.ru/help/tovary-sobytiya-analiz-konkurentov",
+            ),
+            "capabilities": (
+                {
+                    "key": "reviews_questions_tasks",
+                    "title": "Задачи по отзывам и вопросам",
+                    "description": "Находит негатив, вопросы без ответа и низкий рейтинг, чтобы не терять доверие и конверсию.",
+                    "detect_status": "ready",
+                    "execute_status": "preview_only",
+                    "executor_key": "reputation.inbox",
+                    "problem_codes": ("negative_reviews_need_reply", "questions_need_reply", "low_product_rating"),
+                    "action_codes": ("reply_review", "reply_question", "review_rating"),
+                    "task_examples": ("ответить на отзыв", "ответить на вопрос", "разобрать рейтинг"),
+                    "ui_route": "/reputation",
+                },
+                {
+                    "key": "reputation_publish",
+                    "title": "Опубликовать ответ после проверки",
+                    "description": "Публикует подготовленный draft ответа в WB, если включены publish permissions.",
+                    "detect_status": "partial",
+                    "execute_status": "preview_only",
+                    "executor_key": "reputation.publish",
+                    "required_token_categories": ("feedbacks_questions",),
+                    "action_codes": ("publish_reply", "approve_draft"),
+                    "task_examples": ("проверить draft", "одобрить ответ", "отправить в WB"),
+                    "ui_route": "/reputation",
+                    "current_support_note": "Публикация зависит от runtime-настроек reputation модуля и прав API.",
+                },
+                {
+                    "key": "claims_cases",
+                    "title": "Претензии и кейсы по дефектам",
+                    "description": "Находит потенциальные претензии: дефекты, недовложения, аномалии отчетов и повторные обращения.",
+                    "detect_status": "partial",
+                    "execute_status": "manual",
+                    "executor_key": "claims.detect",
+                    "action_codes": ("open_claim_case", "review_case"),
+                    "task_examples": ("создать кейс", "проверить доказательства", "назначить ответственного"),
+                    "ui_route": "/cases",
+                },
+            ),
+        },
+        {
+            "key": "manual_tasks",
+            "title": "Ручные задачи и команда",
+            "description": "Задачи, созданные оператором: товары, brief, исполнитель, срок и поштучное закрытие.",
+            "priority": 80,
+            "icon": "list-checks",
+            "first_step": "Выбрать товары, написать результат, назначить ответственного и срок.",
+            "jvo_reference_urls": (
+                "https://jvo.ru/help/zadachi-vipolnenie",
+                "https://jvo.ru/help/nastroika-zadach",
+            ),
+            "capabilities": (
+                {
+                    "key": "manual_task_creation",
+                    "title": "Создать ручную задачу по товарам",
+                    "description": "Оператор выбирает товары, тип работы, brief, исполнителя, срок и приоритет.",
+                    "detect_status": "ready",
+                    "execute_status": "ready",
+                    "executor_key": "portal.manual_action_create",
+                    "action_codes": ("create_task", "assign"),
+                    "task_examples": ("изменить title", "проверить фото", "обновить карточку", "проверить рекламу"),
+                    "ui_route": "/action-center?group=manual_tasks",
+                },
+                {
+                    "key": "per_product_completion",
+                    "title": "Закрывать задачу по товарам",
+                    "description": "Позволяет отмечать выбранные товары выполненными или пропущенными, а оставшиеся держать в активной очереди.",
+                    "detect_status": "ready",
+                    "execute_status": "ready",
+                    "executor_key": "portal.manual_task_items",
+                    "action_codes": ("mark_done", "skip_product", "reopen"),
+                    "task_examples": ("закрыть товар", "пропустить строку", "видеть прогресс"),
+                    "ui_route": "/action-center?group=manual_tasks",
+                },
+                {
+                    "key": "task_deactivation",
+                    "title": "Деактивировать или отложить задачу",
+                    "description": "Скрывает задачу полностью или на срок, чтобы список активных задач не шумел.",
+                    "detect_status": "ready",
+                    "execute_status": "ready",
+                    "executor_key": "portal.action_status",
+                    "action_codes": ("postpone", "dismiss", "reopen"),
+                    "task_examples": ("отложить на 1 день", "отключить как неактуальное", "вернуть в активные"),
+                    "ui_route": "/action-center",
+                },
+            ),
+        },
+        {
+            "key": "system_checks",
+            "title": "Системные сверки и автоматизация",
+            "description": "Финальная сверка WB, источники данных, агентные сценарии, эксперименты и логи результатов.",
+            "priority": 90,
+            "icon": "shield-check",
+            "first_step": "Понять источник расхождения, обновить данные, затем перепроверить.",
+            "jvo_reference_urls": (
+                "https://jvo.ru/help/monitoring",
+                "https://jvo.ru/help/calcwb",
+            ),
+            "capabilities": (
+                {
+                    "key": "finance_reconciliation",
+                    "title": "Сверка продаж и финального отчета WB",
+                    "description": "Отделяет операционные предварительные данные от финального отчета и показывает расхождения как системную проверку.",
+                    "detect_status": "ready",
+                    "execute_status": "ready",
+                    "executor_key": "data_quality.reconciliation",
+                    "problem_codes": ("sale_without_finance", "finance_without_sale"),
+                    "action_codes": ("recheck", "open_results"),
+                    "task_examples": ("обновить финансы", "пересчитать сверку", "убрать ложный убыток"),
+                    "ui_route": "/results",
+                },
+                {
+                    "key": "daily_analysis_loop",
+                    "title": "Ежедневный sync и анализ проблем",
+                    "description": "Раз в день синхронизирует WB домены, запускает problem engine и обновляет очередь задач.",
+                    "detect_status": "ready",
+                    "execute_status": "ready",
+                    "executor_key": "jobs.problem_evaluation",
+                    "action_codes": ("recheck", "refresh_data"),
+                    "task_examples": ("ночной анализ", "перепроверка после исправления", "обновление очереди"),
+                    "ui_route": "/data-quality",
+                },
+                {
+                    "key": "agent_scenarios",
+                    "title": "Сценарии агента и история действий",
+                    "description": "Хранит сценарии, запуски, ручной/авто режим, результаты и будущие write executor links.",
+                    "detect_status": "partial",
+                    "execute_status": "preview_only",
+                    "executor_key": "agent.scenarios",
+                    "action_codes": ("create_scenario", "run_scenario"),
+                    "task_examples": ("настроить правило", "запустить вручную", "проверить лог"),
+                    "ui_route": "/agent/scenarios",
+                },
+                {
+                    "key": "experiments_results",
+                    "title": "Эксперименты и результат после решения",
+                    "description": "Связывает выполненную задачу с результатом: стало лучше, хуже или данных не хватает.",
+                    "detect_status": "partial",
+                    "execute_status": "ready",
+                    "executor_key": "result_tracking",
+                    "action_codes": ("result_event", "compare_after"),
+                    "task_examples": ("проверить after snapshot", "оценить эффект", "сохранить результат"),
+                    "ui_route": "/results",
+                },
+            ),
+        },
+    )
+    ACTION_CENTER_CAPABILITY_TRACE_OVERRIDES: dict[str, dict[str, Any]] = {
+        "missing_cost_inline_fix": {
+            "wb_connector_ids": (
+                "sales.fetch_sales",
+                "orders.fetch_orders",
+                "finance.sales_reports_detailed",
+                "prices.list_goods",
+            ),
+            "safety_requirements": (
+                "Do not edit WB sales or final finance rows; save only seller "
+                "cost/expense fields and rerun local calculations.",
+            ),
+        },
+        "sku_mapping_fix": {
+            "wb_connector_ids": (
+                "product_cards.list_cards",
+                "sales.fetch_sales",
+                "orders.fetch_orders",
+                "stocks.warehouse_remains",
+                "supplies.fbw",
+            ),
+            "safety_requirements": (
+                "Require an operator reason before saving a verified SKU mapping.",
+            ),
+        },
+        "expense_classification": {
+            "wb_connector_ids": (
+                "finance.sales_reports_detailed",
+                "finance.acquiring",
+            ),
+            "safety_requirements": (
+                "Classify local expense allocation only; never mutate WB finance "
+                "reports.",
+            ),
+        },
+        "sync_freshness": {
+            "wb_connector_ids": (
+                "product_cards.list_cards",
+                "prices.list_goods",
+                "sales.fetch_sales",
+                "orders.fetch_orders",
+                "stocks.warehouse_remains",
+                "finance.sales_reports_detailed",
+                "ads.campaigns",
+                "supplies.fbw",
+                "feedbacks_questions.reputation",
+            ),
+        },
+        "card_text_inline_fix": {
+            "wb_connector_ids": (
+                "product_cards.list_cards",
+                "product_cards.update_card",
+            ),
+            "safety_requirements": (
+                "Build the update payload from the latest card snapshot and "
+                "preserve unchanged WB fields.",
+                "Require explicit user confirmation before calling WB card update.",
+                "Store raw request/result and recheck card quality after WB accepts.",
+            ),
+        },
+        "characteristics_quality": {
+            "wb_connector_ids": (
+                "product_cards.list_cards",
+                "product_cards.update_card",
+            ),
+            "implementation_gaps": (
+                "Characteristic editing is still preview/review; field-level WB "
+                "payload generation must be validated per subject before enabling.",
+            ),
+        },
+        "photo_media_quality": {
+            "wb_connector_ids": (
+                "product_cards.list_cards",
+                "analytics.funnel_history",
+            ),
+            "implementation_gaps": (
+                "Photo/media write flow is not registered in the WB connector "
+                "inventory; keep this as an operator task.",
+            ),
+        },
+        "seo_positions_events": {
+            "wb_connector_ids": (
+                "product_cards.list_cards",
+                "analytics.funnel_history",
+                "ads.cluster_stats",
+            ),
+        },
+        "safe_price_review": {
+            "wb_connector_ids": (
+                "prices.list_goods",
+                "prices.list_sizes",
+                "prices.upload_state",
+                "prices.quarantine_goods",
+                "finance.sales_reports_detailed",
+                "sales.fetch_sales",
+                "orders.fetch_orders",
+            ),
+            "safety_requirements": (
+                "Treat calculated safe price as review data until a confirmed WB "
+                "price upload executor exists.",
+            ),
+        },
+        "wb_price_discount_write": {
+            "wb_connector_ids": (
+                "prices.list_goods",
+                "prices.list_sizes",
+                "prices.upload_state",
+                "prices.quarantine_goods",
+            ),
+            "wb_api_endpoints": (
+                "https://discounts-prices-api.wildberries.ru/api/v2/upload/task",
+            ),
+            "wb_reference_urls": (
+                "https://dev.wildberries.ru/en/docs/openapi/work-with-products",
+            ),
+            "implementation_gaps": (
+                "No active WB price/discount write connector is registered in "
+                "WB_CONNECTOR_INVENTORY.",
+                "Add upload-task client, read-back status polling, quarantine "
+                "handling and result events before enabling the executor.",
+            ),
+            "safety_requirements": (
+                "Require explicit batch confirmation with old/new price diff.",
+                "Clamp every row to safe margin, WB bounds and current cost data.",
+                "Store raw request/response and poll upload history before marking "
+                "the task done.",
+            ),
+        },
+        "repricer_scenarios": {
+            "wb_connector_ids": (
+                "prices.list_goods",
+                "prices.list_sizes",
+                "stocks.warehouse_remains",
+                "sales.fetch_sales",
+                "orders.fetch_orders",
+            ),
+            "implementation_gaps": (
+                "Scenario automation must call the same confirmed price write "
+                "executor as manual price changes; it is preview-only for now.",
+            ),
+        },
+        "promo_profitability": {
+            "wb_connector_ids": (
+                "promotions.calendar",
+                "prices.list_goods",
+                "finance.sales_reports_detailed",
+                "ads.full_stats",
+            ),
+            "implementation_gaps": (
+                "Promotion participation/write methods are not enabled from "
+                "Action Center yet.",
+            ),
+        },
+        "ads_efficiency_detection": {
+            "wb_connector_ids": (
+                "ads.campaigns",
+                "ads.full_stats",
+                "ads.cluster_stats",
+                "sales.fetch_sales",
+                "orders.fetch_orders",
+                "stocks.warehouse_remains",
+            ),
+        },
+        "ads_campaign_control": {
+            "wb_connector_ids": (
+                "ads.campaigns",
+                "ads.full_stats",
+                "ads.cluster_stats",
+            ),
+            "wb_reference_urls": (
+                "https://dev.wildberries.ru/en/docs/openapi/promotion",
+            ),
+            "implementation_gaps": (
+                "Current ads connector reads campaigns and statistics only; WB "
+                "campaign status/product write methods are not inventoried.",
+                "Confirm current Promotion OpenAPI methods for start, pause and "
+                "product membership before adding executor.",
+            ),
+            "safety_requirements": (
+                "Require campaign/product diff confirmation before any WB write.",
+                "Check stock and profitability guards before pausing or starting.",
+                "Persist raw WB result and Action Center result event.",
+            ),
+        },
+        "ads_bid_budget_control": {
+            "wb_connector_ids": (
+                "ads.campaigns",
+                "ads.full_stats",
+                "ads.cluster_stats",
+            ),
+            "wb_api_endpoints": (
+                "https://advert-api.wildberries.ru/adv/v1/budget",
+                "https://advert-api.wildberries.ru/adv/v1/budget/deposit",
+            ),
+            "wb_reference_urls": (
+                "https://dev.wildberries.ru/en/docs/openapi/promotion",
+            ),
+            "implementation_gaps": (
+                "Budget/bid write client is not registered; current ads module "
+                "does not mutate WB campaigns.",
+            ),
+            "safety_requirements": (
+                "Require budget delta confirmation and max daily spend guard.",
+                "Read fresh campaign stats before applying bid/budget changes.",
+            ),
+        },
+        "ads_agent_scenarios": {
+            "wb_connector_ids": (
+                "ads.campaigns",
+                "ads.full_stats",
+                "ads.cluster_stats",
+                "stocks.warehouse_remains",
+                "prices.list_goods",
+            ),
+            "implementation_gaps": (
+                "Agent scenarios must remain review-only until ads write "
+                "executors are registered and audited.",
+            ),
+        },
+        "stock_risk_detection": {
+            "wb_connector_ids": (
+                "stocks.warehouse_remains",
+                "sales.fetch_sales",
+                "orders.fetch_orders",
+                "supplies.fbw",
+                "tariffs.common",
+            ),
+        },
+        "overstock_turnover": {
+            "wb_connector_ids": (
+                "stocks.warehouse_remains",
+                "sales.fetch_sales",
+                "orders.fetch_orders",
+                "finance.sales_reports_detailed",
+                "tariffs.common",
+            ),
+        },
+        "supply_builder": {
+            "wb_connector_ids": (
+                "supplies.fbw",
+                "stocks.warehouse_remains",
+                "sales.fetch_sales",
+                "orders.fetch_orders",
+                "tariffs.common",
+            ),
+            "implementation_gaps": (
+                "Action Center can plan supply rows, but automatic WB supply "
+                "creation/export is not implemented as a confirmed executor.",
+            ),
+            "safety_requirements": (
+                "Show warehouse, acceptance coefficient, quantity and box "
+                "multiplicity before creating or exporting a supply.",
+            ),
+        },
+        "acceptance_slots_coefficients": {
+            "wb_connector_ids": ("supplies.fbw", "tariffs.common"),
+            "safety_requirements": (
+                "Use fresh acceptance options before recommending a warehouse slot.",
+            ),
+        },
+        "unit_profit_detection": {
+            "wb_connector_ids": (
+                "finance.sales_reports_detailed",
+                "sales.fetch_sales",
+                "orders.fetch_orders",
+                "prices.list_goods",
+                "ads.full_stats",
+                "stocks.warehouse_remains",
+            ),
+        },
+        "money_trust_model": {
+            "wb_connector_ids": (
+                "finance.sales_reports_detailed",
+                "sales.fetch_sales",
+                "orders.fetch_orders",
+            ),
+        },
+        "commercial_strategy_tasks": {
+            "wb_connector_ids": (
+                "prices.list_goods",
+                "stocks.warehouse_remains",
+                "sales.fetch_sales",
+                "orders.fetch_orders",
+                "ads.full_stats",
+            ),
+            "implementation_gaps": (
+                "Strategy tasks are operator-reviewed until price, ads and supply "
+                "write executors are all available.",
+            ),
+        },
+        "reviews_questions_tasks": {
+            "wb_connector_ids": ("feedbacks_questions.reputation",),
+        },
+        "reputation_publish": {
+            "wb_connector_ids": ("feedbacks_questions.reputation",),
+            "safety_requirements": (
+                "Keep publish behind ENABLE_REPUTATION_PUBLISH, manager/admin "
+                "permission and confirm=true.",
+                "Store draft approval and raw WB publish result.",
+            ),
+        },
+        "claims_cases": {
+            "wb_connector_ids": (
+                "buyer_returns",
+                "feedbacks_questions.reputation",
+            ),
+            "implementation_gaps": (
+                "Buyer returns connector is explicitly not implemented; claims "
+                "remain local cases until WB returns API is audited.",
+            ),
+        },
+        "manual_task_creation": {
+            "safety_requirements": (
+                "Manual tasks are local workflow objects and must not call WB API.",
+            ),
+        },
+        "per_product_completion": {
+            "safety_requirements": (
+                "Completion changes only local task item status.",
+            ),
+        },
+        "task_deactivation": {
+            "safety_requirements": (
+                "Postpone/dismiss affects only local Action Center visibility.",
+            ),
+        },
+        "finance_reconciliation": {
+            "wb_connector_ids": (
+                "finance.sales_reports_detailed",
+                "finance.acquiring",
+                "sales.fetch_sales",
+                "orders.fetch_orders",
+            ),
+        },
+        "daily_analysis_loop": {
+            "wb_connector_ids": (
+                "product_cards.list_cards",
+                "prices.list_goods",
+                "sales.fetch_sales",
+                "orders.fetch_orders",
+                "stocks.warehouse_remains",
+                "finance.sales_reports_detailed",
+                "ads.campaigns",
+                "ads.full_stats",
+                "promotions.calendar",
+                "supplies.fbw",
+                "feedbacks_questions.reputation",
+            ),
+        },
+        "agent_scenarios": {
+            "wb_connector_ids": (
+                "prices.list_goods",
+                "ads.campaigns",
+                "stocks.warehouse_remains",
+                "supplies.fbw",
+            ),
+            "implementation_gaps": (
+                "Agent writes must be linked to audited domain executors and "
+                "result tracking before auto mode is enabled.",
+            ),
+        },
+        "experiments_results": {
+            "wb_connector_ids": (
+                "analytics.funnel_history",
+                "prices.list_goods",
+                "ads.full_stats",
+            ),
+        },
     }
     DATA_READINESS_SOURCE_CATALOG: tuple[dict[str, Any], ...] = (
         {
@@ -899,6 +1779,258 @@ class PortalService:
     def _show_legacy_problem_cards(self) -> bool:
         settings = getattr(self, "settings", get_settings())
         return bool(getattr(settings, "show_legacy_problem_cards", True))
+
+    @staticmethod
+    def _unique_strings(values: Any) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        if isinstance(values, str):
+            iterable = (values,)
+        else:
+            iterable = values or ()
+        for value in iterable:
+            text = str(value or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            result.append(text)
+        return result
+
+    async def action_center_capabilities(
+        self,
+        session: AsyncSession,
+        *,
+        account_id: int,
+    ) -> PortalActionCenterCapabilitiesRead:
+        _ = session
+        _ = account_id
+        domains: list[PortalActionCenterDomainRead] = []
+        summary = {
+            "domain_count": 0,
+            "capability_count": 0,
+            "detect_ready": 0,
+            "detect_partial": 0,
+            "detect_manual": 0,
+            "execute_ready": 0,
+            "execute_preview_only": 0,
+            "execute_manual": 0,
+            "execute_missing_wb_write": 0,
+            "safe_write_capabilities": 0,
+            "wb_api_tracked": 0,
+            "wb_api_partial": 0,
+            "wb_api_write_gap": 0,
+            "wb_api_local_only": 0,
+            "wb_unknown_connectors": 0,
+            "implementation_gap_count": 0,
+        }
+        inventory_by_id = {
+            entry.connector_id: entry for entry in WB_CONNECTOR_INVENTORY
+        }
+        for domain_raw in sorted(
+            self.ACTION_CENTER_CAPABILITY_DOMAINS,
+            key=lambda item: int(item.get("priority") or 0),
+        ):
+            capabilities: list[PortalActionCenterCapabilityRead] = []
+            for cap_raw in domain_raw.get("capabilities") or ():
+                capability_key = str(cap_raw["key"])
+                trace_raw = self.ACTION_CENTER_CAPABILITY_TRACE_OVERRIDES.get(
+                    capability_key,
+                    {},
+                )
+                detect_status = str(cap_raw.get("detect_status") or "planned")
+                execute_status = str(cap_raw.get("execute_status") or "planned")
+                wb_connector_ids = self._unique_strings(
+                    (
+                        *(cap_raw.get("wb_connector_ids") or ()),
+                        *(trace_raw.get("wb_connector_ids") or ()),
+                    )
+                )
+                inventory_entries = [
+                    inventory_by_id[connector_id]
+                    for connector_id in wb_connector_ids
+                    if connector_id in inventory_by_id
+                ]
+                unknown_connector_ids = [
+                    connector_id
+                    for connector_id in wb_connector_ids
+                    if connector_id not in inventory_by_id
+                ]
+                wb_api_endpoints = self._unique_strings(
+                    (
+                        *(cap_raw.get("wb_api_endpoints") or ()),
+                        *(trace_raw.get("wb_api_endpoints") or ()),
+                        *(
+                            entry.endpoint_url
+                            for entry in inventory_entries
+                            if entry.endpoint_url
+                        ),
+                    )
+                )
+                wb_reference_urls = self._unique_strings(
+                    (
+                        *(cap_raw.get("wb_reference_urls") or ()),
+                        *(trace_raw.get("wb_reference_urls") or ()),
+                        *(
+                            entry.source_doc
+                            for entry in inventory_entries
+                            if entry.source_doc
+                        ),
+                    )
+                )
+                token_categories = self._unique_strings(
+                    (
+                        *(cap_raw.get("required_token_categories") or ()),
+                        *(trace_raw.get("token_categories") or ()),
+                        *(
+                            entry.token_category
+                            for entry in inventory_entries
+                            if entry.token_category
+                        ),
+                    )
+                )
+                rate_limit_notes = self._unique_strings(
+                    (
+                        *(trace_raw.get("rate_limit_notes") or ()),
+                        *(
+                            f"{entry.connector_id}: {entry.rate_limit}"
+                            for entry in inventory_entries
+                            if entry.rate_limit
+                        ),
+                    )
+                )
+                implementation_gaps = self._unique_strings(
+                    (
+                        *(cap_raw.get("implementation_gaps") or ()),
+                        *(trace_raw.get("implementation_gaps") or ()),
+                        *(
+                            f"Connector {connector_id} is not registered in "
+                            "WB_CONNECTOR_INVENTORY."
+                            for connector_id in unknown_connector_ids
+                        ),
+                        *(
+                            f"Connector {entry.connector_id} is "
+                            f"{entry.status}, not active."
+                            for entry in inventory_entries
+                            if entry.status != "active"
+                        ),
+                    )
+                )
+                if execute_status == "missing_wb_write" and not implementation_gaps:
+                    implementation_gaps = [
+                        "WB write executor is not registered for this capability.",
+                    ]
+                safety_requirements = self._unique_strings(
+                    (
+                        *(cap_raw.get("safety_requirements") or ()),
+                        *(trace_raw.get("safety_requirements") or ()),
+                    )
+                )
+                if (
+                    execute_status == "missing_wb_write"
+                    and not safety_requirements
+                ):
+                    safety_requirements = (
+                        [
+                            "Require explicit confirmation, raw WB result storage "
+                            "and recheck before enabling write mode.",
+                        ]
+                    )
+                if not (wb_connector_ids or wb_api_endpoints or wb_reference_urls):
+                    wb_tracking_status = "local_only"
+                elif execute_status == "missing_wb_write":
+                    wb_tracking_status = "write_gap"
+                elif unknown_connector_ids or implementation_gaps:
+                    wb_tracking_status = "partial"
+                else:
+                    wb_tracking_status = "tracked"
+                if detect_status == "ready":
+                    summary["detect_ready"] += 1
+                elif detect_status == "partial":
+                    summary["detect_partial"] += 1
+                elif detect_status == "manual":
+                    summary["detect_manual"] += 1
+                if execute_status == "ready":
+                    summary["execute_ready"] += 1
+                elif execute_status == "preview_only":
+                    summary["execute_preview_only"] += 1
+                elif execute_status == "manual":
+                    summary["execute_manual"] += 1
+                elif execute_status == "missing_wb_write":
+                    summary["execute_missing_wb_write"] += 1
+                if bool(cap_raw.get("safe_write")):
+                    summary["safe_write_capabilities"] += 1
+                if wb_tracking_status == "tracked":
+                    summary["wb_api_tracked"] += 1
+                elif wb_tracking_status == "partial":
+                    summary["wb_api_partial"] += 1
+                elif wb_tracking_status == "write_gap":
+                    summary["wb_api_write_gap"] += 1
+                elif wb_tracking_status == "local_only":
+                    summary["wb_api_local_only"] += 1
+                summary["wb_unknown_connectors"] += len(unknown_connector_ids)
+                summary["implementation_gap_count"] += len(implementation_gaps)
+                capabilities.append(
+                    PortalActionCenterCapabilityRead(
+                        key=capability_key,
+                        domain=str(domain_raw["key"]),
+                        title=str(cap_raw["title"]),
+                        description=str(cap_raw.get("description") or ""),
+                        detect_status=detect_status,  # type: ignore[arg-type]
+                        execute_status=execute_status,  # type: ignore[arg-type]
+                        executor_key=cap_raw.get("executor_key"),
+                        safe_write=bool(cap_raw.get("safe_write") or False),
+                        confirm_required=bool(
+                            cap_raw.get("confirm_required", True)
+                        ),
+                        required_token_categories=list(
+                            cap_raw.get("required_token_categories") or []
+                        ),
+                        problem_codes=list(cap_raw.get("problem_codes") or []),
+                        action_codes=list(cap_raw.get("action_codes") or []),
+                        task_examples=list(cap_raw.get("task_examples") or []),
+                        ui_route=cap_raw.get("ui_route"),
+                        jvo_reference_urls=list(
+                            cap_raw.get("jvo_reference_urls")
+                            or domain_raw.get("jvo_reference_urls")
+                            or []
+                        ),
+                        wb_connector_ids=wb_connector_ids,
+                        wb_api_endpoints=wb_api_endpoints,
+                        wb_reference_urls=wb_reference_urls,
+                        wb_tracking_status=wb_tracking_status,
+                        token_categories=token_categories,
+                        rate_limit_notes=rate_limit_notes,
+                        unknown_connector_ids=unknown_connector_ids,
+                        implementation_gaps=implementation_gaps,
+                        safety_requirements=safety_requirements,
+                        current_support_note=cap_raw.get("current_support_note"),
+                    )
+                )
+            domains.append(
+                PortalActionCenterDomainRead(
+                    key=str(domain_raw["key"]),
+                    title=str(domain_raw["title"]),
+                    description=str(domain_raw.get("description") or ""),
+                    priority=int(domain_raw.get("priority") or 0),
+                    icon=domain_raw.get("icon"),
+                    first_step=domain_raw.get("first_step"),
+                    capabilities=capabilities,
+                    jvo_reference_urls=list(
+                        domain_raw.get("jvo_reference_urls") or []
+                    ),
+                )
+            )
+            summary["capability_count"] += len(capabilities)
+        summary["domain_count"] = len(domains)
+        return PortalActionCenterCapabilitiesRead(
+            domains=domains,
+            summary=summary,
+            source_notes=[
+                "JVO monitoring groups tasks by business direction and priority, then lets the seller resolve or automate them.",
+                "WB API tracking is joined from WB_CONNECTOR_INVENTORY: endpoint, token category, rate limit and official docs source.",
+                "Dangerous WB writes stay missing_wb_write until the official WB write client, token scope, review-lock and raw result tracking are implemented.",
+            ],
+        )
 
     async def assignable_users(
         self,
@@ -7768,12 +8900,7 @@ class PortalService:
             local_quality = await self.card_quality.product_quality(
                 session, account_id=account.id, nm_id=nm_id
             )
-            if local_quality.status not in {
-                "unavailable",
-                "not_configured",
-                "empty",
-                "not_analyzed",
-            }:
+            if local_quality.status not in {"unavailable", "not_configured", "empty", "not_analyzed"}:
                 return local_quality
         except Exception:
             local_quality = None

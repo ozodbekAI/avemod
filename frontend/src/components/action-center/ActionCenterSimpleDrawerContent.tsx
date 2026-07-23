@@ -51,7 +51,10 @@ import {
   problemTrustLabel,
 } from "@/lib/problem-ux-copy";
 import type { EvidenceLedger } from "@/lib/evidence";
-import type { PortalAssignableUser, PortalResultEventsPage } from "@/lib/portal";
+import type {
+  PortalAssignableUser,
+  PortalResultEventsPage,
+} from "@/lib/portal";
 
 type Props = {
   open: boolean;
@@ -83,7 +86,11 @@ function text(value: unknown): string | null {
 
 function simpleProblemTitle(action: ActionCenterItem): string {
   const codeLabel = problemCodeLabel(action.problem_code ?? action.issue_code);
-  if (codeLabel && codeLabel !== "Проблема" && codeLabel !== "Проверка данных") {
+  if (
+    codeLabel &&
+    codeLabel !== "Проблема" &&
+    codeLabel !== "Проверка данных"
+  ) {
     return codeLabel;
   }
   return text(action.title) ?? "Задача";
@@ -142,11 +149,16 @@ export function ActionCenterSimpleDrawerContent({
   const mainLabel =
     primaryAction?.label ??
     action.guided_fix?.label ??
-    (action.problem_code?.includes("cost") ? "Заполнить себестоимость" : "Открыть исправление");
+    (action.problem_code?.includes("cost")
+      ? "Заполнить себестоимость"
+      : "Открыть исправление");
 
   return (
     <ActionCenterTaskDrawer open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-2xl">
+      <SheetContent
+        side="right"
+        className="w-full overflow-y-auto p-0 sm:max-w-2xl"
+      >
         <div className="border-b px-4 py-4 pr-12 sm:px-6">
           <SheetHeader className="text-left">
             <SheetTitle className="line-clamp-2 leading-snug">
@@ -160,19 +172,29 @@ export function ActionCenterSimpleDrawerContent({
 
         <div className="space-y-4 p-4 sm:p-6">
           <div className="flex flex-wrap gap-2">
-            {action.priority ? <Badge variant="outline">{action.priority}</Badge> : null}
-            <Badge variant="secondary">{problemStatusLabel(action.status)}</Badge>
+            {action.priority ? (
+              <Badge variant="outline">{action.priority}</Badge>
+            ) : null}
+            <Badge variant="secondary">
+              {problemStatusLabel(action.status)}
+            </Badge>
             {action.impact_type ? (
-              <Badge variant="outline">{problemImpactLabel(action.impact_type)}</Badge>
+              <Badge variant="outline">
+                {problemImpactLabel(action.impact_type)}
+              </Badge>
             ) : null}
             {action.trust_state ? (
-              <Badge variant="outline">{problemTrustLabel(action.trust_state)}</Badge>
+              <Badge variant="outline">
+                {problemTrustLabel(action.trust_state)}
+              </Badge>
             ) : null}
           </div>
 
           <section className="space-y-2 rounded-md border p-4">
             <div className="text-sm font-semibold">Что случилось</div>
-            <div className="text-sm text-muted-foreground">{simpleReason(action)}</div>
+            <div className="text-sm text-muted-foreground">
+              {simpleReason(action)}
+            </div>
           </section>
 
           <section className="grid gap-2 sm:grid-cols-2">
@@ -193,7 +215,11 @@ export function ActionCenterSimpleDrawerContent({
             />
             <SimpleInfo
               label="Результат"
-              value={action.result_status === "improved" ? "Есть улучшение" : "Ждём проверки"}
+              value={
+                action.result_status === "improved"
+                  ? "Есть улучшение"
+                  : "Ждём проверки"
+              }
             />
           </section>
 
@@ -226,7 +252,9 @@ export function ActionCenterSimpleDrawerContent({
               {ledger ? (
                 <EvidenceButton
                   ledger={ledger}
-                  onClick={() => onOpenEvidence(action.title ?? "Как посчитано", ledger)}
+                  onClick={() =>
+                    onOpenEvidence(action.title ?? "Как посчитано", ledger)
+                  }
                 />
               ) : null}
             </div>
@@ -263,7 +291,8 @@ export function ActionCenterSimpleDrawerContent({
                       disabled={saveDisabled}
                       onValueChange={(value) =>
                         onDraftChange({
-                          assigned_to_user_id: value === "__none__" ? "" : value,
+                          assigned_to_user_id:
+                            value === "__none__" ? "" : value,
                         })
                       }
                     >
@@ -274,7 +303,9 @@ export function ActionCenterSimpleDrawerContent({
                         <SelectItem value="__none__">Не назначен</SelectItem>
                         {users.map((user) => (
                           <SelectItem key={user.id} value={String(user.id)}>
-                            {user.full_name || user.email || `Пользователь ${user.id}`}
+                            {user.full_name ||
+                              user.email ||
+                              `Пользователь ${user.id}`}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -284,7 +315,9 @@ export function ActionCenterSimpleDrawerContent({
                       value={draft.assigned_to_user_id}
                       disabled={saveDisabled}
                       onChange={(event) =>
-                        onDraftChange({ assigned_to_user_id: event.target.value })
+                        onDraftChange({
+                          assigned_to_user_id: event.target.value,
+                        })
                       }
                       placeholder="ID пользователя"
                     />
@@ -316,16 +349,20 @@ export function ActionCenterSimpleDrawerContent({
                 <Info className="h-4 w-4" />
                 <AlertTitle>Статус менять нельзя</AlertTitle>
                 <AlertDescription>
-                  Эта задача пришла как сигнал. Исправьте данные в нужном разделе и запустите проверку.
+                  Эта задача пришла как сигнал. Исправьте данные в нужном
+                  разделе и запустите проверку.
                 </AlertDescription>
               </Alert>
             )}
           </section>
 
           <section className="space-y-3 rounded-md border p-4">
-            <div className="text-sm font-semibold">Проверка после исправления</div>
+            <div className="text-sm font-semibold">
+              Проверка после исправления
+            </div>
             <div className="text-sm text-muted-foreground">
-              {action.recheck_rule || "После исправления запустите повторную проверку. Если проблема ушла, задача обновится."}
+              {action.recheck_rule ||
+                "После исправления запустите повторную проверку. Если проблема ушла, задача обновится."}
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -338,16 +375,22 @@ export function ActionCenterSimpleDrawerContent({
               </Button>
               <Button asChild variant="outline">
                 <Link to="/results">
-                  Результаты
+                  Открыть в результатах
                   <ArrowRight className="ml-1 h-4 w-4" />
                 </Link>
               </Button>
             </div>
             {recheckResult ? (
-              <Alert className={recheckResult.status === "ok" ? "" : "border-destructive/40"}>
+              <Alert
+                className={
+                  recheckResult.status === "ok" ? "" : "border-destructive/40"
+                }
+              >
                 <CheckCircle2 className="h-4 w-4" />
                 <AlertTitle>
-                  {recheckResult.status === "ok" ? "Проверка запущена" : "Не удалось проверить"}
+                  {recheckResult.status === "ok"
+                    ? "Проверка запущена"
+                    : "Не удалось проверить"}
                 </AlertTitle>
                 <AlertDescription>{recheckResult.message}</AlertDescription>
               </Alert>
