@@ -45,13 +45,19 @@ test("action-center-task-drawer exposes professional navigation actions", async 
   await expect(
     page.getByRole("heading", { name: /Нет себестоимости/i }),
   ).toBeVisible();
-  await expect(page.getByText("Заполнить себестоимость")).toBeVisible();
+  await page.getByRole("button", { name: "Рекомендации" }).click();
   await expect(
-    page.getByRole("button", { name: "Перепроверить" }),
+    page.getByText("Заполнить себестоимость").first(),
   ).toBeVisible();
-  await expect(page.getByText("Открыть в результатах")).toBeVisible();
   await expect(
-    page.getByText("Открыть исправление данных").first(),
+    page.getByLabel("Себестоимость за единицу"),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("Прочие расходы за единицу"),
+  ).toBeVisible();
+  await expect(page.getByText("Цифры проверены")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Готово, далее" }),
   ).toBeVisible();
 });
 

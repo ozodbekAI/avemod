@@ -10,13 +10,34 @@ from fastapi import HTTPException
 
 from app.models.accounts import WBAccount
 from app.models.card_quality import CardQualityIssue
-from app.models.operator import ManualTaskItem, OperatorDraft, ResultEvent, UnifiedAction
-from app.models.problem_engine import ProblemDefinition, ProblemInstance, ProblemInstanceHistory
+from app.models.operator import (
+    ManualTaskItem,
+    OperatorDraft,
+    ResultEvent,
+    UnifiedAction,
+)
+from app.models.problem_engine import (
+    ProblemDefinition,
+    ProblemInstance,
+    ProblemInstanceHistory,
+)
 from app.schemas.card_quality import CardQualityIssueRead
 from app.schemas.claims import CaseListItemOut, ClaimsCasesPage
 from app.schemas.evidence import EvidenceLedger, evidence_ledger
 from app.schemas.operator import CaseType
-from app.schemas.operator import ActionStatus, DiagnosisOut, DiagnosisType, DraftOut, DraftType, ExternalStatus, Priority, ProfitDoctorOut, TrustState, UnifiedActionOut, ActionType
+from app.schemas.operator import (
+    ActionStatus,
+    DiagnosisOut,
+    DiagnosisType,
+    DraftOut,
+    DraftType,
+    ExternalStatus,
+    Priority,
+    ProfitDoctorOut,
+    TrustState,
+    UnifiedActionOut,
+    ActionType,
+)
 from app.schemas.portal import (
     PortalActionRead,
     PortalDataBlock,
@@ -120,7 +141,9 @@ class _FakeCheckerIssueSession(_FakeSession):
 
 
 class _FakeProblemSession(_FakeSession):
-    def __init__(self, instance: ProblemInstance, definition: ProblemDefinition | None = None):
+    def __init__(
+        self, instance: ProblemInstance, definition: ProblemDefinition | None = None
+    ):
         super().__init__()
         self.instance = instance
         self.definition = definition
@@ -129,7 +152,11 @@ class _FakeProblemSession(_FakeSession):
         if model is ProblemInstance:
             return self.instance if key == self.instance.id else None
         if model is ProblemDefinition:
-            return self.definition if self.definition is not None and key == self.definition.id else None
+            return (
+                self.definition
+                if self.definition is not None and key == self.definition.id
+                else None
+            )
         return await super().get(model, key)
 
 
@@ -137,9 +164,13 @@ def _empty_action_center_service() -> PortalService:
     service = PortalService()
     service._module_health = AsyncMock(return_value=_module_health_checker_ok())
     service.money.today_actions = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.money.data_blockers = AsyncMock(return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []})
+    service.money.data_blockers = AsyncMock(
+        return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []}
+    )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.manual_costs.list_unresolved_costs_page = AsyncMock(return_value=SimpleNamespace(items=[]))
+    service.manual_costs.list_unresolved_costs_page = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
     service.checker.quality_actions = AsyncMock(return_value=([], None))
     service.card_quality.quality_actions = AsyncMock(return_value=[])
     service.grouping.recommendation_actions = AsyncMock(return_value=([], None))
@@ -148,7 +179,9 @@ def _empty_action_center_service() -> PortalService:
     service.stock_control.action_candidates = AsyncMock(return_value=([], None))
     service.experiments.action_candidates = AsyncMock(return_value=[])
     service.profit_doctor.diagnose = AsyncMock(
-        return_value=ProfitDoctorOut(status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0)
+        return_value=ProfitDoctorOut(
+            status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0
+        )
     )
     service.reputation.action_center_enabled = AsyncMock(return_value=False)
     service.reputation.reputation_actions = AsyncMock(return_value=([], None))
@@ -231,7 +264,8 @@ def _dashboard_bucket(code: str, *, severity: str = "warning", count: int = 1):
         count=count,
         business_impact=f"{code} impact",
         recommended_fix=f"{code} fix",
-        financial_final_blocker=code in {"missing_manual_cost", "missing_cost_blocks_profit"},
+        financial_final_blocker=code
+        in {"missing_manual_cost", "missing_cost_blocks_profit"},
     )
 
 
@@ -240,13 +274,16 @@ def _dashboard_health(*, issue_buckets=None):
     return SimpleNamespace(
         account_id=1,
         issue_buckets=buckets,
-        all_open_issues_total=sum(int(getattr(item, "count", 0) or 0) for item in buckets),
+        all_open_issues_total=sum(
+            int(getattr(item, "count", 0) or 0) for item in buckets
+        ),
         open_issues_total=sum(int(getattr(item, "count", 0) or 0) for item in buckets),
         active_sku_count=42,
         all_open_stock_issue_count=sum(
             int(getattr(item, "count", 0) or 0)
             for item in buckets
-            if getattr(item, "code", "") in {"stock_without_sales", "dead_stock", "sales_without_stock"}
+            if getattr(item, "code", "")
+            in {"stock_without_sales", "dead_stock", "sales_without_stock"}
         ),
         missing_manual_cost_count=sum(
             int(getattr(item, "count", 0) or 0)
@@ -257,9 +294,17 @@ def _dashboard_health(*, issue_buckets=None):
     )
 
 
-def _dashboard_sources(status_by_code: dict[str, str] | None = None) -> list[PortalDataReadinessSource]:
+def _dashboard_sources(
+    status_by_code: dict[str, str] | None = None,
+) -> list[PortalDataReadinessSource]:
     status_by_code = status_by_code or {}
-    source_codes = sorted({source for sources in PortalService.DASHBOARD_PULSE_SOURCE_CODES.values() for source in sources})
+    source_codes = sorted(
+        {
+            source
+            for sources in PortalService.DASHBOARD_PULSE_SOURCE_CODES.values()
+            for source in sources
+        }
+    )
     return [
         PortalDataReadinessSource(
             source_code=source_code,
@@ -268,39 +313,67 @@ def _dashboard_sources(status_by_code: dict[str, str] | None = None) -> list[Por
             last_synced_at=datetime(2026, 7, 12, 8, 0, tzinfo=timezone.utc),
             freshness_hours=1.0,
             required_for=["Dashboard"],
-            blocks_calculation=[] if status_by_code.get(source_code, "fresh") == "fresh" else ["Dashboard"],
+            blocks_calculation=[]
+            if status_by_code.get(source_code, "fresh") == "fresh"
+            else ["Dashboard"],
             target_href="/admin",
         )
         for source_code in source_codes
     ]
 
 
-def _dashboard_sync(status_by_code: dict[str, str] | None = None) -> PortalDataSyncStatusRead:
+def _dashboard_sync(
+    status_by_code: dict[str, str] | None = None,
+) -> PortalDataSyncStatusRead:
     sources = _dashboard_sources(status_by_code)
     return PortalDataSyncStatusRead(
         account_id=1,
-        overall_state="ok" if all(item.status == "fresh" for item in sources) else "warning",
+        overall_state="ok"
+        if all(item.status == "fresh" for item in sources)
+        else "warning",
         sources=sources,
     )
 
 
-def _dashboard_service(*, issue_buckets=None, source_statuses: dict[str, str] | None = None, blockers=None, warnings=None) -> PortalService:
+def _dashboard_service(
+    *,
+    issue_buckets=None,
+    source_statuses: dict[str, str] | None = None,
+    blockers=None,
+    warnings=None,
+) -> PortalService:
     service = PortalService()
     sync_status = _dashboard_sync(source_statuses)
     health = _dashboard_health(issue_buckets=issue_buckets)
     service.money.summary = AsyncMock(
         return_value={
-            "kpis": {"revenue": 100000.0, "margin_percent": 18.5, "stock_value": 45000.0},
+            "kpis": {
+                "revenue": 100000.0,
+                "margin_percent": 18.5,
+                "stock_value": 45000.0,
+            },
             "cash_and_stock": {"stock_value": 45000.0},
         }
     )
     service.operator_snapshots.data_health = AsyncMock(return_value=health)
-    service.money.data_blockers = AsyncMock(return_value=SimpleNamespace(blockers=list(blockers or []), warnings=list(warnings or [])))
+    service.money.data_blockers = AsyncMock(
+        return_value=SimpleNamespace(
+            blockers=list(blockers or []), warnings=list(warnings or [])
+        )
+    )
     service.data_sync_status = AsyncMock(return_value=sync_status)
-    service.data_readiness = AsyncMock(return_value=SimpleNamespace(sources=sync_status.sources, sync_status=sync_status))
-    service.money.today_actions = AsyncMock(return_value=SimpleNamespace(items=[], owner_focus_actions=[]))
+    service.data_readiness = AsyncMock(
+        return_value=SimpleNamespace(
+            sources=sync_status.sources, sync_status=sync_status
+        )
+    )
+    service.money.today_actions = AsyncMock(
+        return_value=SimpleNamespace(items=[], owner_focus_actions=[])
+    )
     service.result_tracking.list_results = AsyncMock(
-        return_value=SimpleNamespace(status="ok", total=0, summary={}, by_outcome={}, recent_events=[], items=[])
+        return_value=SimpleNamespace(
+            status="ok", total=0, summary={}, by_outcome={}, recent_events=[], items=[]
+        )
     )
     return service
 
@@ -321,7 +394,11 @@ def _doctor_result() -> ProfitDoctorOut:
         reason="Прибыль товара ниже нуля.",
         priority=Priority.P1,
         trust_state=TrustState.PROVISIONAL,
-        data={"estimated_impact_amount": 5000.0, "vendor_code": "VC-1", "product_title": "Article"},
+        data={
+            "estimated_impact_amount": 5000.0,
+            "vendor_code": "VC-1",
+            "product_title": "Article",
+        },
     )
     action = UnifiedActionOut(
         id="action:finance:profit_leak:1001",
@@ -382,7 +459,9 @@ def _product360_problem_action(
         source_endpoint="GET /api/v1/portal/products/{nm_id}",
         row_count=1,
         sample_rows=[{"nm_id": 1001, "problem_code": problem_code}],
-        missing_data=["cost_price: source_data_missing"] if impact_type == "data_blocker" else [],
+        missing_data=["cost_price: source_data_missing"]
+        if impact_type == "data_blocker"
+        else [],
         recheck_rule="Re-check after source data changes.",
     )
     return PortalActionRead(
@@ -413,11 +492,27 @@ def _product360_problem_action(
             "allowed_actions": allowed,
             "evidence_ledger": evidence.model_dump(mode="json"),
             "result_summary": {
-                "status_flow": {"initial_status": "new", "current_status": status, "changed": status != "new"},
-                "before_snapshot": {"money_impact_amount": amount, "impact_type": impact_type},
-                "current_snapshot": {"status": status, "money_impact_amount": amount, "impact_type": impact_type},
+                "status_flow": {
+                    "initial_status": "new",
+                    "current_status": status,
+                    "changed": status != "new",
+                },
+                "before_snapshot": {
+                    "money_impact_amount": amount,
+                    "impact_type": impact_type,
+                },
+                "current_snapshot": {
+                    "status": status,
+                    "money_impact_amount": amount,
+                    "impact_type": impact_type,
+                },
                 "finance_windows": {},
-                "money_at_risk": {"before": amount, "after": None, "delta": None, "currency": "RUB"},
+                "money_at_risk": {
+                    "before": amount,
+                    "after": None,
+                    "delta": None,
+                    "currency": "RUB",
+                },
             },
         },
         evidence_ledger=evidence,
@@ -429,7 +524,9 @@ def _product360_problem_action(
     )
 
 
-def _product360_result_event(problem_instance_id: int, *, outcome: str = "neutral") -> PortalResultEventRead:
+def _product360_result_event(
+    problem_instance_id: int, *, outcome: str = "neutral"
+) -> PortalResultEventRead:
     return PortalResultEventRead(
         id=f"result:{problem_instance_id}",
         account_id=1,
@@ -446,24 +543,38 @@ def _product360_result_event(problem_instance_id: int, *, outcome: str = "neutra
 
 
 @pytest.mark.asyncio
-async def test_dashboard_overview_stock_without_sales_prevents_stock_all_clear() -> None:
-    service = _dashboard_service(issue_buckets=[_dashboard_bucket("stock_without_sales", severity="warning", count=7)])
+async def test_dashboard_overview_stock_without_sales_prevents_stock_all_clear() -> (
+    None
+):
+    service = _dashboard_service(
+        issue_buckets=[
+            _dashboard_bucket("stock_without_sales", severity="warning", count=7)
+        ]
+    )
 
-    overview = await service.dashboard_overview(_FakeSession(), account_id=1, date_from=None, date_to=None, limit=10)
+    overview = await service.dashboard_overview(
+        _FakeSession(), account_id=1, date_from=None, date_to=None, limit=10
+    )
 
     stock = _pulse(overview, "stock")
     assert stock.state == "warning"
     assert stock.has_risk is True
     assert stock.impact_type == "business_signal"
     assert stock.primary_action.screen_path == "/products"
-    assert any(item.code == "stock_without_sales" for item in overview.top_attention_items)
+    assert any(
+        item.code == "stock_without_sales" for item in overview.top_attention_items
+    )
 
 
 @pytest.mark.asyncio
 async def test_dashboard_overview_sales_or_stocks_stale_prevents_ok_state() -> None:
-    service = _dashboard_service(source_statuses={"sales_orders": "stale", "stocks": "stale"})
+    service = _dashboard_service(
+        source_statuses={"sales_orders": "stale", "stocks": "stale"}
+    )
 
-    overview = await service.dashboard_overview(_FakeSession(), account_id=1, date_from=None, date_to=None, limit=10)
+    overview = await service.dashboard_overview(
+        _FakeSession(), account_id=1, date_from=None, date_to=None, limit=10
+    )
 
     assert _pulse(overview, "sales").state == "stale"
     stock = _pulse(overview, "stock")
@@ -474,9 +585,15 @@ async def test_dashboard_overview_sales_or_stocks_stale_prevents_ok_state() -> N
 
 @pytest.mark.asyncio
 async def test_dashboard_overview_missing_cost_blocks_profit_and_data() -> None:
-    service = _dashboard_service(issue_buckets=[_dashboard_bucket("missing_manual_cost", severity="critical", count=3)])
+    service = _dashboard_service(
+        issue_buckets=[
+            _dashboard_bucket("missing_manual_cost", severity="critical", count=3)
+        ]
+    )
 
-    overview = await service.dashboard_overview(_FakeSession(), account_id=1, date_from=None, date_to=None, limit=10)
+    overview = await service.dashboard_overview(
+        _FakeSession(), account_id=1, date_from=None, date_to=None, limit=10
+    )
 
     profit = _pulse(overview, "profit_margin")
     data = _pulse(overview, "data")
@@ -489,10 +606,20 @@ async def test_dashboard_overview_missing_cost_blocks_profit_and_data() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dashboard_overview_finance_mismatch_is_hidden_from_owner_attention() -> None:
-    service = _dashboard_service(issue_buckets=[_dashboard_bucket("finance_reconciliation_mismatch", severity="error", count=2)])
+async def test_dashboard_overview_finance_mismatch_is_hidden_from_owner_attention() -> (
+    None
+):
+    service = _dashboard_service(
+        issue_buckets=[
+            _dashboard_bucket(
+                "finance_reconciliation_mismatch", severity="error", count=2
+            )
+        ]
+    )
 
-    overview = await service.dashboard_overview(_FakeSession(), account_id=1, date_from=None, date_to=None, limit=10)
+    overview = await service.dashboard_overview(
+        _FakeSession(), account_id=1, date_from=None, date_to=None, limit=10
+    )
 
     money = _pulse(overview, "money_at_risk")
     data = _pulse(overview, "data")
@@ -503,10 +630,14 @@ async def test_dashboard_overview_finance_mismatch_is_hidden_from_owner_attentio
 
 
 @pytest.mark.asyncio
-async def test_dashboard_overview_clean_fresh_checked_detector_can_return_ok_and_no_risk() -> None:
+async def test_dashboard_overview_clean_fresh_checked_detector_can_return_ok_and_no_risk() -> (
+    None
+):
     service = _dashboard_service()
 
-    overview = await service.dashboard_overview(_FakeSession(), account_id=1, date_from=None, date_to=None, limit=10)
+    overview = await service.dashboard_overview(
+        _FakeSession(), account_id=1, date_from=None, date_to=None, limit=10
+    )
 
     stock = _pulse(overview, "stock")
     assert stock.state == "ok"
@@ -518,7 +649,9 @@ async def test_dashboard_overview_clean_fresh_checked_detector_can_return_ok_and
 
 
 @pytest.mark.asyncio
-async def test_dashboard_overview_top_attention_items_use_highest_severity_buckets() -> None:
+async def test_dashboard_overview_top_attention_items_use_highest_severity_buckets() -> (
+    None
+):
     service = _dashboard_service(
         issue_buckets=[
             _dashboard_bucket("stock_without_sales", severity="warning", count=10),
@@ -527,7 +660,9 @@ async def test_dashboard_overview_top_attention_items_use_highest_severity_bucke
         ]
     )
 
-    overview = await service.dashboard_overview(_FakeSession(), account_id=1, date_from=None, date_to=None, limit=10)
+    overview = await service.dashboard_overview(
+        _FakeSession(), account_id=1, date_from=None, date_to=None, limit=10
+    )
 
     assert overview.top_attention_items[0].code == "missing_manual_cost"
     assert {item.code for item in overview.top_attention_items[:3]} == {
@@ -539,9 +674,15 @@ async def test_dashboard_overview_top_attention_items_use_highest_severity_bucke
 
 @pytest.mark.asyncio
 async def test_dashboard_overview_next_action_routes_to_exact_screen() -> None:
-    service = _dashboard_service(issue_buckets=[_dashboard_bucket("sales_without_stock", severity="warning", count=1)])
+    service = _dashboard_service(
+        issue_buckets=[
+            _dashboard_bucket("sales_without_stock", severity="warning", count=1)
+        ]
+    )
 
-    overview = await service.dashboard_overview(_FakeSession(), account_id=1, date_from=None, date_to=None, limit=10)
+    overview = await service.dashboard_overview(
+        _FakeSession(), account_id=1, date_from=None, date_to=None, limit=10
+    )
 
     attention = overview.top_attention_items[0]
     assert attention.code == "sales_without_stock"
@@ -552,16 +693,22 @@ async def test_dashboard_overview_next_action_routes_to_exact_screen() -> None:
 def _data_warning_action(code: str, **extra):
     service = PortalService()
     rows = [{"code": code, "title": extra.pop("title", code), **extra}]
-    return service._blocker_actions(SimpleNamespace(meta={"account_id": 1}, blockers=[], warnings=rows))[0]
+    return service._blocker_actions(
+        SimpleNamespace(meta={"account_id": 1}, blockers=[], warnings=rows)
+    )[0]
 
 
 def _data_blocker_action(code: str, **extra):
     service = PortalService()
     rows = [{"code": code, "title": extra.pop("title", code), **extra}]
-    return service._blocker_actions(SimpleNamespace(meta={"account_id": 1}, blockers=rows, warnings=[]))[0]
+    return service._blocker_actions(
+        SimpleNamespace(meta={"account_id": 1}, blockers=rows, warnings=[])
+    )[0]
 
 
-def test_portal_blocker_actions_stock_without_sales_is_business_signal_not_data_blocker() -> None:
+def test_portal_blocker_actions_stock_without_sales_is_business_signal_not_data_blocker() -> (
+    None
+):
     action = _data_warning_action("stock_without_sales", affected_amount=12000.0)
 
     assert action.source_module == "data_quality"
@@ -577,7 +724,9 @@ def test_portal_blocker_actions_stock_without_sales_is_business_signal_not_data_
     assert action.money_trust.impact_kind == "blocked_cash"
 
 
-def test_portal_blocker_actions_missing_chrt_id_is_sync_warning_not_user_blocker() -> None:
+def test_portal_blocker_actions_missing_chrt_id_is_sync_warning_not_user_blocker() -> (
+    None
+):
     action = _data_warning_action("missing_chrt_id")
 
     assert action.impact_type == "system_warning"
@@ -593,9 +742,17 @@ def test_portal_blocker_actions_missing_chrt_id_is_sync_warning_not_user_blocker
 
 def test_portal_blocker_actions_finance_mismatch_is_hidden() -> None:
     service = PortalService()
-    rows = [{"code": "finance_reconciliation_mismatch", "title": "finance_reconciliation_mismatch", "affected_revenue": 5000.0}]
+    rows = [
+        {
+            "code": "finance_reconciliation_mismatch",
+            "title": "finance_reconciliation_mismatch",
+            "affected_revenue": 5000.0,
+        }
+    ]
 
-    actions = service._blocker_actions(SimpleNamespace(meta={"account_id": 1}, blockers=[], warnings=rows))
+    actions = service._blocker_actions(
+        SimpleNamespace(meta={"account_id": 1}, blockers=[], warnings=rows)
+    )
 
     assert actions == []
 
@@ -614,7 +771,9 @@ def test_portal_blocker_actions_missing_manual_cost_remains_data_blocker() -> No
     assert action.money_trust.impact_kind in {"data_blocker", "blocked_revenue"}
 
 
-def test_portal_action_read_data_quality_payload_issue_nature_overrides_data_blocker_default() -> None:
+def test_portal_action_read_data_quality_payload_issue_nature_overrides_data_blocker_default() -> (
+    None
+):
     action = PortalActionRead(
         id="data_warning:stock_without_sales",
         source="data_warning",
@@ -680,7 +839,12 @@ def _product360_control_panel_service(
                 "subject_name": "Sneakers",
                 "sync_freshness": {"finance": "fresh"},
             },
-            money={"revenue": 1000.0, "for_pay": 900.0, "profit": {"after_source_ads": 250.0}, "price": 1990.0},
+            money={
+                "revenue": 1000.0,
+                "for_pay": 900.0,
+                "profit": {"after_source_ads": 250.0},
+                "price": 1990.0,
+            },
             kpis={"revenue": 1000.0},
             stock={"quantity": 7.0, "days_left": 5},
             ads={"spend": 50.0},
@@ -699,18 +863,27 @@ def _product360_control_panel_service(
         )
     )
     service.money.money.dashboard.article_audit = AsyncMock(return_value=None)
-    service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=list(data_issues or [])))
+    service.data_quality.list_issues = AsyncMock(
+        return_value=SimpleNamespace(items=list(data_issues or []))
+    )
     service.manual_costs.list_unresolved_costs_for_product = AsyncMock(return_value=[])
     service.checker.product_quality = AsyncMock(
-        return_value=checker_quality or PortalProductQualityRead(status="ok", nm_id=1001, score=88)
+        return_value=checker_quality
+        or PortalProductQualityRead(status="ok", nm_id=1001, score=88)
     )
     service.grouping_beta.product_grouping = AsyncMock(
-        return_value=PortalProductGroupingRead(status="disabled", nm_id=1001, message="grouping beta is disabled")
+        return_value=PortalProductGroupingRead(
+            status="disabled", nm_id=1001, message="grouping beta is disabled"
+        )
     )
     service.profit_doctor.diagnose = AsyncMock(
-        return_value=ProfitDoctorOut(status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0)
+        return_value=ProfitDoctorOut(
+            status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0
+        )
     )
-    service._problem_instance_actions = AsyncMock(return_value=list(problem_actions or []))
+    service._problem_instance_actions = AsyncMock(
+        return_value=list(problem_actions or [])
+    )
     service.result_tracking.list_results = AsyncMock(
         return_value=PortalResultEventsPage(
             total=len(result_events or []),
@@ -720,31 +893,50 @@ def _product360_control_panel_service(
             summary={"result_event_count": len(result_events or [])},
         )
     )
-    service.experiments.list_product_events = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.experiments.product_block = AsyncMock(return_value={"status": "empty", "active_experiments": [], "latest_results": []})
+    service.experiments.list_product_events = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
+    service.experiments.product_block = AsyncMock(
+        return_value={"status": "empty", "active_experiments": [], "latest_results": []}
+    )
     service.experiments.action_candidates = AsyncMock(return_value=[])
     service.ab_photo_tests.product_block = AsyncMock(return_value=None)
-    service.photo_studio.status = AsyncMock(return_value=PortalDataBlock(status="empty", data={}))
+    service.photo_studio.status = AsyncMock(
+        return_value=PortalDataBlock(status="empty", data={})
+    )
     service.stock_control.product_stock_insights = AsyncMock(
-        return_value=PortalStockOpsInsightsRead(status="empty", account_id=1, nm_id=1001)
+        return_value=PortalStockOpsInsightsRead(
+            status="empty", account_id=1, nm_id=1001
+        )
     )
     service.stock_control.action_candidates = AsyncMock(return_value=([], None))
-    service.claims_adapter.product_360 = AsyncMock(return_value={"status": "not_configured", "items": []})
+    service.claims_adapter.product_360 = AsyncMock(
+        return_value={"status": "not_configured", "items": []}
+    )
     service.claims_adapter.claims_actions = AsyncMock(return_value=([], None))
-    service.claims_factory.list_cases = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.reputation.product_360 = AsyncMock(return_value=PortalDataBlock(status="not_configured", data={}))
+    service.claims_factory.list_cases = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
+    service.reputation.product_360 = AsyncMock(
+        return_value=PortalDataBlock(status="not_configured", data={})
+    )
     service.reputation.reputation_actions = AsyncMock(return_value=([], None))
     service.reputation_adapter.reputation_actions = AsyncMock(return_value=([], None))
     return service
 
 
 @pytest.mark.asyncio
-async def test_portal_overview_success_uses_money_summary_blockers_actions_and_products() -> None:
+async def test_portal_overview_success_uses_money_summary_blockers_actions_and_products() -> (
+    None
+):
     service = PortalService()
     service._module_health = AsyncMock(return_value=_module_health())
     service.money.summary = AsyncMock(
         return_value={
-            "trust": {"trust_state": "operational_provisional", "blocked_reasons": ["finance_mismatch"]},
+            "trust": {
+                "trust_state": "operational_provisional",
+                "blocked_reasons": ["finance_mismatch"],
+            },
             "finance_reconciliation": {"closed_finance_date_to": "2026-05-31"},
             "cost_coverage": {"status": "partial"},
             "quality": {"supplier_cost_coverage_percent": 80.0},
@@ -836,11 +1028,15 @@ async def test_portal_overview_without_account_returns_safe_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_portal_overview_money_unavailable_preserves_unknown_values_as_unavailable() -> None:
+async def test_portal_overview_money_unavailable_preserves_unknown_values_as_unavailable() -> (
+    None
+):
     service = PortalService()
     service._module_health = AsyncMock(return_value=_module_health())
     service.money.summary = AsyncMock(side_effect=RuntimeError("boom"))
-    service.money.data_blockers = AsyncMock(return_value={"blockers": [], "warnings": []})
+    service.money.data_blockers = AsyncMock(
+        return_value={"blockers": [], "warnings": []}
+    )
     service.money.today_actions = AsyncMock(return_value=SimpleNamespace(items=[]))
     service.money.articles = AsyncMock(return_value=SimpleNamespace(items=[]))
     service.profit_doctor.diagnose = AsyncMock(return_value=_doctor_result())
@@ -855,7 +1051,10 @@ async def test_portal_overview_money_unavailable_preserves_unknown_values_as_una
         limit=10,
     )
 
-    assert overview.money_summary == {"status": "unavailable", "message": "money_summary is not available"}
+    assert overview.money_summary == {
+        "status": "unavailable",
+        "message": "money_summary is not available",
+    }
     assert overview.cost_status["status"] == "unavailable"
     assert "money_summary" in overview.unavailable_sources
 
@@ -864,13 +1063,21 @@ async def test_portal_overview_money_unavailable_preserves_unknown_values_as_una
 async def test_portal_overview_optional_module_action_failure_does_not_500() -> None:
     service = PortalService()
     service._module_health = AsyncMock(return_value=_module_health())
-    service.money.summary = AsyncMock(return_value={"trust": {"trust_state": "trusted"}, "kpis": {}})
-    service.money.data_blockers = AsyncMock(return_value={"blockers": [], "warnings": []})
+    service.money.summary = AsyncMock(
+        return_value={"trust": {"trust_state": "trusted"}, "kpis": {}}
+    )
+    service.money.data_blockers = AsyncMock(
+        return_value={"blockers": [], "warnings": []}
+    )
     service.money.today_actions = AsyncMock(return_value=SimpleNamespace(items=[]))
     service.money.articles = AsyncMock(return_value=SimpleNamespace(items=[]))
     service.profit_doctor.diagnose = AsyncMock(return_value=_doctor_result())
-    service.checker.quality_actions = AsyncMock(side_effect=RuntimeError("checker down"))
-    service.grouping.recommendation_actions = AsyncMock(side_effect=RuntimeError("grouping down"))
+    service.checker.quality_actions = AsyncMock(
+        side_effect=RuntimeError("checker down")
+    )
+    service.grouping.recommendation_actions = AsyncMock(
+        side_effect=RuntimeError("grouping down")
+    )
 
     overview = await service.overview(
         _FakeSession(),
@@ -888,8 +1095,12 @@ async def test_portal_overview_optional_module_action_failure_does_not_500() -> 
 async def test_portal_overview_profit_doctor_failure_does_not_500() -> None:
     service = PortalService()
     service._module_health = AsyncMock(return_value=_module_health())
-    service.money.summary = AsyncMock(return_value={"trust": {"trust_state": "trusted"}, "kpis": {}})
-    service.money.data_blockers = AsyncMock(return_value={"blockers": [], "warnings": []})
+    service.money.summary = AsyncMock(
+        return_value={"trust": {"trust_state": "trusted"}, "kpis": {}}
+    )
+    service.money.data_blockers = AsyncMock(
+        return_value={"blockers": [], "warnings": []}
+    )
     service.money.today_actions = AsyncMock(return_value=SimpleNamespace(items=[]))
     service.money.articles = AsyncMock(return_value=SimpleNamespace(items=[]))
     service.profit_doctor.diagnose = AsyncMock(side_effect=RuntimeError("doctor down"))
@@ -976,7 +1187,9 @@ async def test_portal_actions_aggregates_and_filters_finance_dq_and_costs() -> N
     service.checker.quality_actions = AsyncMock(return_value=([], None))
     service.grouping.recommendation_actions = AsyncMock(return_value=([], None))
     service.profit_doctor.diagnose = AsyncMock(
-        return_value=ProfitDoctorOut(status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0)
+        return_value=ProfitDoctorOut(
+            status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0
+        )
     )
 
     page = await service.actions(
@@ -1002,9 +1215,13 @@ async def test_portal_actions_aggregates_and_filters_finance_dq_and_costs() -> N
 async def test_portal_actions_includes_checker_quality_actions() -> None:
     service = PortalService()
     service.money.today_actions = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.money.data_blockers = AsyncMock(return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []})
+    service.money.data_blockers = AsyncMock(
+        return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []}
+    )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.manual_costs.list_unresolved_costs_page = AsyncMock(return_value=SimpleNamespace(items=[]))
+    service.manual_costs.list_unresolved_costs_page = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
     service.checker.quality_actions = AsyncMock(
         return_value=(
             [
@@ -1029,7 +1246,9 @@ async def test_portal_actions_includes_checker_quality_actions() -> None:
     )
     service.grouping.recommendation_actions = AsyncMock(return_value=([], None))
     service.profit_doctor.diagnose = AsyncMock(
-        return_value=ProfitDoctorOut(status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0)
+        return_value=ProfitDoctorOut(
+            status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0
+        )
     )
 
     page = await service.actions(
@@ -1057,19 +1276,37 @@ async def test_portal_actions_includes_checker_quality_actions() -> None:
 async def test_portal_actions_default_excludes_beta_sources() -> None:
     service = PortalService()
     service.money.today_actions = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.money.data_blockers = AsyncMock(return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []})
+    service.money.data_blockers = AsyncMock(
+        return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []}
+    )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.manual_costs.list_unresolved_costs_page = AsyncMock(return_value=SimpleNamespace(items=[]))
+    service.manual_costs.list_unresolved_costs_page = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
     service.checker.quality_actions = AsyncMock(return_value=([], None))
     service.card_quality.quality_actions = AsyncMock(return_value=[])
     service._module_health = AsyncMock(return_value=_module_health_checker_ok())
-    service.grouping.recommendation_actions = AsyncMock(side_effect=AssertionError("grouping must be beta gated"))
-    service.grouping_beta.recommendation_actions = AsyncMock(side_effect=AssertionError("grouping_beta must be beta gated"))
-    service.reputation_adapter.reputation_actions = AsyncMock(side_effect=AssertionError("reputation must be beta gated"))
-    service.claims_adapter.claims_actions = AsyncMock(side_effect=AssertionError("claims must be beta gated"))
-    service.stock_control.action_candidates = AsyncMock(side_effect=AssertionError("stockops must be beta gated"))
-    service.experiments.action_candidates = AsyncMock(side_effect=AssertionError("experiments must be beta gated"))
-    service.profit_doctor.diagnose = AsyncMock(side_effect=AssertionError("profit doctor must be beta gated"))
+    service.grouping.recommendation_actions = AsyncMock(
+        side_effect=AssertionError("grouping must be beta gated")
+    )
+    service.grouping_beta.recommendation_actions = AsyncMock(
+        side_effect=AssertionError("grouping_beta must be beta gated")
+    )
+    service.reputation_adapter.reputation_actions = AsyncMock(
+        side_effect=AssertionError("reputation must be beta gated")
+    )
+    service.claims_adapter.claims_actions = AsyncMock(
+        side_effect=AssertionError("claims must be beta gated")
+    )
+    service.stock_control.action_candidates = AsyncMock(
+        side_effect=AssertionError("stockops must be beta gated")
+    )
+    service.experiments.action_candidates = AsyncMock(
+        side_effect=AssertionError("experiments must be beta gated")
+    )
+    service.profit_doctor.diagnose = AsyncMock(
+        side_effect=AssertionError("profit doctor must be beta gated")
+    )
     beta_unified = UnifiedAction(
         id=900,
         account_id=1,
@@ -1113,7 +1350,9 @@ async def test_portal_actions_default_excludes_beta_sources() -> None:
 
 
 @pytest.mark.asyncio
-async def test_portal_actions_dynamic_problem_flag_disables_dynamic_source_but_keeps_legacy_fallback() -> None:
+async def test_portal_actions_dynamic_problem_flag_disables_dynamic_source_but_keeps_legacy_fallback() -> (
+    None
+):
     service = PortalService()
     service.settings = SimpleNamespace(
         dynamic_problem_engine_enabled=False,
@@ -1121,10 +1360,16 @@ async def test_portal_actions_dynamic_problem_flag_disables_dynamic_source_but_k
         show_legacy_problem_cards=True,
     )
     service.money.today_actions = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.money.data_blockers = AsyncMock(return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []})
+    service.money.data_blockers = AsyncMock(
+        return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []}
+    )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.manual_costs.list_unresolved_costs_page = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service._problem_instance_actions = AsyncMock(side_effect=AssertionError("dynamic source must be skipped"))
+    service.manual_costs.list_unresolved_costs_page = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
+    service._problem_instance_actions = AsyncMock(
+        side_effect=AssertionError("dynamic source must be skipped")
+    )
     service.checker.quality_actions = AsyncMock(return_value=([], None))
     service.card_quality.quality_actions = AsyncMock(return_value=[])
     service._module_health = AsyncMock(return_value=_module_health_checker_ok())
@@ -1151,9 +1396,13 @@ async def test_portal_actions_dynamic_problem_flag_disables_dynamic_source_but_k
 async def test_portal_actions_include_beta_true_keeps_wide_sources() -> None:
     service = PortalService()
     service.money.today_actions = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.money.data_blockers = AsyncMock(return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []})
+    service.money.data_blockers = AsyncMock(
+        return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []}
+    )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.manual_costs.list_unresolved_costs_page = AsyncMock(return_value=SimpleNamespace(items=[]))
+    service.manual_costs.list_unresolved_costs_page = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
     service.checker.quality_actions = AsyncMock(return_value=([], None))
     service.card_quality.quality_actions = AsyncMock(return_value=[])
     service._module_health = AsyncMock(return_value=_module_health())
@@ -1209,7 +1458,9 @@ async def test_portal_actions_include_beta_true_keeps_wide_sources() -> None:
     )
     service.experiments.action_candidates = AsyncMock(return_value=[])
     service.profit_doctor.diagnose = AsyncMock(
-        return_value=ProfitDoctorOut(status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0)
+        return_value=ProfitDoctorOut(
+            status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0
+        )
     )
 
     page = await service.actions(
@@ -1253,7 +1504,9 @@ async def test_portal_actions_default_items_have_frontend_contract_fields() -> N
             ]
         )
     )
-    service.money.data_blockers = AsyncMock(return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []})
+    service.money.data_blockers = AsyncMock(
+        return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []}
+    )
     service.data_quality.list_issues = AsyncMock(
         return_value=SimpleNamespace(
             items=[
@@ -1270,7 +1523,9 @@ async def test_portal_actions_default_items_have_frontend_contract_fields() -> N
             ]
         )
     )
-    service.manual_costs.list_unresolved_costs_page = AsyncMock(return_value=SimpleNamespace(items=[]))
+    service.manual_costs.list_unresolved_costs_page = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
     service.checker.quality_actions = AsyncMock(
         return_value=(
             [
@@ -1364,7 +1619,14 @@ async def test_portal_actions_default_items_have_frontend_contract_fields() -> N
         assert item.title
         assert item.priority in {"P0", "P1", "P2", "P3", "P4"}
         assert item.severity in {"critical", "high", "medium", "low"}
-        assert item.status in {"new", "in_progress", "done", "postponed", "ignored", "blocked"}
+        assert item.status in {
+            "new",
+            "in_progress",
+            "done",
+            "postponed",
+            "ignored",
+            "blocked",
+        }
         assert item.confidence in {"high", "medium", "low"}
         assert isinstance(item.can_update_status, bool)
         assert isinstance(item.can_update, bool)
@@ -1429,17 +1691,25 @@ async def test_portal_update_manual_task_item_persists_product_progress() -> Non
 
 
 @pytest.mark.asyncio
-async def test_portal_actions_not_configured_checker_adds_setup_action_without_fake_product_issue() -> None:
+async def test_portal_actions_not_configured_checker_adds_setup_action_without_fake_product_issue() -> (
+    None
+):
     service = PortalService()
     service._module_health = AsyncMock(return_value=_module_health())
     service.money.today_actions = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.money.data_blockers = AsyncMock(return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []})
+    service.money.data_blockers = AsyncMock(
+        return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []}
+    )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.manual_costs.list_unresolved_costs_page = AsyncMock(return_value=SimpleNamespace(items=[]))
+    service.manual_costs.list_unresolved_costs_page = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
     service.checker.quality_actions = AsyncMock(return_value=([], None))
     service.grouping.recommendation_actions = AsyncMock(return_value=([], None))
     service.profit_doctor.diagnose = AsyncMock(
-        return_value=ProfitDoctorOut(status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0)
+        return_value=ProfitDoctorOut(
+            status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0
+        )
     )
 
     page = await service.actions(
@@ -1464,12 +1734,18 @@ async def test_portal_actions_not_configured_checker_adds_setup_action_without_f
 
 
 @pytest.mark.asyncio
-async def test_portal_actions_includes_stockops_signal_actions_without_external_write() -> None:
+async def test_portal_actions_includes_stockops_signal_actions_without_external_write() -> (
+    None
+):
     service = PortalService()
     service.money.today_actions = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.money.data_blockers = AsyncMock(return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []})
+    service.money.data_blockers = AsyncMock(
+        return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []}
+    )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.manual_costs.list_unresolved_costs_page = AsyncMock(return_value=SimpleNamespace(items=[]))
+    service.manual_costs.list_unresolved_costs_page = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
     service.checker.quality_actions = AsyncMock(return_value=([], None))
     service.grouping.recommendation_actions = AsyncMock(return_value=([], None))
     service.reputation_adapter.reputation_actions = AsyncMock(return_value=([], None))
@@ -1488,14 +1764,20 @@ async def test_portal_actions_includes_stockops_signal_actions_without_external_
                     title="Review stock redistribution candidate",
                     priority="P1",
                     severity="high",
-                    payload={"run_id": 1, "write_status": "disabled", "marketplace_change": False},
+                    payload={
+                        "run_id": 1,
+                        "write_status": "disabled",
+                        "marketplace_change": False,
+                    },
                 )
             ],
             None,
         )
     )
     service.profit_doctor.diagnose = AsyncMock(
-        return_value=ProfitDoctorOut(status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0)
+        return_value=ProfitDoctorOut(
+            status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0
+        )
     )
 
     page = await service.actions(
@@ -1523,9 +1805,13 @@ async def test_portal_actions_includes_stockops_signal_actions_without_external_
 async def test_portal_actions_includes_claims_report_anomaly_action() -> None:
     service = PortalService()
     service.money.today_actions = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.money.data_blockers = AsyncMock(return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []})
+    service.money.data_blockers = AsyncMock(
+        return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []}
+    )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.manual_costs.list_unresolved_costs_page = AsyncMock(return_value=SimpleNamespace(items=[]))
+    service.manual_costs.list_unresolved_costs_page = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
     service.checker.quality_actions = AsyncMock(return_value=([], None))
     service.grouping.recommendation_actions = AsyncMock(return_value=([], None))
     service.reputation_adapter.reputation_actions = AsyncMock(return_value=([], None))
@@ -1547,7 +1833,9 @@ async def test_portal_actions_includes_claims_report_anomaly_action() -> None:
         )
     )
     service.profit_doctor.diagnose = AsyncMock(
-        return_value=ProfitDoctorOut(status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0)
+        return_value=ProfitDoctorOut(
+            status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0
+        )
     )
 
     page = await service.actions(
@@ -1571,7 +1859,9 @@ async def test_portal_actions_includes_claims_report_anomaly_action() -> None:
 
 
 @pytest.mark.asyncio
-async def test_portal_actions_merge_unified_and_generated_modules_with_filters_and_priority() -> None:
+async def test_portal_actions_merge_unified_and_generated_modules_with_filters_and_priority() -> (
+    None
+):
     service = PortalService()
     service.money.today_actions = AsyncMock(
         return_value=SimpleNamespace(
@@ -1589,9 +1879,13 @@ async def test_portal_actions_merge_unified_and_generated_modules_with_filters_a
             ]
         )
     )
-    service.money.data_blockers = AsyncMock(return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []})
+    service.money.data_blockers = AsyncMock(
+        return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []}
+    )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.manual_costs.list_unresolved_costs_page = AsyncMock(return_value=SimpleNamespace(items=[]))
+    service.manual_costs.list_unresolved_costs_page = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
     service.checker.quality_actions = AsyncMock(
         return_value=(
             [
@@ -1692,7 +1986,12 @@ async def test_portal_actions_merge_unified_and_generated_modules_with_filters_a
     assert page.items[0].can_update is True
     assert page.items[0].guided_fix["method"] == "upload_costs"
     assert page.items[0].guided_fix["legacy_method"] == "upload_cost"
-    assert any(item.source_module == "claims" and item.can_update is True and item.status == "done" for item in page.items)
+    assert any(
+        item.source_module == "claims"
+        and item.can_update is True
+        and item.status == "done"
+        for item in page.items
+    )
 
     claims_only = await service.actions(
         _FakeSession(unified_actions=[persisted, shadow_claim]),
@@ -1737,9 +2036,13 @@ async def test_portal_actions_dedupes_finance_and_doctor_for_same_problem() -> N
             ]
         )
     )
-    service.money.data_blockers = AsyncMock(return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []})
+    service.money.data_blockers = AsyncMock(
+        return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []}
+    )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.manual_costs.list_unresolved_costs_page = AsyncMock(return_value=SimpleNamespace(items=[]))
+    service.manual_costs.list_unresolved_costs_page = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
     service.checker.quality_actions = AsyncMock(return_value=([], None))
     service.grouping.recommendation_actions = AsyncMock(return_value=([], None))
     service.reputation_adapter.reputation_actions = AsyncMock(return_value=([], None))
@@ -1792,16 +2095,23 @@ async def test_portal_actions_dedupes_finance_and_doctor_for_same_problem() -> N
     assert item.expected_effect_amount == 7000.0
     assert "Product 360" in item.next_step
     assert len(item.payload["source_references"]) == 2
-    assert {ref["source"] for ref in item.payload["source_references"]} == {"finance_actions", "profit_doctor"}
+    assert {ref["source"] for ref in item.payload["source_references"]} == {
+        "finance_actions",
+        "profit_doctor",
+    }
 
 
 @pytest.mark.asyncio
 async def test_portal_actions_dedupes_duplicate_actions_from_same_source() -> None:
     service = PortalService()
     service.money.today_actions = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.money.data_blockers = AsyncMock(return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []})
+    service.money.data_blockers = AsyncMock(
+        return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []}
+    )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.manual_costs.list_unresolved_costs_page = AsyncMock(return_value=SimpleNamespace(items=[]))
+    service.manual_costs.list_unresolved_costs_page = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
     duplicate_a = PortalActionRead(
         id="checker:card:1001:a",
         source="checker_issues",
@@ -1825,12 +2135,16 @@ async def test_portal_actions_dedupes_duplicate_actions_from_same_source() -> No
             "next_step": "Open Product 360 and fix title.",
         }
     )
-    service.checker.quality_actions = AsyncMock(return_value=([duplicate_a, duplicate_b], None))
+    service.checker.quality_actions = AsyncMock(
+        return_value=([duplicate_a, duplicate_b], None)
+    )
     service.grouping.recommendation_actions = AsyncMock(return_value=([], None))
     service.reputation_adapter.reputation_actions = AsyncMock(return_value=([], None))
     service.claims_adapter.claims_actions = AsyncMock(return_value=([], None))
     service.profit_doctor.diagnose = AsyncMock(
-        return_value=ProfitDoctorOut(status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0)
+        return_value=ProfitDoctorOut(
+            status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0
+        )
     )
 
     page = await service.actions(
@@ -1884,6 +2198,76 @@ def test_portal_action_dedupe_keeps_local_card_quality_issues_separate() -> None
     assert [item.source_id for item in deduped] == ["6175", "6176"]
 
 
+def test_portal_checker_content_opportunity_priority_is_capped() -> None:
+    service = PortalService()
+
+    assert (
+        service._priority_from_issue(
+            code="title_too_short",
+            severity="critical",
+            payload={
+                "content_quality_signal": True,
+                "impact_type": "opportunity",
+                "trust_state": "opportunity",
+            },
+        )
+        == "P3"
+    )
+
+    actions = service._checker_actions_from_quality(
+        account_id=1,
+        quality=PortalProductQualityRead(
+            status="ok",
+            nm_id=1001,
+            issues=[
+                {
+                    "id": 77,
+                    "code": "title_too_short",
+                    "severity": "critical",
+                    "category": "title",
+                    "title": "Название короткое",
+                    "score_impact": 20,
+                    "status": "pending",
+                }
+            ],
+        ),
+    )
+
+    assert len(actions) == 1
+    assert actions[0].priority == "P3"
+    assert actions[0].severity == "medium"
+    assert actions[0].impact_type == "opportunity"
+    assert actions[0].trust_state == "opportunity"
+
+
+def test_portal_checker_data_blocker_stays_urgent() -> None:
+    service = PortalService()
+
+    actions = service._checker_actions_from_quality(
+        account_id=1,
+        quality=PortalProductQualityRead(
+            status="ok",
+            nm_id=1001,
+            issues=[
+                {
+                    "id": 78,
+                    "code": "source_data_missing",
+                    "severity": "critical",
+                    "category": "data",
+                    "title": "Нет исходной карточки",
+                    "status": "pending",
+                }
+            ],
+        ),
+    )
+
+    assert len(actions) == 1
+    assert actions[0].priority == "P0"
+    assert actions[0].severity == "critical"
+    assert actions[0].impact_type == "data_blocker"
+    assert actions[0].trust_state == "blocked"
+
+
 @pytest.mark.asyncio
 async def test_portal_actions_preserves_user_status_after_regeneration() -> None:
     service = PortalService()
@@ -1907,9 +2291,13 @@ async def test_portal_actions_preserves_user_status_after_regeneration() -> None
     )
 
     service.money.today_actions = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.money.data_blockers = AsyncMock(return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []})
+    service.money.data_blockers = AsyncMock(
+        return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []}
+    )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.manual_costs.list_unresolved_costs_page = AsyncMock(return_value=SimpleNamespace(items=[]))
+    service.manual_costs.list_unresolved_costs_page = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
     service.checker.quality_actions = AsyncMock(
         return_value=(
             [
@@ -1933,7 +2321,9 @@ async def test_portal_actions_preserves_user_status_after_regeneration() -> None
     service.reputation_adapter.reputation_actions = AsyncMock(return_value=([], None))
     service.claims_adapter.claims_actions = AsyncMock(return_value=([], None))
     service.profit_doctor.diagnose = AsyncMock(
-        return_value=ProfitDoctorOut(status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0)
+        return_value=ProfitDoctorOut(
+            status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0
+        )
     )
 
     page = await service.actions(
@@ -1962,7 +2352,9 @@ async def test_portal_actions_preserves_user_status_after_regeneration() -> None
 
 
 @pytest.mark.asyncio
-async def test_portal_update_action_by_source_ignored_sets_dismissed_audit_fields() -> None:
+async def test_portal_update_action_by_source_ignored_sets_dismissed_audit_fields() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.ensure_before_snapshot = AsyncMock()
     service.result_tracking.create_action_completed_event = AsyncMock()
@@ -1995,7 +2387,9 @@ async def test_portal_update_action_by_source_ignored_sets_dismissed_audit_field
 
 
 @pytest.mark.asyncio
-async def test_action_center_problem_valid_transition_tracks_history_and_task_fields() -> None:
+async def test_action_center_problem_valid_transition_tracks_history_and_task_fields() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.create_problem_status_event = AsyncMock()
     service.result_tracking.create_problem_completed_event = AsyncMock()
@@ -2020,11 +2414,17 @@ async def test_action_center_problem_valid_transition_tracks_history_and_task_fi
         user_id=7,
     )
 
-    history_events = [row.event_type for row in session.added if isinstance(row, ProblemInstanceHistory)]
+    history_events = [
+        row.event_type
+        for row in session.added
+        if isinstance(row, ProblemInstanceHistory)
+    ]
     action_state = instance.calculation_snapshot_json["action_center"]
     assert result.status == "acknowledged"
     assert instance.status == "acknowledged"
-    assert {"status_changed", "assigned", "deadline_changed", "comment_added"}.issubset(set(history_events))
+    assert {"status_changed", "assigned", "deadline_changed", "comment_added"}.issubset(
+        set(history_events)
+    )
     assert action_state["assigned_to_user_id"] == 7
     assert action_state["deadline_at"] == "2026-07-09T12:00:00+00:00"
     assert action_state["last_actor_user_id"] == 7
@@ -2034,7 +2434,9 @@ async def test_action_center_problem_valid_transition_tracks_history_and_task_fi
 
 
 @pytest.mark.asyncio
-async def test_action_center_problem_update_creates_assignment_and_deadline_notifications() -> None:
+async def test_action_center_problem_update_creates_assignment_and_deadline_notifications() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.create_problem_status_event = AsyncMock()
     service.result_tracking.create_problem_completed_event = AsyncMock()
@@ -2066,19 +2468,31 @@ async def test_action_center_problem_update_creates_assignment_and_deadline_noti
         and row.source_module == "action_center_notifications"
         and row.event_type == "action_center_notification"
     ]
-    notification_types = {row.payload_json["notification_type"] for row in notifications}
+    notification_types = {
+        row.payload_json["notification_type"] for row in notifications
+    }
     assert {"assigned_to_user", "deadline_due_soon"}.issubset(notification_types)
-    assigned = next(row for row in notifications if row.payload_json["notification_type"] == "assigned_to_user")
+    assigned = next(
+        row
+        for row in notifications
+        if row.payload_json["notification_type"] == "assigned_to_user"
+    )
     assert assigned.problem_instance_id == instance.id
     assert assigned.payload_json["assigned_to_user_id"] == 7
     assert assigned.payload_json["saved_money_claimed"] is False
-    due_soon = next(row for row in notifications if row.payload_json["notification_type"] == "deadline_due_soon")
+    due_soon = next(
+        row
+        for row in notifications
+        if row.payload_json["notification_type"] == "deadline_due_soon"
+    )
     assert due_soon.payload_json["outcome"] == "pending"
     assert due_soon.payload_json["saved_money_claimed"] is False
 
 
 @pytest.mark.asyncio
-async def test_action_center_problem_invalid_transition_is_rejected_without_history() -> None:
+async def test_action_center_problem_invalid_transition_is_rejected_without_history() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.create_problem_status_event = AsyncMock()
     service.result_tracking.create_problem_completed_event = AsyncMock()
@@ -2105,12 +2519,16 @@ async def test_action_center_problem_invalid_transition_is_rejected_without_hist
 
     assert exc.value.status_code == 409
     assert instance.status == "new"
-    assert [row for row in session.added if isinstance(row, ProblemInstanceHistory)] == []
+    assert [
+        row for row in session.added if isinstance(row, ProblemInstanceHistory)
+    ] == []
     service.result_tracking.create_problem_status_event.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_action_center_problem_done_creates_completion_result_event_without_saved_money_claim() -> None:
+async def test_action_center_problem_done_creates_completion_result_event_without_saved_money_claim() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.create_problem_status_event = AsyncMock()
     service.result_tracking.create_problem_completed_event = AsyncMock()
@@ -2134,11 +2552,15 @@ async def test_action_center_problem_done_creates_completion_result_event_withou
         user_id=7,
     )
 
-    history_events = [row for row in session.added if isinstance(row, ProblemInstanceHistory)]
+    history_events = [
+        row for row in session.added if isinstance(row, ProblemInstanceHistory)
+    ]
     assert result.status == "done"
     assert instance.status == "done"
     assert "result_measured" in [row.event_type for row in history_events]
-    result_event = next(row for row in history_events if row.event_type == "result_measured")
+    result_event = next(
+        row for row in history_events if row.event_type == "result_measured"
+    )
     assert result_event.new_value_json["saved_money_claimed"] is False
     service.result_tracking.create_problem_completed_event.assert_awaited_once_with(
         session,
@@ -2149,7 +2571,9 @@ async def test_action_center_problem_done_creates_completion_result_event_withou
 
 
 @pytest.mark.asyncio
-async def test_action_center_problem_recheck_request_creates_recheck_history_and_result_event() -> None:
+async def test_action_center_problem_recheck_request_creates_recheck_history_and_result_event() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.create_problem_status_event = AsyncMock()
     service.result_tracking.create_problem_completed_event = AsyncMock()
@@ -2173,14 +2597,20 @@ async def test_action_center_problem_recheck_request_creates_recheck_history_and
         user_id=7,
     )
 
-    history_events = [row.event_type for row in session.added if isinstance(row, ProblemInstanceHistory)]
+    history_events = [
+        row.event_type
+        for row in session.added
+        if isinstance(row, ProblemInstanceHistory)
+    ]
     assert result.status == "in_progress"
     assert "recheck_requested" in history_events
     service.result_tracking.create_problem_recheck_event.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_problem_results_ensures_before_snapshot_and_filters_to_problem_engine() -> None:
+async def test_problem_results_ensures_before_snapshot_and_filters_to_problem_engine() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.ensure_problem_before_snapshot = AsyncMock()
     service.result_tracking.list_results = AsyncMock(
@@ -2221,7 +2651,9 @@ async def test_problem_results_ensures_before_snapshot_and_filters_to_problem_en
 
 
 @pytest.mark.asyncio
-async def test_portal_update_action_by_source_preserves_finance_recommendation_update_flow() -> None:
+async def test_portal_update_action_by_source_preserves_finance_recommendation_update_flow() -> (
+    None
+):
     service = PortalService()
     service.control_tower.update_action = AsyncMock(
         return_value=SimpleNamespace(
@@ -2265,7 +2697,9 @@ async def test_portal_update_action_by_source_preserves_finance_recommendation_u
 
 
 @pytest.mark.asyncio
-async def test_portal_update_action_by_source_updates_checker_issue_and_shadow_task_fields() -> None:
+async def test_portal_update_action_by_source_updates_checker_issue_and_shadow_task_fields() -> (
+    None
+):
     service = PortalService()
     updated_issue = CardQualityIssueRead(
         id=44,
@@ -2304,8 +2738,14 @@ async def test_portal_update_action_by_source_updates_checker_issue_and_shadow_t
 
     service.card_quality.update_issue_status.assert_awaited_once()
     assert service.card_quality.update_issue_status.await_args.kwargs["issue_id"] == 44
-    assert service.card_quality.update_issue_status.await_args.kwargs["status"] == "in_progress"
-    assert service.card_quality.update_issue_status.await_args.kwargs["reason"] == "owner started"
+    assert (
+        service.card_quality.update_issue_status.await_args.kwargs["status"]
+        == "in_progress"
+    )
+    assert (
+        service.card_quality.update_issue_status.await_args.kwargs["reason"]
+        == "owner started"
+    )
     assert result.source_module == "checker"
     assert result.action_type == "CARD_QUALITY_FIX"
     assert result.title == "No images"
@@ -2316,7 +2756,9 @@ async def test_portal_update_action_by_source_updates_checker_issue_and_shadow_t
 
 
 @pytest.mark.asyncio
-async def test_portal_update_action_by_source_checker_in_progress_persists_in_issue() -> None:
+async def test_portal_update_action_by_source_checker_in_progress_persists_in_issue() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.ensure_before_snapshot = AsyncMock()
     service.result_tracking.create_action_completed_event = AsyncMock()
@@ -2345,7 +2787,9 @@ async def test_portal_update_action_by_source_checker_in_progress_persists_in_is
 
 
 @pytest.mark.asyncio
-async def test_portal_update_action_by_source_checker_done_creates_history_and_same_status() -> None:
+async def test_portal_update_action_by_source_checker_done_creates_history_and_same_status() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.ensure_before_snapshot = AsyncMock()
     service.result_tracking.create_action_completed_event = AsyncMock()
@@ -2367,7 +2811,11 @@ async def test_portal_update_action_by_source_checker_done_creates_history_and_s
         user_id=7,
     )
 
-    histories = [row for row in session.added if row.__class__.__name__ == "CardQualityIssueStatusHistory"]
+    histories = [
+        row
+        for row in session.added
+        if row.__class__.__name__ == "CardQualityIssueStatusHistory"
+    ]
     assert issue.status == "done"
     assert issue.fixed_at is not None
     assert issue.fixed_by_user_id == 7
@@ -2377,7 +2825,9 @@ async def test_portal_update_action_by_source_checker_done_creates_history_and_s
 
 
 @pytest.mark.asyncio
-async def test_portal_update_action_by_source_checker_postponed_keeps_deadline_and_reason() -> None:
+async def test_portal_update_action_by_source_checker_postponed_keeps_deadline_and_reason() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.ensure_before_snapshot = AsyncMock()
     service.result_tracking.create_action_completed_event = AsyncMock()
@@ -2408,7 +2858,9 @@ async def test_portal_update_action_by_source_checker_postponed_keeps_deadline_a
 
 
 @pytest.mark.asyncio
-async def test_portal_update_action_by_source_checker_blocked_visible_after_refresh() -> None:
+async def test_portal_update_action_by_source_checker_blocked_visible_after_refresh() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.ensure_before_snapshot = AsyncMock()
     service.result_tracking.create_action_completed_event = AsyncMock()
@@ -2440,7 +2892,9 @@ async def test_portal_update_action_by_source_checker_blocked_visible_after_refr
 
 
 @pytest.mark.asyncio
-async def test_portal_update_action_by_source_checker_recheck_creates_history_without_financial_overclaim() -> None:
+async def test_portal_update_action_by_source_checker_recheck_creates_history_without_financial_overclaim() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.ensure_before_snapshot = AsyncMock()
     service.result_tracking.create_action_completed_event = AsyncMock()
@@ -2463,7 +2917,11 @@ async def test_portal_update_action_by_source_checker_recheck_creates_history_wi
         user_id=7,
     )
 
-    histories = [row for row in session.added if row.__class__.__name__ == "CardQualityIssueStatusHistory"]
+    histories = [
+        row
+        for row in session.added
+        if row.__class__.__name__ == "CardQualityIssueStatusHistory"
+    ]
     action = service.card_quality._action_from_issue(account_id=1, issue=issue)
     assert result.source_module == "checker"
     assert result.status == "new"
@@ -2478,7 +2936,9 @@ async def test_portal_update_action_by_source_checker_recheck_creates_history_wi
 
 
 @pytest.mark.asyncio
-async def test_action_center_checker_update_source_endpoint_and_product360_share_status() -> None:
+async def test_action_center_checker_update_source_endpoint_and_product360_share_status() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.ensure_before_snapshot = AsyncMock()
     service.result_tracking.create_action_completed_event = AsyncMock()
@@ -2516,15 +2976,25 @@ async def test_action_center_checker_update_source_endpoint_and_product360_share
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
     service.manual_costs.list_unresolved_costs_for_product = AsyncMock(return_value=[])
     service.product_quality = AsyncMock(
-        return_value=PortalProductQualityRead(status="ok", nm_id=issue.nm_id, issues=[source_payload])
+        return_value=PortalProductQualityRead(
+            status="ok", nm_id=issue.nm_id, issues=[source_payload]
+        )
     )
     service.grouping_beta.product_grouping = AsyncMock(
         return_value=PortalProductGroupingRead(status="disabled", nm_id=issue.nm_id)
     )
-    service.profit_doctor.diagnose = AsyncMock(return_value=ProfitDoctorOut(status="ok", account_id=1))
-    service.experiments.list_product_events = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.result_tracking.list_results = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.claims_factory.list_cases = AsyncMock(return_value=ClaimsCasesPage(account_id=1, total=0, items=[]))
+    service.profit_doctor.diagnose = AsyncMock(
+        return_value=ProfitDoctorOut(status="ok", account_id=1)
+    )
+    service.experiments.list_product_events = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
+    service.result_tracking.list_results = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
+    service.claims_factory.list_cases = AsyncMock(
+        return_value=ClaimsCasesPage(account_id=1, total=0, items=[])
+    )
 
     detail = await service.product_360(
         session,
@@ -2534,7 +3004,11 @@ async def test_action_center_checker_update_source_endpoint_and_product360_share
         date_to=None,
     )
 
-    product360_action = next(item for item in detail.actions if item.source_module == "checker" and item.source_id == "44")
+    product360_action = next(
+        item
+        for item in detail.actions
+        if item.source_module == "checker" and item.source_id == "44"
+    )
     assert result.status == "blocked"
     assert source_read.status == "blocked"
     assert source_payload["status"] == "blocked"
@@ -2542,11 +3016,15 @@ async def test_action_center_checker_update_source_endpoint_and_product360_share
 
 
 @pytest.mark.asyncio
-async def test_portal_update_action_by_source_checker_failure_is_not_shadow_masked() -> None:
+async def test_portal_update_action_by_source_checker_failure_is_not_shadow_masked() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.ensure_before_snapshot = AsyncMock()
     service.result_tracking.create_action_completed_event = AsyncMock()
-    service.card_quality.update_issue_status = AsyncMock(side_effect=ValueError("illegal_status_transition"))
+    service.card_quality.update_issue_status = AsyncMock(
+        side_effect=ValueError("illegal_status_transition")
+    )
     session = _FakeSession()
 
     with pytest.raises(ValueError, match="illegal_status_transition"):
@@ -2569,7 +3047,9 @@ async def test_portal_update_action_by_source_checker_failure_is_not_shadow_mask
 
 
 @pytest.mark.asyncio
-async def test_portal_stockops_action_completion_records_local_stock_result_event() -> None:
+async def test_portal_stockops_action_completion_records_local_stock_result_event() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.ensure_before_snapshot = AsyncMock()
     service.result_tracking.create_action_completed_event = AsyncMock()
@@ -2590,7 +3070,8 @@ async def test_portal_stockops_action_completion_records_local_stock_result_even
     stock_events = [
         row
         for row in session.added
-        if getattr(row, "source_module", None) == "stockops" and getattr(row, "event_type", None) == "stock_action_done"
+        if getattr(row, "source_module", None) == "stockops"
+        and getattr(row, "event_type", None) == "stock_action_done"
     ]
     assert result.source_module == "stockops"
     assert result.status == "done"
@@ -2607,7 +3088,13 @@ async def test_portal_actions_represents_blocked_status_consistently() -> None:
 
     result = await service.update_action_by_source(
         session,
-        payload=SimpleNamespace(account_id=1, source_module="claims", source_id="claim:blocked:1", status="blocked", comment="missing proof"),
+        payload=SimpleNamespace(
+            account_id=1,
+            source_module="claims",
+            source_id="claim:blocked:1",
+            status="blocked",
+            comment="missing proof",
+        ),
         user_id=7,
     )
 
@@ -2619,12 +3106,40 @@ async def test_portal_actions_represents_blocked_status_consistently() -> None:
 def test_portal_action_priority_sort_is_stable() -> None:
     service = PortalService()
     items = [
-        PortalActionRead(id="finance:b", source="finance_actions", source_module="finance", action_type="REVIEW_PROFIT", title="B", priority="P1", severity="high"),
-        PortalActionRead(id="finance:a", source="finance_actions", source_module="finance", action_type="REVIEW_PROFIT", title="A", priority="P1", severity="high"),
-        PortalActionRead(id="finance:c", source="finance_actions", source_module="finance", action_type="REVIEW_PROFIT", title="C", priority="P0", severity="critical"),
+        PortalActionRead(
+            id="finance:b",
+            source="finance_actions",
+            source_module="finance",
+            action_type="REVIEW_PROFIT",
+            title="B",
+            priority="P1",
+            severity="high",
+        ),
+        PortalActionRead(
+            id="finance:a",
+            source="finance_actions",
+            source_module="finance",
+            action_type="REVIEW_PROFIT",
+            title="A",
+            priority="P1",
+            severity="high",
+        ),
+        PortalActionRead(
+            id="finance:c",
+            source="finance_actions",
+            source_module="finance",
+            action_type="REVIEW_PROFIT",
+            title="C",
+            priority="P0",
+            severity="critical",
+        ),
     ]
 
-    assert [item.id for item in sorted(items, key=service._action_sort_key)] == ["finance:c", "finance:a", "finance:b"]
+    assert [item.id for item in sorted(items, key=service._action_sort_key)] == [
+        "finance:c",
+        "finance:a",
+        "finance:b",
+    ]
 
 
 @pytest.mark.asyncio
@@ -2643,8 +3158,22 @@ async def test_synthetic_action_upsert_is_idempotent() -> None:
         priority="P2",
     )
 
-    first = await service.upsert_synthetic_action(session, account_id=1, action=action, status="done", comment="answered", user_id=7)
-    second = await service.upsert_synthetic_action(session, account_id=1, action=action, status="ignored", comment="duplicate", user_id=7)
+    first = await service.upsert_synthetic_action(
+        session,
+        account_id=1,
+        action=action,
+        status="done",
+        comment="answered",
+        user_id=7,
+    )
+    second = await service.upsert_synthetic_action(
+        session,
+        account_id=1,
+        action=action,
+        status="ignored",
+        comment="duplicate",
+        user_id=7,
+    )
 
     assert first is second
     assert len(session.unified_actions) == 1
@@ -2759,7 +3288,9 @@ async def test_portal_actions_includes_reputation_only_with_beta_flag() -> None:
         payload={"beta": True},
     )
     beta_service = _empty_action_center_service()
-    beta_service.reputation.reputation_actions = AsyncMock(return_value=([action], None))
+    beta_service.reputation.reputation_actions = AsyncMock(
+        return_value=([action], None)
+    )
     beta_page = await beta_service.actions(
         _FakeSession(),
         account_id=1,
@@ -2777,7 +3308,9 @@ async def test_portal_actions_includes_reputation_only_with_beta_flag() -> None:
 
     no_beta_service = _empty_action_center_service()
     no_beta_service.reputation.action_center_enabled = AsyncMock(return_value=True)
-    no_beta_service.reputation.reputation_actions = AsyncMock(return_value=([action], None))
+    no_beta_service.reputation.reputation_actions = AsyncMock(
+        return_value=([action], None)
+    )
     no_beta_page = await no_beta_service.actions(
         _FakeSession(),
         account_id=1,
@@ -2803,11 +3336,20 @@ async def test_portal_update_action_by_source_updates_reputation_shadow_only() -
     service = PortalService()
     service.result_tracking.ensure_before_snapshot = AsyncMock()
     service.result_tracking.create_action_completed_event = AsyncMock()
-    item = SimpleNamespace(status="new", needs_reply=True, review_requires_manual_attention=False, raw_json={})
-    draft = SimpleNamespace(id=55, status="new", external_status="draft_ready", payload_json={})
+    item = SimpleNamespace(
+        status="new",
+        needs_reply=True,
+        review_requires_manual_attention=False,
+        raw_json={},
+    )
+    draft = SimpleNamespace(
+        id=55, status="new", external_status="draft_ready", payload_json={}
+    )
     service.reputation._find_item = AsyncMock(return_value=item)
     service.reputation._find_draft = AsyncMock(return_value=draft)
-    service.reputation_adapter.publish_reply = AsyncMock(side_effect=AssertionError("must not publish from Action Center"))
+    service.reputation_adapter.publish_reply = AsyncMock(
+        side_effect=AssertionError("must not publish from Action Center")
+    )
     session = _FakeSession()
 
     result = await service.update_action_by_source(
@@ -2840,7 +3382,9 @@ async def test_portal_update_action_by_source_updates_reputation_shadow_only() -
 @pytest.mark.asyncio
 async def test_portal_update_action_updates_persisted_unified_action_status() -> None:
     service = PortalService()
-    service.control_tower.update_action = AsyncMock(side_effect=HTTPException(status_code=404, detail="Action not found"))
+    service.control_tower.update_action = AsyncMock(
+        side_effect=HTTPException(status_code=404, detail="Action not found")
+    )
     persisted = UnifiedAction(
         id=501,
         account_id=1,
@@ -2888,7 +3432,9 @@ async def test_portal_update_action_updates_persisted_unified_action_status() ->
 @pytest.mark.asyncio
 async def test_portal_update_action_tracks_before_and_completion_events() -> None:
     service = PortalService()
-    service.control_tower.update_action = AsyncMock(side_effect=HTTPException(status_code=404, detail="Action not found"))
+    service.control_tower.update_action = AsyncMock(
+        side_effect=HTTPException(status_code=404, detail="Action not found")
+    )
     service.result_tracking.ensure_before_snapshot = AsyncMock()
     service.result_tracking.create_action_completed_event = AsyncMock()
     persisted = UnifiedAction(
@@ -2942,7 +3488,11 @@ async def test_reputation_generate_draft_persists_manual_text_locally() -> None:
         session,
         account_id=1,
         item_id="review:fb1",
-        payload=SimpleNamespace(draft_type="review_reply", text="Спасибо за отзыв.", payload={"tone": "neutral"}),
+        payload=SimpleNamespace(
+            draft_type="review_reply",
+            text="Спасибо за отзыв.",
+            payload={"tone": "neutral"},
+        ),
         user_id=7,
     )
 
@@ -2988,11 +3538,16 @@ async def test_portal_update_action_by_source_tracks_synthetic_result_events() -
         action_id=row.id,
         created_by=7,
     )
-    assert any(getattr(event, "event_type", None) == "local_action_status_updated" for event in session.added)
+    assert any(
+        getattr(event, "event_type", None) == "local_action_status_updated"
+        for event in session.added
+    )
 
 
 @pytest.mark.asyncio
-async def test_portal_completing_grouping_review_records_grouping_result_event() -> None:
+async def test_portal_completing_grouping_review_records_grouping_result_event() -> (
+    None
+):
     service = PortalService()
     service.result_tracking.ensure_before_snapshot = AsyncMock()
     service.result_tracking.create_action_completed_event = AsyncMock()
@@ -3013,7 +3568,8 @@ async def test_portal_completing_grouping_review_records_grouping_result_event()
     grouping_events = [
         event
         for event in session.added
-        if isinstance(event, ResultEvent) and getattr(event, "event_type", None) == "grouping_review_completed"
+        if isinstance(event, ResultEvent)
+        and getattr(event, "event_type", None) == "grouping_review_completed"
     ]
     assert len(grouping_events) == 1
     event = grouping_events[0]
@@ -3027,7 +3583,9 @@ async def test_portal_completing_grouping_review_records_grouping_result_event()
 @pytest.mark.asyncio
 async def test_portal_products_exposes_frontend_friendly_money_columns() -> None:
     service = PortalService()
-    service._enrich_product_rows_with_card_quality = AsyncMock(side_effect=lambda _session, *, account_id, rows: rows)
+    service._enrich_product_rows_with_card_quality = AsyncMock(
+        side_effect=lambda _session, *, account_id, rows: rows
+    )
     service.money.articles = AsyncMock(
         return_value=SimpleNamespace(
             total=1,
@@ -3157,7 +3715,9 @@ async def test_portal_product_360_returns_blocks_and_graceful_empty_sections() -
         )
     )
     service.grouping_beta.product_grouping = AsyncMock(
-        return_value=PortalProductGroupingRead(status="disabled", nm_id=1001, message="grouping beta is disabled")
+        return_value=PortalProductGroupingRead(
+            status="disabled", nm_id=1001, message="grouping beta is disabled"
+        )
     )
     service.profit_doctor.diagnose = AsyncMock(return_value=_doctor_result())
 
@@ -3224,18 +3784,31 @@ async def test_product360_returns_grouped_dynamic_problems() -> None:
         trust_state="blocked",
         allowed_actions=["upload_cost", "map_sku", "recheck"],
     )
-    service = _product360_control_panel_service(problem_actions=[negative_profit, missing_cost])
+    service = _product360_control_panel_service(
+        problem_actions=[negative_profit, missing_cost]
+    )
 
-    detail = await service.product_360(_FakeSession(), account_id=1, nm_id=1001, date_from=None, date_to=None)
+    detail = await service.product_360(
+        _FakeSession(), account_id=1, nm_id=1001, date_from=None, date_to=None
+    )
 
     assert detail.product_identity["title"] == "Article"
     assert detail.product_identity["vendor_code"] == "VC-1"
     assert detail.product_identity["price"] == 1990.0
     assert detail.product_identity["stock"] == 7.0
     assert set(detail.grouped_problems) == set(service.PRODUCT360_PROBLEM_GROUPS)
-    assert {item["problem_instance_id"] for item in detail.problem_instances} == {101, 102}
-    assert detail.grouped_problems["profitability"]["items"][0]["problem_code"] == "negative_unit_profit"
-    assert detail.grouped_problems["data_blockers"]["items"][0]["problem_code"] == "missing_cost_blocks_profit"
+    assert {item["problem_instance_id"] for item in detail.problem_instances} == {
+        101,
+        102,
+    }
+    assert (
+        detail.grouped_problems["profitability"]["items"][0]["problem_code"]
+        == "negative_unit_profit"
+    )
+    assert (
+        detail.grouped_problems["data_blockers"]["items"][0]["problem_code"]
+        == "missing_cost_blocks_profit"
+    )
     assert detail.health_summary["open_problem_count"] == 2
 
 
@@ -3250,16 +3823,22 @@ async def test_product360_action_center_link_contains_problem_instance_id() -> N
     )
     service = _product360_control_panel_service(problem_actions=[action])
 
-    detail = await service.product_360(_FakeSession(), account_id=1, nm_id=1001, date_from=None, date_to=None)
+    detail = await service.product_360(
+        _FakeSession(), account_id=1, nm_id=1001, date_from=None, date_to=None
+    )
 
     problem = detail.problem_instances[0]
-    product360_action = next(item for item in detail.actions if item.source_module == "problem_engine")
+    product360_action = next(
+        item for item in detail.actions if item.source_module == "problem_engine"
+    )
     assert "problem_instance_id=101" in problem["action_center_href"]
     assert problem["status"] == product360_action.status
 
 
 @pytest.mark.asyncio
-async def test_product360_results_link_contains_problem_instance_id_and_uses_result_ledger() -> None:
+async def test_product360_results_link_contains_problem_instance_id_and_uses_result_ledger() -> (
+    None
+):
     action = _product360_problem_action(
         problem_instance_id=101,
         problem_code="negative_unit_profit",
@@ -3272,7 +3851,9 @@ async def test_product360_results_link_contains_problem_instance_id_and_uses_res
         result_events=[_product360_result_event(101, outcome="neutral")],
     )
 
-    detail = await service.product_360(_FakeSession(), account_id=1, nm_id=1001, date_from=None, date_to=None)
+    detail = await service.product_360(
+        _FakeSession(), account_id=1, nm_id=1001, date_from=None, date_to=None
+    )
 
     problem = detail.problem_instances[0]
     assert "problem_instance_id=101" in problem["results_href"]
@@ -3323,11 +3904,15 @@ async def test_product360_checker_content_issue_not_confirmed_loss() -> None:
         allowed_actions=["run_checker", "recheck"],
     )
     service = _product360_control_panel_service(
-        checker_quality=PortalProductQualityRead(status="ok", nm_id=1001, score=72, critical_issue_count=1)
+        checker_quality=PortalProductQualityRead(
+            status="ok", nm_id=1001, score=72, critical_issue_count=1
+        )
     )
     service._checker_actions_from_quality = lambda **_: [checker_action]
 
-    detail = await service.product_360(_FakeSession(), account_id=1, nm_id=1001, date_from=None, date_to=None)
+    detail = await service.product_360(
+        _FakeSession(), account_id=1, nm_id=1001, date_from=None, date_to=None
+    )
 
     item = detail.grouped_problems["card_quality"]["items"][0]
     assert item["problem_code"] == "card_quality_issue"
@@ -3348,12 +3933,17 @@ async def test_product360_data_blocker_links_to_data_fix() -> None:
     )
     service = _product360_control_panel_service(problem_actions=[missing_cost])
 
-    detail = await service.product_360(_FakeSession(), account_id=1, nm_id=1001, date_from=None, date_to=None)
+    detail = await service.product_360(
+        _FakeSession(), account_id=1, nm_id=1001, date_from=None, date_to=None
+    )
 
     assert detail.data_blockers["count"] == 1
     assert detail.data_blockers["data_fix_href"].startswith("/data-fix")
     assert "problem_instance_id=102" in detail.data_blockers["data_fix_href"]
-    assert detail.data_blockers["top_blockers"][0]["problem_code"] == "missing_cost_blocks_profit"
+    assert (
+        detail.data_blockers["top_blockers"][0]["problem_code"]
+        == "missing_cost_blocks_profit"
+    )
 
 
 @pytest.mark.asyncio
@@ -3369,7 +3959,9 @@ async def test_product360_missing_evidence_produces_missing_data_state() -> None
     )
     service = _product360_control_panel_service(problem_actions=[action])
 
-    detail = await service.product_360(_FakeSession(), account_id=1, nm_id=1001, date_from=None, date_to=None)
+    detail = await service.product_360(
+        _FakeSession(), account_id=1, nm_id=1001, date_from=None, date_to=None
+    )
 
     problem = detail.problem_instances[0]
     assert problem["evidence_state"] == "missing_data"
@@ -3377,12 +3969,20 @@ async def test_product360_missing_evidence_produces_missing_data_state() -> None
 
 
 @pytest.mark.asyncio
-async def test_portal_product_360_uses_exact_unresolved_cost_lookup_beyond_first_page() -> None:
+async def test_portal_product_360_uses_exact_unresolved_cost_lookup_beyond_first_page() -> (
+    None
+):
     service = PortalService()
     service.money.money.article_detail = AsyncMock(
         return_value=SimpleNamespace(
             nm_id=1001,
-            identity={"nm_id": 1001, "sku_id": 501, "title": "Article", "vendor_code": "VC-1", "barcode": "BC-1"},
+            identity={
+                "nm_id": 1001,
+                "sku_id": 501,
+                "title": "Article",
+                "vendor_code": "VC-1",
+                "barcode": "BC-1",
+            },
             money={"revenue": 1000.0},
             stock={},
             ads={},
@@ -3392,7 +3992,9 @@ async def test_portal_product_360_uses_exact_unresolved_cost_lookup_beyond_first
     )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
     service.manual_costs.list_unresolved_costs_page = AsyncMock(
-        return_value=SimpleNamespace(items=[{"id": idx, "nm_id": 9000 + idx} for idx in range(100)])
+        return_value=SimpleNamespace(
+            items=[{"id": idx, "nm_id": 9000 + idx} for idx in range(100)]
+        )
     )
     matching_cost = {
         "id": 1000,
@@ -3405,13 +4007,27 @@ async def test_portal_product_360_uses_exact_unresolved_cost_lookup_beyond_first
         "unit_cost": 100.0,
         "is_ambiguous": True,
     }
-    service.manual_costs.list_unresolved_costs_for_product = AsyncMock(return_value=[matching_cost])
-    service.checker.product_quality = AsyncMock(return_value=PortalProductQualityRead(status="not_configured", nm_id=1001))
-    service.grouping.product_grouping = AsyncMock(return_value=PortalProductGroupingRead(status="disabled", nm_id=1001))
-    service.profit_doctor.diagnose = AsyncMock(return_value=ProfitDoctorOut(status="ok", account_id=1))
-    service.experiments.list_product_events = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.result_tracking.list_results = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.claims_factory.list_cases = AsyncMock(return_value=ClaimsCasesPage(account_id=1, total=0, items=[]))
+    service.manual_costs.list_unresolved_costs_for_product = AsyncMock(
+        return_value=[matching_cost]
+    )
+    service.checker.product_quality = AsyncMock(
+        return_value=PortalProductQualityRead(status="not_configured", nm_id=1001)
+    )
+    service.grouping.product_grouping = AsyncMock(
+        return_value=PortalProductGroupingRead(status="disabled", nm_id=1001)
+    )
+    service.profit_doctor.diagnose = AsyncMock(
+        return_value=ProfitDoctorOut(status="ok", account_id=1)
+    )
+    service.experiments.list_product_events = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
+    service.result_tracking.list_results = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
+    service.claims_factory.list_cases = AsyncMock(
+        return_value=ClaimsCasesPage(account_id=1, total=0, items=[])
+    )
 
     detail = await service.product_360(
         _FakeSession(),
@@ -3425,7 +4041,10 @@ async def test_portal_product_360_uses_exact_unresolved_cost_lookup_beyond_first
     assert detail.card_quality.status == "not_configured"
     assert detail.card_quality.data["status"] == "not_configured"
     assert detail.card_quality.data["severity"] == "not_configured"
-    assert any(action.source_module == "costs" and action.source_id == "1000" for action in detail.actions)
+    assert any(
+        action.source_module == "costs" and action.source_id == "1000"
+        for action in detail.actions
+    )
     service.manual_costs.list_unresolved_costs_page.assert_not_awaited()
     service.manual_costs.list_unresolved_costs_for_product.assert_awaited_once()
     assert service.manual_costs.list_unresolved_costs_for_product.await_args.kwargs == {
@@ -3454,12 +4073,24 @@ async def test_portal_product_360_caps_slow_stockops_optional_call() -> None:
     )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
     service.manual_costs.list_unresolved_costs_for_product = AsyncMock(return_value=[])
-    service.checker.product_quality = AsyncMock(return_value=PortalProductQualityRead(status="not_configured", nm_id=1001))
-    service.grouping.product_grouping = AsyncMock(return_value=PortalProductGroupingRead(status="disabled", nm_id=1001))
-    service.profit_doctor.diagnose = AsyncMock(return_value=ProfitDoctorOut(status="ok", account_id=1))
-    service.experiments.list_product_events = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.result_tracking.list_results = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.claims_factory.list_cases = AsyncMock(return_value=ClaimsCasesPage(account_id=1, total=0, items=[]))
+    service.checker.product_quality = AsyncMock(
+        return_value=PortalProductQualityRead(status="not_configured", nm_id=1001)
+    )
+    service.grouping.product_grouping = AsyncMock(
+        return_value=PortalProductGroupingRead(status="disabled", nm_id=1001)
+    )
+    service.profit_doctor.diagnose = AsyncMock(
+        return_value=ProfitDoctorOut(status="ok", account_id=1)
+    )
+    service.experiments.list_product_events = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
+    service.result_tracking.list_results = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
+    service.claims_factory.list_cases = AsyncMock(
+        return_value=ClaimsCasesPage(account_id=1, total=0, items=[])
+    )
 
     async def _slow_stockops(*args, **kwargs):
         await asyncio.sleep(2)
@@ -3505,11 +4136,21 @@ async def test_portal_product_360_optional_module_timeout_returns_unavailable() 
         return PortalProductQualityRead(status="ok", nm_id=1001)
 
     service.checker.product_quality = _slow_checker_quality
-    service.grouping.product_grouping = AsyncMock(return_value=PortalProductGroupingRead(status="disabled", nm_id=1001))
-    service.profit_doctor.diagnose = AsyncMock(return_value=ProfitDoctorOut(status="ok", account_id=1))
-    service.experiments.list_product_events = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.result_tracking.list_results = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.claims_factory.list_cases = AsyncMock(return_value=ClaimsCasesPage(account_id=1, total=0, items=[]))
+    service.grouping.product_grouping = AsyncMock(
+        return_value=PortalProductGroupingRead(status="disabled", nm_id=1001)
+    )
+    service.profit_doctor.diagnose = AsyncMock(
+        return_value=ProfitDoctorOut(status="ok", account_id=1)
+    )
+    service.experiments.list_product_events = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
+    service.result_tracking.list_results = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
+    service.claims_factory.list_cases = AsyncMock(
+        return_value=ClaimsCasesPage(account_id=1, total=0, items=[])
+    )
 
     detail = await service.product_360(
         _FakeSession(),
@@ -3541,10 +4182,18 @@ async def test_portal_product_360_claims_block_includes_local_cases() -> None:
     )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
     service.manual_costs.list_unresolved_costs_for_product = AsyncMock(return_value=[])
-    service.checker.product_quality = AsyncMock(return_value=PortalProductQualityRead(status="not_configured", nm_id=1001))
-    service.grouping.product_grouping = AsyncMock(return_value=PortalProductGroupingRead(status="disabled", nm_id=1001))
-    service.profit_doctor.diagnose = AsyncMock(return_value=ProfitDoctorOut(status="ok", account_id=1))
-    service.claims_adapter.product_360 = AsyncMock(return_value={"status": "not_configured", "items": []})
+    service.checker.product_quality = AsyncMock(
+        return_value=PortalProductQualityRead(status="not_configured", nm_id=1001)
+    )
+    service.grouping.product_grouping = AsyncMock(
+        return_value=PortalProductGroupingRead(status="disabled", nm_id=1001)
+    )
+    service.profit_doctor.diagnose = AsyncMock(
+        return_value=ProfitDoctorOut(status="ok", account_id=1)
+    )
+    service.claims_adapter.product_360 = AsyncMock(
+        return_value={"status": "not_configured", "items": []}
+    )
     service.claims_factory.list_cases = AsyncMock(
         return_value=ClaimsCasesPage(
             account_id=1,
@@ -3577,7 +4226,9 @@ async def test_portal_product_360_claims_block_includes_local_cases() -> None:
 
 
 @pytest.mark.asyncio
-async def test_portal_product_360_reputation_block_uses_inbox_counts_and_next_action() -> None:
+async def test_portal_product_360_reputation_block_uses_inbox_counts_and_next_action() -> (
+    None
+):
     service = PortalService()
     service.money.money.article_detail = AsyncMock(
         return_value=SimpleNamespace(
@@ -3592,13 +4243,27 @@ async def test_portal_product_360_reputation_block_uses_inbox_counts_and_next_ac
     )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
     service.manual_costs.list_unresolved_costs_for_product = AsyncMock(return_value=[])
-    service.checker.product_quality = AsyncMock(return_value=PortalProductQualityRead(status="ok", nm_id=1001, score=90))
-    service.grouping.product_grouping = AsyncMock(return_value=PortalProductGroupingRead(status="disabled", nm_id=1001))
-    service.profit_doctor.diagnose = AsyncMock(return_value=ProfitDoctorOut(status="ok", account_id=1))
-    service.experiments.list_product_events = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.result_tracking.list_results = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.claims_adapter.product_360 = AsyncMock(return_value={"status": "not_configured", "items": []})
-    service.claims_factory.list_cases = AsyncMock(return_value=ClaimsCasesPage(account_id=1, total=0, items=[]))
+    service.checker.product_quality = AsyncMock(
+        return_value=PortalProductQualityRead(status="ok", nm_id=1001, score=90)
+    )
+    service.grouping.product_grouping = AsyncMock(
+        return_value=PortalProductGroupingRead(status="disabled", nm_id=1001)
+    )
+    service.profit_doctor.diagnose = AsyncMock(
+        return_value=ProfitDoctorOut(status="ok", account_id=1)
+    )
+    service.experiments.list_product_events = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
+    service.result_tracking.list_results = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
+    service.claims_adapter.product_360 = AsyncMock(
+        return_value={"status": "not_configured", "items": []}
+    )
+    service.claims_factory.list_cases = AsyncMock(
+        return_value=ClaimsCasesPage(account_id=1, total=0, items=[])
+    )
     reputation = ReputationAdapter(
         Settings(
             reputation_enabled=True,
@@ -3660,19 +4325,32 @@ async def test_portal_product_360_reputation_block_uses_inbox_counts_and_next_ac
     assert detail.reputation.data["unread_chats_count"] == 1
     assert detail.reputation.data["draft_ready_count"] == 1
     assert len(detail.reputation.data["last_items"]) == 3
-    assert detail.reputation.data["next_reputation_action"]["action_type"] == "negative_review_unanswered"
+    assert (
+        detail.reputation.data["next_reputation_action"]["action_type"]
+        == "negative_review_unanswered"
+    )
     assert "buyer@example" not in str(detail.reputation.data)
-    assert any(action.source_module == "reputation" and action.action_type == "negative_review_unanswered" for action in detail.actions)
+    assert any(
+        action.source_module == "reputation"
+        and action.action_type == "negative_review_unanswered"
+        for action in detail.actions
+    )
     assert detail.next_best_action is not None
     assert detail.next_best_action.source_module == "reputation"
     assert detail.next_best_action.action_type == "negative_review_unanswered"
 
 
-def test_portal_reputation_block_includes_local_result_history_when_adapter_down() -> None:
+def test_portal_reputation_block_includes_local_result_history_when_adapter_down() -> (
+    None
+):
     service = PortalService()
 
     block = service._reputation_block_with_history(
-        PortalDataBlock(status="unavailable", data={"last_items": []}, message="reputation module is unavailable"),
+        PortalDataBlock(
+            status="unavailable",
+            data={"last_items": []},
+            message="reputation module is unavailable",
+        ),
         [
             {
                 "event_type": "reputation_reply_published",
@@ -3692,7 +4370,9 @@ def test_portal_reputation_block_includes_local_result_history_when_adapter_down
 @pytest.mark.asyncio
 async def test_portal_modules_health_local_claims_make_claims_visible() -> None:
     service = PortalService()
-    service.claims_factory.list_cases = AsyncMock(return_value=ClaimsCasesPage(account_id=1, total=1, items=[]))
+    service.claims_factory.list_cases = AsyncMock(
+        return_value=ClaimsCasesPage(account_id=1, total=1, items=[])
+    )
 
     health = await service.modules_health(_FakeSession(), account_id=1)
 
@@ -3704,9 +4384,13 @@ async def test_portal_modules_health_local_claims_make_claims_visible() -> None:
 
 
 @pytest.mark.asyncio
-async def test_portal_product_360_claims_block_returns_candidates_when_present() -> None:
+async def test_portal_product_360_claims_block_returns_candidates_when_present() -> (
+    None
+):
     service = PortalService()
-    service.claims_factory.list_cases = AsyncMock(return_value=ClaimsCasesPage(account_id=1, total=0, items=[]))
+    service.claims_factory.list_cases = AsyncMock(
+        return_value=ClaimsCasesPage(account_id=1, total=0, items=[])
+    )
 
     block = await service._claims_block_with_local_cases(
         _FakeSession(),
@@ -3738,7 +4422,9 @@ async def test_portal_product_360_claims_block_returns_candidates_when_present()
 
 
 @pytest.mark.asyncio
-async def test_portal_product_360_claims_block_combines_local_cases_and_candidates_without_duplicates() -> None:
+async def test_portal_product_360_claims_block_combines_local_cases_and_candidates_without_duplicates() -> (
+    None
+):
     service = PortalService()
     service.claims_factory.list_cases = AsyncMock(
         return_value=ClaimsCasesPage(
@@ -3766,10 +4452,23 @@ async def test_portal_product_360_claims_block_combines_local_cases_and_candidat
             status="ok",
             data={
                 "items": [
-                    {"source_id": "defect_claim_candidate:1001", "nm_id": 1001, "estimated_amount": 1500.0},
-                    {"source_id": "defect_claim_candidate:1001-new", "nm_id": 1001, "estimated_amount": 500.0},
+                    {
+                        "source_id": "defect_claim_candidate:1001",
+                        "nm_id": 1001,
+                        "estimated_amount": 1500.0,
+                    },
+                    {
+                        "source_id": "defect_claim_candidate:1001-new",
+                        "nm_id": 1001,
+                        "estimated_amount": 500.0,
+                    },
                 ],
-                "actions": [{"source_id": "defect_claim_candidate:1001-new", "title": "Create claim case"}],
+                "actions": [
+                    {
+                        "source_id": "defect_claim_candidate:1001-new",
+                        "title": "Create claim case",
+                    }
+                ],
             },
         ),
         unavailable=[],
@@ -3780,19 +4479,28 @@ async def test_portal_product_360_claims_block_combines_local_cases_and_candidat
     assert block.data["candidate_count"] == 1
     assert block.data["local_cases"][0]["id"] == "10"
     assert block.data["candidates"][0]["source_id"] == "defect_claim_candidate:1001-new"
-    assert block.data["next_claim_action"]["source_id"] == "defect_claim_candidate:1001-new"
+    assert (
+        block.data["next_claim_action"]["source_id"]
+        == "defect_claim_candidate:1001-new"
+    )
 
 
 @pytest.mark.asyncio
-async def test_portal_product_360_claims_block_missing_service_stays_unavailable_without_breaking() -> None:
+async def test_portal_product_360_claims_block_missing_service_stays_unavailable_without_breaking() -> (
+    None
+):
     service = PortalService()
-    service.claims_factory.list_cases = AsyncMock(return_value=ClaimsCasesPage(account_id=1, total=0, items=[]))
+    service.claims_factory.list_cases = AsyncMock(
+        return_value=ClaimsCasesPage(account_id=1, total=0, items=[])
+    )
 
     block = await service._claims_block_with_local_cases(
         _FakeSession(),
         account_id=1,
         nm_id=1001,
-        block=PortalDataBlock(status="unavailable", data={}, message="claims module is unavailable"),
+        block=PortalDataBlock(
+            status="unavailable", data={}, message="claims module is unavailable"
+        ),
         unavailable=[],
     )
 
@@ -3809,8 +4517,17 @@ async def test_portal_product_360_merges_optional_module_data_safely() -> None:
     service.money.money.article_detail = AsyncMock(
         return_value=SimpleNamespace(
             nm_id=1001,
-            identity={"nm_id": 1001, "title": "Article", "vendor_code": "VC-1", "barcode": "123"},
-            money={"revenue": 120000.0, "for_pay": 100000.0, "profit": {"after_source_ads": 20000.0}},
+            identity={
+                "nm_id": 1001,
+                "title": "Article",
+                "vendor_code": "VC-1",
+                "barcode": "123",
+            },
+            money={
+                "revenue": 120000.0,
+                "for_pay": 100000.0,
+                "profit": {"after_source_ads": 20000.0},
+            },
             kpis={"revenue": 120000.0},
             stock={"quantity": 4},
             ads={"spend": 10000.0},
@@ -3828,7 +4545,9 @@ async def test_portal_product_360_merges_optional_module_data_safely() -> None:
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
     service.manual_costs.list_unresolved_costs_for_product = AsyncMock(return_value=[])
     service.checker.product_quality = AsyncMock(
-        return_value=PortalProductQualityRead(status="ok", nm_id=1001, score=88, recommendations=["Keep content fresh"])
+        return_value=PortalProductQualityRead(
+            status="ok", nm_id=1001, score=88, recommendations=["Keep content fresh"]
+        )
     )
     service.grouping_beta.product_grouping = AsyncMock(
         return_value=PortalProductGroupingRead(
@@ -3936,7 +4655,10 @@ async def test_portal_product_360_merges_optional_module_data_safely() -> None:
     assert detail.stock.data["stockops"]["status"] == "ok"
     assert detail.stock.data["stockops"]["summary"]["write_status"] == "disabled"
     assert detail.grouping_beta.status == "beta"
-    assert detail.grouping_beta.data["beta_notice"] == "Beta / recommendation only. WB merge/apply is disabled."
+    assert (
+        detail.grouping_beta.data["beta_notice"]
+        == "Beta / recommendation only. WB merge/apply is disabled."
+    )
     assert detail.grouping_beta.data["auto_merge_enabled"] is False
     assert any(action.source_module == "stockops" for action in detail.actions)
     assert detail.next_best_action is not None
@@ -3944,7 +4666,9 @@ async def test_portal_product_360_merges_optional_module_data_safely() -> None:
 
 
 @pytest.mark.asyncio
-async def test_portal_actions_mark_patchable_finance_actions_and_preserve_null_amounts() -> None:
+async def test_portal_actions_mark_patchable_finance_actions_and_preserve_null_amounts() -> (
+    None
+):
     service = PortalService()
     service.money.today_actions = AsyncMock(
         return_value=SimpleNamespace(
@@ -3962,13 +4686,19 @@ async def test_portal_actions_mark_patchable_finance_actions_and_preserve_null_a
             ],
         )
     )
-    service.money.data_blockers = AsyncMock(return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []})
+    service.money.data_blockers = AsyncMock(
+        return_value={"meta": {"account_id": 1}, "blockers": [], "warnings": []}
+    )
     service.data_quality.list_issues = AsyncMock(return_value=SimpleNamespace(items=[]))
-    service.manual_costs.list_unresolved_costs_page = AsyncMock(return_value=SimpleNamespace(items=[]))
+    service.manual_costs.list_unresolved_costs_page = AsyncMock(
+        return_value=SimpleNamespace(items=[])
+    )
     service.checker.quality_actions = AsyncMock(return_value=([], None))
     service.grouping.recommendation_actions = AsyncMock(return_value=([], None))
     service.profit_doctor.diagnose = AsyncMock(
-        return_value=ProfitDoctorOut(status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0)
+        return_value=ProfitDoctorOut(
+            status="ok", account_id=1, summary="", total_signals=0, total_diagnoses=0
+        )
     )
 
     page = await service.actions(
@@ -3990,7 +4720,9 @@ async def test_portal_actions_mark_patchable_finance_actions_and_preserve_null_a
 
 
 @pytest.mark.asyncio
-async def test_portal_product_quality_returns_not_configured_when_checker_missing() -> None:
+async def test_portal_product_quality_returns_not_configured_when_checker_missing() -> (
+    None
+):
     service = PortalService()
 
     quality = await service.product_quality(
@@ -4008,7 +4740,9 @@ async def test_portal_product_quality_returns_not_configured_when_checker_missin
 
 
 @pytest.mark.asyncio
-async def test_action_center_capabilities_expose_jvo_like_domains_and_write_gaps() -> None:
+async def test_action_center_capabilities_expose_jvo_like_domains_and_write_gaps() -> (
+    None
+):
     service = PortalService()
 
     result = await service.action_center_capabilities(_FakeSession(), account_id=1)

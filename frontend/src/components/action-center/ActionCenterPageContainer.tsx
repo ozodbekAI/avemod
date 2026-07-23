@@ -43,6 +43,10 @@ import {
 import { toast } from "sonner";
 
 import { EndpointError } from "@/components/EndpointError";
+import {
+  fetchDataSyncStatus,
+  type DataSyncStatusResponse,
+} from "@/components/data-health/DataCoveragePanel";
 import { NoAccountSelected } from "@/components/portal/NoAccountSelected";
 import { PageHeader, PageShell } from "@/components/PageShell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -81,8 +85,10 @@ import { useDateRange } from "@/lib/date-range-context";
 import { api } from "@/lib/api";
 import { API_ENDPOINTS } from "@/lib/endpoints";
 import { formatMoney, formatMoneyCompact, formatNumber } from "@/lib/format";
+import { proxyWbImageUrl as resolveWbImageUrl } from "@/lib/wb-images";
 import {
   adaptActionCenterItem,
+  dataFreshnessBlocksAction,
   dataFreshnessBlockingLabel,
   type ActionCenterItem,
   type ActionCenterSolveMapStep,
@@ -111,6 +117,7 @@ import {
   assigneeLabel,
   dynamicProblemInstanceId,
   formatDeadline,
+  isContentQualityOpportunityAction,
   isBetaAction,
   isClosedAction,
   isDataBlockerAction,
@@ -287,10 +294,10 @@ const MANUAL_TASK_PRESETS = [
   {
     key: "title_update",
     label: "Название",
-    hint: "SEO title, смысл, поиск WB",
+    hint: "Смысл, поиск WB, понятное название",
     title: "Изменить название товара",
     description:
-      "Проверьте текущее название, подготовьте нормальное SEO-название и обновите карточку.",
+      "Проверьте текущее название, подготовьте понятное название и обновите карточку.",
     icon: <FileText className="h-4 w-4" />,
     tone: "border-sky-500/30 bg-sky-500/5 text-sky-900 dark:text-sky-100",
   },
@@ -516,6 +523,44 @@ function objectLabel(item: ActionCenterItem): string {
   );
 }
 
+function itemProductTitle(item: ActionCenterItem): string {
+  const payload = itemPayload(item);
+  const raw =
+    typeof item.raw === "object" && item.raw
+      ? (item.raw as Record<string, unknown>)
+      : {};
+  return (
+    firstString(
+      item.product_title,
+      item.product_name,
+      item.subject_name,
+      item.card_title,
+      payload.product_title,
+      payload.product_name,
+      payload.subject_name,
+      payload.card_title,
+      payload.title,
+      raw.product_title,
+      raw.product_name,
+      raw.subject_name,
+      raw.card_title,
+      item.vendor_code,
+    ) ||
+    objectLabel(item) ||
+    problemTitle(item)
+  );
+}
+
+function actionModeLabel(item: ActionCenterItem): string {
+  const mode = actionExecutionMode(item);
+  if (mode === "execute") return "Можно применить";
+  if (mode === "inline") return "Исправить здесь";
+  if (mode === "manual") return "Назначить";
+  if (mode === "blocked") return "Заполнить данные";
+  if (mode === "decision") return "Открыть действие";
+  return "Проверить";
+}
+
 function firstString(...values: unknown[]): string | null {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -547,7 +592,7 @@ function firstArrayImage(value: unknown): string | null {
   return null;
 }
 
-function wbBasketHost(vol: number): string {
+function wbBasketHostNumber(vol: number): number {
   const ranges: Array<[number, number]> = [
     [143, 1],
     [287, 2],
@@ -580,7 +625,11 @@ function wbBasketHost(vol: number): string {
     [5825, 29],
     [6141, 30],
   ];
-  const basket = ranges.find(([maxVol]) => vol <= maxVol)?.[1] ?? 30;
+  return ranges.find(([maxVol]) => vol <= maxVol)?.[1] ?? 30;
+}
+
+function wbBasketHost(vol: number): string {
+  const basket = wbBasketHostNumber(vol);
   return `basket-${String(basket).padStart(2, "0")}.wbbasket.ru`;
 }
 
@@ -589,14 +638,39 @@ function wbImageCandidates(nmId: string | number | null | undefined): string[] {
   if (!Number.isFinite(n) || n <= 0) return [];
   const vol = Math.floor(n / 100000);
   const part = Math.floor(n / 1000);
-  const host = wbBasketHost(vol);
-  return [`https://${host}/vol${vol}/part${part}/${n}/images/c246x328/1.webp`];
+  const predictedHosts = [
+    wbBasketHostNumber(vol),
+    Math.ceil(vol / 280),
+    Math.round(vol / 280),
+    Math.ceil(vol / 275),
+    Math.ceil(vol / 300),
+  ]
+    .filter((value) => Number.isFinite(value) && value >= 1 && value <= 80)
+    .map((value) => Math.trunc(value));
+  return [...new Set(predictedHosts)].map(
+    (basket) =>
+      `https://basket-${String(basket).padStart(2, "0")}.wbbasket.ru/vol${vol}/part${part}/${n}/images/c246x328/1.webp`,
+  );
 }
 
 function proxyWbImageUrl(src: string | null): string | null {
-  if (!src) return null;
-  if (/\.wbbasket\.ru\//i.test(src)) return null;
-  return src;
+  return resolveWbImageUrl(src);
+}
+
+function imageCandidateList(
+  sources: unknown[],
+  nmId: string | number | null | undefined,
+): string[] {
+  const direct = sources.filter(
+    (value): value is string => typeof value === "string" && value.trim() !== "",
+  );
+  return [
+    ...new Set(
+      [...direct, ...wbImageCandidates(nmId)]
+        .map((value) => proxyWbImageUrl(value.trim()))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ];
 }
 
 function itemImageCandidates(item: ActionCenterItem | null): string[] {
@@ -625,10 +699,7 @@ function itemImageCandidates(item: ActionCenterItem | null): string[] {
     firstArrayImage(raw.photos),
     firstArrayImage(raw.images),
   ];
-  const primary =
-    firstString(...sources) ?? wbImageCandidates(item.nm_id)[0] ?? null;
-  const displayUrl = proxyWbImageUrl(primary);
-  return displayUrl ? [displayUrl] : [];
+  return imageCandidateList(sources, item.nm_id);
 }
 
 function rowImageCandidates(row: CostsMissingItem | null): string[] {
@@ -643,10 +714,7 @@ function rowImageCandidates(row: CostsMissingItem | null): string[] {
     firstArrayImage(obj.photos),
     firstArrayImage(obj.images),
   ];
-  const primary =
-    firstString(...sources) ?? wbImageCandidates(row.nm_id)[0] ?? null;
-  const displayUrl = proxyWbImageUrl(primary);
-  return displayUrl ? [displayUrl] : [];
+  return imageCandidateList(sources, row.nm_id);
 }
 
 function productRowImageCandidates(row: PortalProductRow | null): string[] {
@@ -662,10 +730,7 @@ function productRowImageCandidates(row: PortalProductRow | null): string[] {
     firstArrayImage(obj.photos),
     firstArrayImage(obj.images),
   ];
-  const primary =
-    firstString(...sources) ?? wbImageCandidates(row.nm_id)[0] ?? null;
-  const displayUrl = proxyWbImageUrl(primary);
-  return displayUrl ? [displayUrl] : [];
+  return imageCandidateList(sources, row.nm_id);
 }
 
 function ProductThumb({
@@ -1097,6 +1162,9 @@ function invalidateInlineResolverQueries(
 }
 
 function priorityRank(item: ActionCenterItem): number {
+  if (isContentQualityOpportunityAction(item)) {
+    return 3;
+  }
   const priority = norm(item.priority).toUpperCase();
   const severity = norm(item.severity);
   if (priority === "P0" || severity === "critical") return 0;
@@ -1116,11 +1184,276 @@ function actionCode(item: ActionCenterItem): string {
   );
 }
 
+function emptyActionExecutionSummary(): ActionExecutionSummary {
+  return {
+    execute: 0,
+    inline: 0,
+    decision: 0,
+    manual: 0,
+    blocked: 0,
+    signal: 0,
+  };
+}
+
+function actionExecutionMode(item: ActionCenterItem): ActionExecutionMode {
+  if (isClosedAction(item)) return "signal";
+  const primary = primaryActionForItem(item);
+  const disabled = primaryDisabledActionForItem(item);
+  const guided = item.guided_fix ?? {};
+  const guidedStatus = norm(guided.status);
+  const source = norm(item.source_module);
+  const code = norm(actionCode(item));
+  if (hasInlineResolution(item)) return "inline";
+  if (dataFreshnessBlocksAction(item.data_freshness)) return "blocked";
+  if (item.can_execute === true) return "execute";
+  if (source === "manual" || code.includes("manual_task")) return "manual";
+  if (
+    isDataBlockerAction(item) ||
+    item.evidence_state === "missing_evidence" ||
+    ["missing", "not_configured"].includes(
+      norm(item.data_freshness?.source_status),
+    )
+  ) {
+    return "blocked";
+  }
+  if (
+    guidedStatus === "not_configured" ||
+    guidedStatus === "disabled" ||
+    guidedStatus === "missing_wb_write" ||
+    disabled
+  ) {
+    return "manual";
+  }
+  if (primary?.enabled) {
+    return "decision";
+  }
+  return "signal";
+}
+
+function actionExecutionSummary(
+  items: ActionCenterItem[],
+): ActionExecutionSummary {
+  const summary = emptyActionExecutionSummary();
+  for (const item of items) {
+    summary[actionExecutionMode(item)] += 1;
+  }
+  return summary;
+}
+
+function actionImpactAmount(item: ActionCenterItem): number {
+  return moneyFromUnknown(
+    item.expected_effect_amount ??
+      item.expected_impact_amount ??
+      item.money_impact_amount,
+  );
+}
+
+function businessCaseKey(item: ActionCenterItem): string | null {
+  const payload = itemPayload(item);
+  const raw =
+    typeof item.raw === "object" && item.raw
+      ? (item.raw as Record<string, unknown>)
+      : {};
+  const linked =
+    typeof item.linked_entity === "object" && item.linked_entity
+      ? (item.linked_entity as Record<string, unknown>)
+      : {};
+  const nmId = numberFromUnknown(
+    item.nm_id ?? payload.nm_id ?? raw.nm_id ?? linked.nm_id,
+  );
+  if (nmId) return `nm:${nmId}`;
+  const skuId = numberFromUnknown(
+    item.sku_id ?? payload.sku_id ?? raw.sku_id ?? linked.sku_id,
+  );
+  if (skuId) return `sku:${skuId}`;
+  if (item.entity_type && item.entity_id != null) {
+    return `${norm(item.entity_type)}:${String(item.entity_id)}`;
+  }
+  const vendor = firstString(
+    item.vendor_code,
+    payload.vendor_code,
+    raw.vendor_code,
+    linked.vendor_code,
+  );
+  if (vendor) return `vendor:${vendor}`;
+  return null;
+}
+
+function isAggregateMissingCostImpact(item: ActionCenterItem): boolean {
+  return (
+    isMissingCostProblem(item) &&
+    numberFromUnknown(item.nm_id) == null &&
+    actionImpactAmount(item) > 0
+  );
+}
+
+function dedupedImpactSummary(items: ActionCenterItem[]): {
+  value: number;
+  raw: number;
+  overlap: number;
+  objects: number;
+} {
+  const hasAggregateMissingCost = items.some(isAggregateMissingCostImpact);
+  const byObject = new Map<string, number>();
+  let raw = 0;
+  for (const item of items) {
+    if (isClosedAction(item)) continue;
+    if (
+      hasAggregateMissingCost &&
+      isMissingCostProblem(item) &&
+      !isAggregateMissingCostImpact(item)
+    ) {
+      continue;
+    }
+    const amount = actionImpactAmount(item);
+    raw += amount;
+    if (!amount) continue;
+    const key = businessCaseKey(item) ?? `action:${item.id}`;
+    byObject.set(key, Math.max(byObject.get(key) ?? 0, amount));
+  }
+  const value = Array.from(byObject.values()).reduce(
+    (sum, amount) => sum + amount,
+    0,
+  );
+  return {
+    value,
+    raw,
+    overlap: Math.max(0, raw - value),
+    objects: byObject.size,
+  };
+}
+
+function buildBusinessCases(items: ActionCenterItem[]): ActionBusinessCase[] {
+  const byObject = new Map<string, ActionCenterItem[]>();
+  for (const item of items) {
+    if (isClosedAction(item)) continue;
+    const key = businessCaseKey(item) ?? `action:${item.id}`;
+    const bucket = byObject.get(key) ?? [];
+    bucket.push(item);
+    byObject.set(key, bucket);
+  }
+  const cases: ActionBusinessCase[] = [];
+  for (const [key, bucket] of byObject.entries()) {
+    const sortedBucket = sortByBusinessPriority(bucket);
+    const mainItem = sortedBucket[0];
+    const counts = new Map<string, number>();
+    let rawSignalMoney = 0;
+    let money = 0;
+    for (const item of sortedBucket) {
+      const amount = actionImpactAmount(item);
+      rawSignalMoney += amount;
+      money = Math.max(money, amount);
+      const code = actionCode(item) || item.action_type || "unknown";
+      counts.set(code, (counts.get(code) ?? 0) + 1);
+    }
+    cases.push({
+      key,
+      title: problemTitle(mainItem),
+      objectLabel: objectLabel(mainItem),
+      mainItem,
+      items: sortedBucket,
+      groupKey: problemGroupKey(mainItem),
+      count: sortedBucket.length,
+      money,
+      rawSignalMoney,
+      urgent: sortedBucket.some(isUrgentAction),
+      blocker: sortedBucket.some(isDataBlockerAction),
+      execution: actionExecutionSummary(sortedBucket),
+      topCodes: Array.from(counts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([code, count]) => ({
+          code,
+          label: problemCodeLabel(code) || code.replaceAll("_", " "),
+          count,
+        })),
+    });
+  }
+  return cases.sort((a, b) => {
+    const rankDelta =
+      actionBusinessPriorityRank(a.mainItem) - actionBusinessPriorityRank(b.mainItem);
+    if (rankDelta) return rankDelta;
+    const groupRankDelta =
+      problemGroupBusinessRank(a.groupKey) - problemGroupBusinessRank(b.groupKey);
+    if (groupRankDelta) return groupRankDelta;
+    if (b.money !== a.money) return b.money - a.money;
+    if (b.count !== a.count) return b.count - a.count;
+    return priorityRank(a.mainItem) - priorityRank(b.mainItem);
+  });
+}
+
+function signalCountLabel(count: number): string {
+  if (count === 1) return "1 сигнал";
+  if (count > 1 && count < 5) return `${count} сигнала`;
+  return `${count} сигналов`;
+}
+
+function businessCaseDisplayTitle(caseItem: ActionBusinessCase): string {
+  if (caseItem.count <= 1) return caseItem.title;
+  const labels = caseItem.topCodes.map((code) => code.label).filter(Boolean);
+  return labels.length ? labels.slice(0, 2).join(" + ") : caseItem.title;
+}
+
+function businessCaseSubtitle(caseItem: ActionBusinessCase): string {
+  const labels = caseItem.topCodes
+    .map((code) => `${code.label}${code.count > 1 ? ` · ${code.count}` : ""}`)
+    .filter(Boolean);
+  if (caseItem.count > 1 && labels.length) return labels.join(" / ");
+  const item = caseItem.mainItem;
+  return (
+    item.short_explanation ||
+    item.reason ||
+    problemCodeLabel(actionCode(item))
+  );
+}
+
+function buildBusinessCaseGroups(cases: ActionBusinessCase[]): ProblemGroupSummary[] {
+  return PROBLEM_GROUP_ORDER.map((key) => {
+    const caseItems = cases.filter((item) => item.groupKey === key);
+    if (!caseItems.length) return null;
+    const execution = emptyActionExecutionSummary();
+    const codeCounts = new Map<string, number>();
+    const items = caseItems.flatMap((item) => item.items);
+    for (const item of caseItems) {
+      for (const mode of Object.keys(execution) as ActionExecutionMode[]) {
+        execution[mode] += item.execution[mode] ?? 0;
+      }
+      for (const code of item.topCodes) {
+        codeCounts.set(code.code, (codeCounts.get(code.code) ?? 0) + code.count);
+      }
+    }
+    const cfg = PROBLEM_GROUP_CONFIG[key];
+    return {
+      key,
+      ...cfg,
+      items,
+      open: caseItems.length,
+      closed: 0,
+      urgent: caseItems.filter((item) => item.urgent).length,
+      blockers: caseItems.filter((item) => item.blocker).length,
+      actionable: caseItems.filter(
+        (item) => item.execution.execute + item.execution.inline > 0,
+      ).length,
+      execution,
+      money: caseItems.reduce((sum, item) => sum + item.money, 0),
+      progress: 0,
+      topCodes: Array.from(codeCounts.entries())
+        .map(([code, count]) => ({
+          code,
+          label: problemCodeLabel(code) || code.replaceAll("_", " "),
+          count,
+        }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 3),
+    } satisfies ProblemGroupSummary;
+  }).filter(Boolean) as ProblemGroupSummary[];
+}
+
 function isActionable(item: ActionCenterItem): boolean {
   if (isClosedAction(item)) return false;
-  const primary = primaryActionForItem(item);
-  if (primary?.enabled) return true;
-  return item.can_update || item.can_recheck;
+  if (isContentQualityOpportunityAction(item)) return false;
+  const mode = actionExecutionMode(item);
+  return mode === "execute" || mode === "inline";
 }
 
 function problemPlaybook(item: ActionCenterItem): Array<{
@@ -1218,7 +1551,8 @@ function problemPlaybook(item: ActionCenterItem): Array<{
         title: "Обновить карточки или передать на mapping",
         description:
           "Откройте исправление данных. Если связи нет после синхронизации карточек, назначьте администратору проверку каталога.",
-        completion_signal: "Карточка синхронизирована или mapping взят в работу",
+        completion_signal:
+          "Карточка синхронизирована или mapping взят в работу",
         preferred_href: "work",
       },
       {
@@ -1332,9 +1666,11 @@ function problemPlaybook(item: ActionCenterItem): Array<{
     ];
   }
   if (
-    ["low_conversion_card", "no_sales_with_views", "card_content_review"].includes(
-      code,
-    )
+    [
+      "low_conversion_card",
+      "no_sales_with_views",
+      "card_content_review",
+    ].includes(code)
   ) {
     return [
       {
@@ -1733,22 +2069,28 @@ function priorityRailTone(item: ActionCenterItem): string {
 
 function actionStateLabel(item: ActionCenterItem): string {
   if (isClosedAction(item)) return "Закрыто";
+  const mode = actionExecutionMode(item);
+  if (mode === "execute") return "Можно применить";
+  if (mode === "inline") return "Исправить здесь";
+  if (mode === "blocked") return "Нужны данные";
   if (isOverdueAction(item, new Date())) return "Просрочено";
-  if (isUrgentAction(item)) return "Срочно";
-  if (isDataBlockerAction(item)) return "Блокер данных";
-  if (isActionable(item)) return "Можно делать";
-  return "Ждёт сигнала";
+  if (mode === "decision") return "Нужно решение";
+  if (mode === "manual") return "Ручной шаг";
+  return "Наблюдение";
 }
 
 function actionStateTone(item: ActionCenterItem): string {
   if (isClosedAction(item))
     return "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
-  if (isOverdueAction(item, new Date()) || isUrgentAction(item)) {
+  const mode = actionExecutionMode(item);
+  if (mode === "blocked")
+    return "border-amber-500/35 bg-amber-500/10 text-amber-800 dark:text-amber-300";
+  if (mode === "execute" || mode === "inline")
+    return "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  if (isOverdueAction(item, new Date())) {
     return "border-red-500/35 bg-red-500/10 text-red-700 dark:text-red-300";
   }
-  if (isDataBlockerAction(item))
-    return "border-amber-500/35 bg-amber-500/10 text-amber-800 dark:text-amber-300";
-  if (isActionable(item))
+  if (mode === "decision")
     return "border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300";
   return "border-border bg-muted text-muted-foreground";
 }
@@ -1807,8 +2149,35 @@ type ProblemGroupSummary = {
   urgent: number;
   blockers: number;
   actionable: number;
+  execution: ActionExecutionSummary;
   money: number;
   progress: number;
+  topCodes: Array<{ code: string; label: string; count: number }>;
+};
+
+type ActionExecutionMode =
+  | "execute"
+  | "inline"
+  | "decision"
+  | "manual"
+  | "blocked"
+  | "signal";
+
+type ActionExecutionSummary = Record<ActionExecutionMode, number>;
+
+type ActionBusinessCase = {
+  key: string;
+  title: string;
+  objectLabel: string;
+  mainItem: ActionCenterItem;
+  items: ActionCenterItem[];
+  groupKey: ProblemGroupKey;
+  count: number;
+  money: number;
+  rawSignalMoney: number;
+  urgent: boolean;
+  blocker: boolean;
+  execution: ActionExecutionSummary;
   topCodes: Array<{ code: string; label: string; count: number }>;
 };
 
@@ -1817,17 +2186,67 @@ type ProblemGroupMoneyOverrides = {
 };
 
 const PROBLEM_GROUP_ORDER: ProblemGroupKey[] = [
-  "manual_tasks",
   "data_blockers",
   "profitability",
-  "price",
   "stock",
+  "price",
   "ads_promo",
-  "card_quality",
+  "manual_tasks",
   "reputation",
+  "card_quality",
   "system_checks",
   "other",
 ];
+
+const PROBLEM_GROUP_BUSINESS_RANK: Record<ProblemGroupKey, number> = {
+  data_blockers: 0,
+  profitability: 1,
+  stock: 2,
+  price: 3,
+  ads_promo: 4,
+  manual_tasks: 5,
+  reputation: 6,
+  card_quality: 7,
+  system_checks: 8,
+  other: 9,
+};
+
+function problemGroupBusinessRank(key: ProblemGroupKey): number {
+  return PROBLEM_GROUP_BUSINESS_RANK[key] ?? 99;
+}
+
+function actionBusinessPriorityRank(item: ActionCenterItem): number {
+  const groupRank = problemGroupBusinessRank(problemGroupKey(item)) * 1000;
+  const mode = actionExecutionMode(item);
+  const modeRank =
+    mode === "inline"
+      ? 0
+      : mode === "execute"
+        ? 1
+        : mode === "blocked"
+          ? 2
+          : mode === "decision"
+            ? 3
+            : mode === "manual"
+              ? 4
+              : 5;
+  const urgentRank = isUrgentAction(item) ? 0 : 50;
+  const contentPenalty = isContentQualityOpportunityAction(item) ? 250 : 0;
+  return groupRank + modeRank * 10 + urgentRank + contentPenalty;
+}
+
+function sortByBusinessPriority(items: ActionCenterItem[]): ActionCenterItem[] {
+  return [...items].sort((left, right) => {
+    const rankDelta =
+      actionBusinessPriorityRank(left) - actionBusinessPriorityRank(right);
+    if (rankDelta) return rankDelta;
+    const moneyDelta =
+      moneyFromUnknown(right.money_impact_amount) -
+      moneyFromUnknown(left.money_impact_amount);
+    if (moneyDelta) return moneyDelta;
+    return priorityRank(left) - priorityRank(right);
+  });
+}
 
 function normalizeProblemGroupKey(value: unknown): ProblemGroupKey | null {
   const key = norm(value);
@@ -1871,7 +2290,7 @@ const PROBLEM_GROUP_CONFIG: Record<
   },
   price: {
     title: "Цена и скидки",
-    subtitle: "Безопасная цена, скидки и price review перед изменениями.",
+    subtitle: "Безопасная цена, скидки и проверка перед изменениями.",
     actionLabel: "Проверить цены",
     tone: "border-sky-500/35 bg-sky-500/5",
     icon: <Gauge className="h-4 w-4" />,
@@ -1884,8 +2303,8 @@ const PROBLEM_GROUP_CONFIG: Record<
     icon: <PackageSearch className="h-4 w-4" />,
   },
   ads_promo: {
-    title: "Реклама и промо",
-    subtitle: "Кампании, ставки, промо и скидки, которые влияют на прибыль.",
+    title: "Реклама и продвижение",
+    subtitle: "Кампании, ставки и бюджеты, которые влияют на прибыль.",
     actionLabel: "Настроить рекламу",
     tone: "border-violet-500/35 bg-violet-500/5",
     icon: <BarChart3 className="h-4 w-4" />,
@@ -1905,16 +2324,15 @@ const PROBLEM_GROUP_CONFIG: Record<
     icon: <MessageSquare className="h-4 w-4" />,
   },
   system_checks: {
-    title: "Системные проверки",
-    subtitle:
-      "Технические расхождения и контрольные сверки без ручной продажи.",
+    title: "Сверки системы",
+    subtitle: "Расхождения в данных, которые нужно перепроверить.",
     actionLabel: "Проверить систему",
     tone: "border-slate-500/35 bg-slate-500/5",
     icon: <ShieldCheck className="h-4 w-4" />,
   },
   other: {
-    title: "Другие задачи",
-    subtitle: "Редкие сигналы, которые не попали в основные бизнес-группы.",
+    title: "Прочее",
+    subtitle: "Редкие задачи, которые не попали в основные группы.",
     actionLabel: "Разобрать",
     tone: "border-border bg-muted/20",
     icon: <ListChecks className="h-4 w-4" />,
@@ -1935,7 +2353,7 @@ const TASK_DOMAIN_CATALOG: Record<
     direction: "Операционные поручения",
     short: "Ручные задачи по товарам, срокам и исполнителям.",
     taskTypes: [
-      "изменить title",
+      "изменить название",
       "проверить фото",
       "обновить карточку",
       "ручная проверка цены",
@@ -2042,7 +2460,7 @@ const TASK_DOMAIN_CATALOG: Record<
   },
   system_checks: {
     direction: "Контроль",
-    short: "Расхождения сверок, технические сигналы и качество интеграций.",
+    short: "Расхождения сверок и качество данных.",
     taskTypes: [
       "финальная сверка",
       "продажа без финансов",
@@ -2056,10 +2474,432 @@ const TASK_DOMAIN_CATALOG: Record<
     direction: "Разбор",
     short: "Редкие задачи, которые ещё не вошли в основные направления.",
     taskTypes: ["проверить причину", "назначить владельца", "закрыть вручную"],
-    workflow: ["понять сигнал", "решить или назначить", "закрыть"],
+    workflow: ["понять задачу", "решить или назначить", "закрыть"],
     doneSignal: "есть понятный итог задачи",
   },
 };
+
+type ScenarioCoverageStatus = "live" | "partial" | "missing";
+type ScenarioCoverageMode = "platform" | "review" | "manual" | "planned";
+
+type V1ScenarioCoverageItem = {
+  id: string;
+  group: ProblemGroupKey;
+  title: string;
+  status: ScenarioCoverageStatus;
+  mode: ScenarioCoverageMode;
+  codes: string[];
+};
+
+const ACTION_CENTER_V1_SCENARIO_CATALOG: V1ScenarioCoverageItem[] = [
+  {
+    id: "data_sync_stale",
+    group: "data_blockers",
+    title: "Источник данных устарел или не загрузился",
+    status: "partial",
+    mode: "manual",
+    codes: ["sync_failed", "import_failed", "source_stale"],
+  },
+  {
+    id: "missing_cost",
+    group: "data_blockers",
+    title: "Не хватает себестоимости",
+    status: "live",
+    mode: "platform",
+    codes: [
+      "missing_cost_blocks_profit",
+      "missing_manual_cost",
+      "supplier_cost_coverage_below_threshold",
+      "fix_cost_trust",
+    ],
+  },
+  {
+    id: "conflicting_cost",
+    group: "data_blockers",
+    title: "Себестоимость конфликтует или неоднозначна",
+    status: "partial",
+    mode: "platform",
+    codes: ["cost_conflict", "cost_ambiguous", "cost_fix"],
+  },
+  {
+    id: "sku_unmapped",
+    group: "data_blockers",
+    title: "SKU, баркод или размер не сопоставлен",
+    status: "live",
+    mode: "platform",
+    codes: ["unmatched_sku", "missing_chrt_id", "sku_mapping"],
+  },
+  {
+    id: "finance_sales_mismatch",
+    group: "system_checks",
+    title: "Продажи, заказы и финальный отчёт не сходятся",
+    status: "partial",
+    mode: "manual",
+    codes: [
+      "finance_reconciliation_mismatch",
+      "sale_without_finance",
+      "finance_without_sale",
+      "order_without_sale_or_return",
+    ],
+  },
+  {
+    id: "ads_spend_not_linked",
+    group: "data_blockers",
+    title: "Рекламный расход не привязан к товару",
+    status: "partial",
+    mode: "manual",
+    codes: ["ad_spend_without_sku", "ads_spend_not_linked"],
+  },
+  {
+    id: "negative_unit_profit",
+    group: "profitability",
+    title: "Товар продаётся в минус",
+    status: "live",
+    mode: "review",
+    codes: ["negative_unit_profit"],
+  },
+  {
+    id: "low_margin",
+    group: "profitability",
+    title: "Маржа ниже безопасного минимума",
+    status: "live",
+    mode: "review",
+    codes: ["price_below_safe_margin"],
+  },
+  {
+    id: "profit_dropped_wow",
+    group: "profitability",
+    title: "Прибыль резко упала к прошлому периоду",
+    status: "missing",
+    mode: "planned",
+    codes: ["profit_dropped_wow", "profit_drop_period"],
+  },
+  {
+    id: "commission_increase_profit_drop",
+    group: "profitability",
+    title: "Комиссия выросла и съела прибыль",
+    status: "missing",
+    mode: "planned",
+    codes: ["commission_increase_profit_drop"],
+  },
+  {
+    id: "logistics_storage_profit_drop",
+    group: "profitability",
+    title: "Логистика или хранение ухудшили прибыль",
+    status: "partial",
+    mode: "manual",
+    codes: ["storage_cost_pressure", "logistics_profit_drop"],
+  },
+  {
+    id: "returns_buyout_unprofitable",
+    group: "profitability",
+    title: "Возвраты или выкуп делают товар невыгодным",
+    status: "partial",
+    mode: "manual",
+    codes: ["high_return_rate", "buyout_drop_unprofitable"],
+  },
+  {
+    id: "ads_made_unprofitable",
+    group: "profitability",
+    title: "Реклама сделала карточку убыточной",
+    status: "live",
+    mode: "review",
+    codes: ["ads_spend_without_profit"],
+  },
+  {
+    id: "promo_unsafe_profitability",
+    group: "profitability",
+    title: "Промо или скидка ломает экономику",
+    status: "live",
+    mode: "review",
+    codes: ["promo_not_profitable"],
+  },
+  {
+    id: "stockout_forecast",
+    group: "stock",
+    title: "Скоро закончится товар",
+    status: "live",
+    mode: "manual",
+    codes: ["stockout_risk_14d", "fast_stock_depletion", "low_stock_risk"],
+  },
+  {
+    id: "high_demand_low_stock",
+    group: "stock",
+    title: "Высокий спрос при низком остатке",
+    status: "live",
+    mode: "review",
+    codes: ["raise_price_possible_high_demand"],
+  },
+  {
+    id: "sales_no_confirmed_stock",
+    group: "stock",
+    title: "Продажи есть, подтверждённого остатка нет",
+    status: "live",
+    mode: "manual",
+    codes: ["stockout_now_with_recent_orders"],
+  },
+  {
+    id: "overstock",
+    group: "stock",
+    title: "Пересток и замороженные деньги",
+    status: "live",
+    mode: "manual",
+    codes: ["overstock_slow_moving", "storage_cost_pressure"],
+  },
+  {
+    id: "dead_stock",
+    group: "stock",
+    title: "Остаток лежит без продаж",
+    status: "live",
+    mode: "manual",
+    codes: ["dead_stock"],
+  },
+  {
+    id: "stock_no_sales",
+    group: "stock",
+    title: "Есть остаток, но продаж нет",
+    status: "partial",
+    mode: "manual",
+    codes: ["dead_stock", "no_sales_with_views"],
+  },
+  {
+    id: "do_not_reorder",
+    group: "stock",
+    title: "Не дозаказывать слабую карточку",
+    status: "partial",
+    mode: "manual",
+    codes: ["do_not_reorder", "no_sales_with_views"],
+  },
+  {
+    id: "regional_distribution",
+    group: "stock",
+    title: "Неправильное распределение по регионам",
+    status: "missing",
+    mode: "planned",
+    codes: ["regional_distribution_gap"],
+  },
+  {
+    id: "size_color_imbalance",
+    group: "stock",
+    title: "Дисбаланс цветов или размеров",
+    status: "missing",
+    mode: "planned",
+    codes: ["size_color_imbalance"],
+  },
+  {
+    id: "price_below_safe_min",
+    group: "price",
+    title: "Цена ниже безопасного минимума",
+    status: "live",
+    mode: "review",
+    codes: ["price_below_safe_margin"],
+  },
+  {
+    id: "raise_price_low_stock",
+    group: "price",
+    title: "Поднять цену при высоком спросе и низком остатке",
+    status: "live",
+    mode: "review",
+    codes: ["raise_price_possible_high_demand"],
+  },
+  {
+    id: "high_price_conversion_drop",
+    group: "price",
+    title: "Цена или оффер просадили конверсию",
+    status: "live",
+    mode: "review",
+    codes: ["price_offer_blocks_conversion"],
+  },
+  {
+    id: "promo_unsafe_price",
+    group: "price",
+    title: "Промо небезопасно для маржи",
+    status: "live",
+    mode: "review",
+    codes: ["promo_not_profitable"],
+  },
+  {
+    id: "wrong_discount_ladder",
+    group: "price",
+    title: "Базовая цена или скидочная лестница некорректна",
+    status: "missing",
+    mode: "planned",
+    codes: ["wrong_discount_ladder"],
+  },
+  {
+    id: "post_price_change_sales_worse",
+    group: "price",
+    title: "После изменения цены продажи ухудшились",
+    status: "missing",
+    mode: "planned",
+    codes: ["post_price_change_sales_worse"],
+  },
+  {
+    id: "ad_spend_no_orders",
+    group: "ads_promo",
+    title: "Реклама тратит деньги без заказов",
+    status: "live",
+    mode: "review",
+    codes: ["ads_spend_no_orders"],
+  },
+  {
+    id: "ads_profit_negative",
+    group: "ads_promo",
+    title: "Реклама перекрывает прибыль",
+    status: "live",
+    mode: "review",
+    codes: ["ads_spend_without_profit"],
+  },
+  {
+    id: "high_ad_drr",
+    group: "ads_promo",
+    title: "ДРР выше безопасного порога",
+    status: "live",
+    mode: "review",
+    codes: ["high_ad_drr"],
+  },
+  {
+    id: "high_ad_cpo",
+    group: "ads_promo",
+    title: "CPO слишком высокий",
+    status: "live",
+    mode: "review",
+    codes: ["high_ad_cpo"],
+  },
+  {
+    id: "low_ads_ctr",
+    group: "ads_promo",
+    title: "CTR рекламы слишком низкий",
+    status: "live",
+    mode: "manual",
+    codes: ["low_ads_ctr"],
+  },
+  {
+    id: "ads_near_stockout",
+    group: "ads_promo",
+    title: "Реклама ведёт трафик на почти пустой остаток",
+    status: "live",
+    mode: "review",
+    codes: ["ads_stockout_risk"],
+  },
+  {
+    id: "profitable_campaign_underfunded",
+    group: "ads_promo",
+    title: "Прибыльная кампания недофинансирована",
+    status: "missing",
+    mode: "planned",
+    codes: ["profitable_campaign_underfunded"],
+  },
+  {
+    id: "views_traffic_drop",
+    group: "card_quality",
+    title: "Просмотры или трафик резко упали",
+    status: "missing",
+    mode: "planned",
+    codes: ["views_traffic_drop"],
+  },
+  {
+    id: "search_card_ctr_drop",
+    group: "card_quality",
+    title: "CTR поиска или карточки упал",
+    status: "partial",
+    mode: "manual",
+    codes: ["low_ads_ctr", "search_card_ctr_drop"],
+  },
+  {
+    id: "add_to_cart_conversion_drop",
+    group: "card_quality",
+    title: "Конверсия в корзину упала",
+    status: "missing",
+    mode: "planned",
+    codes: ["add_to_cart_conversion_drop"],
+  },
+  {
+    id: "cart_to_order_drop",
+    group: "card_quality",
+    title: "Конверсия из корзины в заказ упала",
+    status: "missing",
+    mode: "planned",
+    codes: ["cart_to_order_drop"],
+  },
+  {
+    id: "buyout_down_returns_up",
+    group: "card_quality",
+    title: "Выкуп падает или возвраты растут",
+    status: "partial",
+    mode: "manual",
+    codes: ["high_return_rate", "buyout_down_returns_up"],
+  },
+  {
+    id: "missing_card_content",
+    group: "card_quality",
+    title: "Не заполнены title, описание или обязательные характеристики",
+    status: "live",
+    mode: "platform",
+    codes: [
+      "card_quality_issue",
+      "title_too_short",
+      "no_title",
+      "title_missing",
+      "no_description",
+      "description_missing",
+      "missing_required_characteristic",
+    ],
+  },
+  {
+    id: "missing_search_queries",
+    group: "card_quality",
+    title: "Не хватает поисковых запросов",
+    status: "missing",
+    mode: "planned",
+    codes: ["missing_search_queries"],
+  },
+  {
+    id: "weak_media",
+    group: "card_quality",
+    title: "Слабое фото, видео или первая картинка",
+    status: "partial",
+    mode: "platform",
+    codes: [
+      "no_photos",
+      "few_photos",
+      "media_no_images",
+      "media_too_few_images",
+    ],
+  },
+  {
+    id: "card_cannibalization",
+    group: "card_quality",
+    title: "Похожие карточки каннибализируют продажи",
+    status: "missing",
+    mode: "planned",
+    codes: ["card_cannibalization"],
+  },
+  {
+    id: "rating_drop",
+    group: "reputation",
+    title: "Рейтинг товара просел",
+    status: "partial",
+    mode: "manual",
+    codes: ["low_product_rating", "rating_drop"],
+  },
+  {
+    id: "negative_review_topic_spike",
+    group: "reputation",
+    title: "В негативных отзывах появился повторяющийся повод",
+    status: "partial",
+    mode: "manual",
+    codes: ["negative_reviews_need_reply", "negative_review_topic_spike"],
+  },
+  {
+    id: "repeated_defect_batch_size",
+    group: "reputation",
+    title: "Повторяется дефект по партии, цвету или размеру",
+    status: "missing",
+    mode: "planned",
+    codes: ["repeated_defect_batch_size"],
+  },
+];
 
 function problemGroupKey(item: ActionCenterItem): ProblemGroupKey {
   const source = norm(item.source_module);
@@ -2243,6 +3083,9 @@ function buildProblemGroups(
     const blockers = groupItems.filter(
       (item) => !isClosedAction(item) && isDataBlockerAction(item),
     ).length;
+    const execution = actionExecutionSummary(
+      groupItems.filter((item) => !isClosedAction(item)),
+    );
     const actionable = groupItems.filter(isActionable).length;
     const money = problemGroupMoney(key, groupItems, overrides);
     const counts = new Map<string, number>();
@@ -2258,12 +3101,13 @@ function buildProblemGroups(
     return {
       key,
       ...cfg,
-      items: sortActionCenterItems(groupItems, "priority"),
+      items: sortByBusinessPriority(groupItems),
       open,
       closed,
       urgent,
       blockers,
       actionable,
+      execution,
       money,
       progress: groupItems.length
         ? Math.round((closed / groupItems.length) * 100)
@@ -2273,15 +3117,13 @@ function buildProblemGroups(
   })
     .filter((group) => group.items.length > 0)
     .sort((a, b) => {
-      const blockerDelta =
-        Number(b.key === "data_blockers") - Number(a.key === "data_blockers");
-      if (blockerDelta) return blockerDelta;
+      const groupRankDelta =
+        problemGroupBusinessRank(a.key) - problemGroupBusinessRank(b.key);
+      if (groupRankDelta) return groupRankDelta;
       if (b.urgent !== a.urgent) return b.urgent - a.urgent;
-      if (b.open !== a.open) return b.open - a.open;
       if (b.money !== a.money) return b.money - a.money;
-      return (
-        PROBLEM_GROUP_ORDER.indexOf(a.key) - PROBLEM_GROUP_ORDER.indexOf(b.key)
-      );
+      if (b.open !== a.open) return b.open - a.open;
+      return 0;
     });
 }
 
@@ -2920,7 +3762,7 @@ function EvidencePanel({ item }: { item: ActionCenterItem }) {
           />
           <Fact label="Модуль" value={sourceModuleLabel(item.source_module)} />
           <Fact
-            label="Доверие"
+            label="Данные"
             value={problemTrustLabel(
               String(
                 item.trust_state ?? item.money_trust?.state ?? "provisional",
@@ -3087,7 +3929,7 @@ function actionDecisionPlan(item: ActionCenterItem): {
   const subject = objectLabel(item);
   if (["ad_pause_review", "ads_spend_without_profit"].includes(code)) {
     return {
-      title: "Решить здесь: рекламная утечка денег",
+      title: "Что сделать: рекламная утечка денег",
       subtitle:
         "Реклама не должна тратить бюджет, пока чистая прибыль по товару не стала положительной.",
       objective:
@@ -3119,7 +3961,7 @@ function actionDecisionPlan(item: ActionCenterItem): {
         "Нужна правка цены или карточки перед рекламой",
       ],
       caution:
-        "WB write для рекламы не выполняется автоматически из этого экрана. Здесь фиксируется операторское решение и запускается повторная проверка.",
+        "Автоматическое изменение рекламы отсюда пока не выполняется. Зафиксируйте решение и запустите повторную проверку.",
       workLabel: "Открыть рекламу по товару",
       doneComment:
         "Рекламная утечка разобрана: кампания найдена, расход ограничен или зафиксирован следующий шаг.",
@@ -3129,7 +3971,7 @@ function actionDecisionPlan(item: ActionCenterItem): {
   }
   if (code === "price_increase_review" || code.includes("price")) {
     return {
-      title: "Решить здесь: безопасная цена",
+      title: "Что сделать: безопасная цена",
       subtitle:
         "Цена меняется только после проверки себестоимости, комиссии, логистики, рекламы и минимальной маржи.",
       objective:
@@ -3171,6 +4013,57 @@ function actionDecisionPlan(item: ActionCenterItem): {
   }
   if (
     [
+      "missing_cost_blocks_profit",
+      "missing_manual_cost",
+      "supplier_cost_coverage_below_threshold",
+      "manual_cost_unresolved_sku",
+      "manual_cost_ambiguous_match",
+      "fix_cost_trust",
+    ].includes(code)
+  ) {
+    return {
+      title: "Что сделать: себестоимость",
+      subtitle:
+        "Пока себестоимость не заполнена, прибыль и окупаемость считаются ненадёжно.",
+      objective:
+        "Найдите строку товара, внесите цену закупки и прочие расходы. Если прочих расходов нет, укажите 0. После сохранения система перейдёт к следующей строке.",
+      steps: [
+        {
+          title: "Понять задачу",
+          description:
+            "Проверьте товар, SKU, размер и период, по которому нет себестоимости.",
+          done: "Понятно, по какому товару нужны цифры",
+        },
+        {
+          title: "Выполнить или назначить",
+          description:
+            "Заполните себестоимость здесь или назначьте задачу ответственному, если цифр пока нет.",
+          done: "Себестоимость внесена или есть ответственный",
+        },
+        {
+          title: "Перепроверить",
+          description:
+            "После изменения данных запустите пересчёт и закройте задачу.",
+          done: "Прибыль пересчитана",
+        },
+      ],
+      outcomes: [
+        "Себестоимость заполнена",
+        "Расходы за единицу заполнены",
+        "Назначен ответственный",
+        "Строка пропущена до уточнения",
+      ],
+      caution:
+        "Перед сохранением проверьте, что сумма относится к выбранному товару и размеру.",
+      workLabel: "Заполнить себестоимость",
+      doneComment:
+        "Себестоимость заполнена или передана ответственному, задача продвинута дальше.",
+      tone: "warning",
+      icon: <Database className="h-4 w-4" />,
+    };
+  }
+  if (
+    [
       "liquidate_stock",
       "do_not_reorder",
       "stock_without_sales",
@@ -3179,7 +4072,7 @@ function actionDecisionPlan(item: ActionCenterItem): {
     ].includes(code)
   ) {
     return {
-      title: "Решить здесь: зависший остаток",
+      title: "Что сделать: зависший остаток",
       subtitle:
         "Сначала защищаем деньги: не закупать лишнее и выбрать безопасный сценарий разгрузки.",
       objective:
@@ -3221,7 +4114,7 @@ function actionDecisionPlan(item: ActionCenterItem): {
   }
   if (["reorder", "protect_stock", "sales_without_stock"].includes(code)) {
     return {
-      title: "Решить здесь: пополнение или защита остатка",
+      title: "Что сделать: пополнение или защита остатка",
       subtitle:
         "Товар может закончиться или продажи идут без подтверждённого остатка.",
       objective:
@@ -3241,8 +4134,7 @@ function actionDecisionPlan(item: ActionCenterItem): {
         },
         {
           title: "Перепроверить после обновления",
-          description:
-            "После синка остатков или поставки пересчитайте задачу.",
+          description: "После синка остатков или поставки пересчитайте задачу.",
           done: "Риск дефицита снят или взят в работу",
         },
       ],
@@ -3255,15 +4147,14 @@ function actionDecisionPlan(item: ActionCenterItem): {
       caution:
         "Поставка в WB не создаётся автоматически из этого экрана. Здесь фиксируется план и контрольный recheck.",
       workLabel: "Открыть поставки/остатки",
-      doneComment:
-        "План по пополнению или защите остатка зафиксирован.",
+      doneComment: "План по пополнению или защите остатка зафиксирован.",
       tone: "info",
       icon: <PackageSearch className="h-4 w-4" />,
     };
   }
   if (code === "missing_chrt_id") {
     return {
-      title: "Решить здесь: связь размера с карточкой",
+      title: "Что сделать: связь размера с карточкой",
       subtitle:
         "chrt_id должен прийти из WB карточек или доверенного mapping, руками менять WB-факты нельзя.",
       objective:
@@ -3283,8 +4174,7 @@ function actionDecisionPlan(item: ActionCenterItem): {
         },
         {
           title: "Перепроверить",
-          description:
-            "После обновления карточек пересчитайте Action Center.",
+          description: "После обновления карточек пересчитайте Action Center.",
           done: "Связь появилась или причина зафиксирована",
         },
       ],
@@ -3305,7 +4195,7 @@ function actionDecisionPlan(item: ActionCenterItem): {
   }
   if (code === "card_content_review" || code.includes("qualification")) {
     return {
-      title: "Решить здесь: контент карточки",
+      title: "Что сделать: контент карточки",
       subtitle:
         "Нужно понять, что мешает карточке продавать или попадать в фильтры WB.",
       objective:
@@ -3353,7 +4243,7 @@ function actionDecisionPlan(item: ActionCenterItem): {
     ].includes(code)
   ) {
     return {
-      title: "Решить здесь: системная сверка",
+      title: "Что сделать: системная сверка",
       subtitle:
         "Это контроль данных WB, обычно без ручной продажи или изменения фактов.",
       objective:
@@ -3373,8 +4263,7 @@ function actionDecisionPlan(item: ActionCenterItem): {
         },
         {
           title: "Перепроверить сверку",
-          description:
-            "После sync или финального отчёта пересчитайте задачу.",
+          description: "После sync или финального отчёта пересчитайте задачу.",
           done: "Расхождение исчезло или передано администратору",
         },
       ],
@@ -3394,7 +4283,7 @@ function actionDecisionPlan(item: ActionCenterItem): {
     };
   }
   return {
-    title: "Решить здесь: разбор задачи",
+    title: "Что сделать: разбор задачи",
     subtitle:
       "Платформа показывает причину, доказательства и следующий шаг. Зафиксируйте решение, чтобы очередь двигалась дальше.",
     objective:
@@ -3403,7 +4292,7 @@ function actionDecisionPlan(item: ActionCenterItem): {
       "Проверьте доказательства, выполните рабочее действие или назначьте ответственного.",
     steps: [
       {
-        title: "Понять сигнал",
+        title: "Понять задачу",
         description:
           item.reason ||
           "Откройте детали проверки и посмотрите, какие данные создали задачу.",
@@ -3413,7 +4302,7 @@ function actionDecisionPlan(item: ActionCenterItem): {
         title: "Выполнить или назначить",
         description:
           item.next_step ||
-          "Выполните действие в платформе или создайте ручную задачу ответственному.",
+          "Выполните доступный шаг или создайте ручную задачу ответственному.",
         done: "Есть действие или ответственный",
       },
       {
@@ -3492,7 +4381,7 @@ function actionDecisionFacts(item: ActionCenterItem): Array<{
   const trust = norm(item.trust_state ?? item.money_trust?.state);
   if (trust) {
     facts.push({
-      label: "Доверие",
+      label: "Данные",
       value: problemTrustLabel(trust),
       tone: trust === "blocked" ? "danger" : "neutral",
     });
@@ -3553,7 +4442,7 @@ function ActionDecisionResolutionPanel({
                   ? "bg-red-500/10 text-red-700 dark:text-red-300"
                   : plan.tone === "warning"
                     ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                  : plan.tone === "success"
+                    : plan.tone === "success"
                       ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                       : plan.tone === "info"
                         ? "bg-sky-500/10 text-sky-700 dark:text-sky-300"
@@ -3583,9 +4472,7 @@ function ActionDecisionResolutionPanel({
           </div>
 
           <div className="rounded-md border bg-background p-4">
-            <div className="mb-3 text-sm font-semibold">
-              Порядок выполнения
-            </div>
+            <div className="mb-3 text-sm font-semibold">Порядок выполнения</div>
             <div className="space-y-3">
               {plan.steps.map((step, index) => (
                 <div
@@ -3675,8 +4562,7 @@ function ActionDecisionResolutionPanel({
                   })
                 }
               >
-                <Play className="h-3.5 w-3.5" />
-                В работу
+                <Play className="h-3.5 w-3.5" />В работу
               </Button>
               <Button
                 size="sm"
@@ -4330,7 +5216,7 @@ function CostInlineResolution({
                   }
                 />
                 <span className="text-muted-foreground">
-                  Поставщик подтвердил цифры
+                  Цифры проверены
                 </span>
               </label>
 
@@ -5000,6 +5886,521 @@ function ManualTaskResolutionPanel({
   );
 }
 
+type ProblemDetailTab = "action" | "analysis" | "history" | "related";
+
+function ProblemDetailTabs({
+  value,
+  onChange,
+}: {
+  value: ProblemDetailTab;
+  onChange: (value: ProblemDetailTab) => void;
+}) {
+  const tabs: Array<{ value: ProblemDetailTab; label: string }> = [
+    { value: "analysis", label: "Анализ" },
+    { value: "action", label: "Рекомендации" },
+    { value: "history", label: "История" },
+    { value: "related", label: "Связанные товары" },
+  ];
+  return (
+    <div className="flex gap-1 overflow-x-auto border-b px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {tabs.map((tab) => {
+        const active = value === tab.value;
+        return (
+          <button
+            key={tab.value}
+            type="button"
+            onClick={() => onChange(tab.value)}
+            className={`relative h-11 shrink-0 px-3 text-sm font-semibold transition-colors ${
+              active
+                ? "text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {tab.label}
+            {active ? (
+              <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary" />
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ProblemDetailMetric({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: React.ReactNode;
+  tone?: "neutral" | "danger" | "warning" | "success" | "info";
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "text-red-700 dark:text-red-300"
+      : tone === "warning"
+        ? "text-amber-800 dark:text-amber-300"
+        : tone === "success"
+          ? "text-emerald-700 dark:text-emerald-300"
+          : tone === "info"
+            ? "text-sky-700 dark:text-sky-300"
+            : "text-foreground";
+  return (
+    <div className="min-w-0 border-l px-3 first:border-l-0">
+      <div className="truncate text-[11px] text-muted-foreground">{label}</div>
+      <div className={`mt-1 truncate text-sm font-semibold ${toneClass}`}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function ProblemDetailHeader({
+  item,
+  tab,
+  onTabChange,
+  onNext,
+  hasNext,
+}: {
+  item: ActionCenterItem;
+  tab: ProblemDetailTab;
+  onTabChange: (value: ProblemDetailTab) => void;
+  onNext: () => void;
+  hasNext: boolean;
+}) {
+  const facts = actionDecisionFacts(item);
+  const progress = solveProgress(item);
+  const money = moneyFromUnknown(item.money_impact_amount);
+  const primary = primaryActionForItem(item);
+  const nextLabel = primary?.code
+    ? humanActionLabel(primary.code)
+    : guidedFixLabel(item) || actionModeLabel(item);
+  const deadline = formatDeadline(item, new Date());
+  const metricFacts = [
+    {
+      label: "Товар",
+      value: objectLabel(item),
+      tone: "neutral",
+    },
+    {
+      label: "Эффект/риск",
+      value: money ? formatMoney(money) : "—",
+      tone: money ? "danger" : "neutral",
+    },
+    {
+      label: "Следующий шаг",
+      value: nextLabel,
+      tone: isDataBlockerAction(item) ? "warning" : "info",
+    },
+    {
+      label: "Срок",
+      value: deadline.detail
+        ? `${deadline.label}, ${deadline.detail}`
+        : deadline.label,
+      tone: isOverdueAction(item) ? "danger" : "neutral",
+    },
+    ...(facts.length
+      ? facts
+          .filter((fact) => fact.label !== "Эффект/риск")
+          .slice(0, 1)
+          .map((fact) => ({
+            label: fact.label,
+            value: fact.value,
+            tone: fact.tone ?? "neutral",
+          }))
+      : []),
+  ].slice(0, 5);
+  return (
+    <section className="overflow-hidden rounded-md border bg-card shadow-sm">
+      <div className="px-4 py-4">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div className="flex min-w-0 items-start gap-4">
+            <ProductThumb
+              candidates={itemImageCandidates(item)}
+              label={itemProductTitle(item)}
+              className="h-24 w-20"
+            />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <PriorityBadge item={item} />
+                <Badge
+                  variant="outline"
+                  className={`rounded-full text-[10px] ${actionStateTone(item)}`}
+                >
+                  {actionModeLabel(item)}
+                </Badge>
+                <StatusBadge status={item.status} />
+                {item.nm_id ? (
+                  <Badge variant="outline" className="rounded-full text-[10px]">
+                    nm {item.nm_id}
+                  </Badge>
+                ) : null}
+              </div>
+              <h2 className="mt-2 text-xl font-semibold leading-tight">
+                {problemTitle(item)}
+              </h2>
+              <div className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                {item.short_explanation ||
+                  item.reason ||
+                  item.next_step ||
+                  problemCodeLabel(actionCode(item))}
+              </div>
+              <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2 text-xs">
+                <span className="rounded-full bg-muted px-2.5 py-1 font-medium">
+                  {itemProductTitle(item)}
+                </span>
+                <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">
+                  {objectLabel(item)}
+                </span>
+              </div>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!hasNext}
+            onClick={onNext}
+            className="self-start"
+          >
+            Далее
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+
+        <div className="mt-4 overflow-hidden rounded-md border bg-muted/10">
+          <div className="grid divide-y sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-5">
+            {metricFacts.map((fact) => (
+              <ProblemDetailMetric
+                key={fact.label}
+                label={fact.label}
+                value={fact.value}
+                tone={fact.tone}
+              />
+            ))}
+          </div>
+          <div className="flex items-center gap-3 border-t px-3 py-2">
+            <Progress value={progress.percent} className="h-1.5 flex-1" />
+            <span className="w-10 text-right text-xs font-semibold">
+              {progress.percent}%
+            </span>
+          </div>
+        </div>
+      </div>
+      <ProblemDetailTabs value={tab} onChange={onTabChange} />
+    </section>
+  );
+}
+
+function MiniTrendChart({ tone = "info" }: { tone?: "info" | "danger" }) {
+  const stroke = tone === "danger" ? "#dc2626" : "#0f766e";
+  return (
+    <div className="h-32 rounded-md border bg-background p-3">
+      <svg viewBox="0 0 320 96" className="h-full w-full" role="img">
+        <defs>
+          <linearGradient
+            id="action-center-mini-fill"
+            x1="0"
+            x2="0"
+            y1="0"
+            y2="1"
+          >
+            <stop offset="0%" stopColor={stroke} stopOpacity="0.22" />
+            <stop offset="100%" stopColor={stroke} stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+        <path
+          d="M8 76 L48 62 L88 66 L128 48 L168 38 L208 44 L248 30 L312 22 L312 92 L8 92 Z"
+          fill="url(#action-center-mini-fill)"
+        />
+        <path
+          d="M8 76 L48 62 L88 66 L128 48 L168 38 L208 44 L248 30 L312 22"
+          fill="none"
+          stroke={stroke}
+          strokeLinecap="round"
+          strokeWidth="4"
+        />
+        <path
+          d="M8 62 L312 62"
+          fill="none"
+          stroke="#ef4444"
+          strokeDasharray="8 8"
+          strokeWidth="2"
+        />
+      </svg>
+    </div>
+  );
+}
+
+function ActionPreviewPanel({ item }: { item: ActionCenterItem }) {
+  const plan = actionDecisionPlan(item);
+  const metric = decisionMetricValue(item);
+  const resultMoney = metric == null ? 0 : Math.abs(metric);
+  const mode = actionExecutionMode(item);
+  return (
+    <div className="overflow-hidden rounded-md border bg-card shadow-sm">
+      <div className="border-b px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold uppercase text-muted-foreground">
+              Рекомендованное действие
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <div className="text-lg font-semibold">{plan.workLabel}</div>
+              <Badge
+                variant="outline"
+                className="rounded-full border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              >
+                лучший вариант
+              </Badge>
+            </div>
+          </div>
+          <Badge variant="outline" className="rounded-full">
+            {actionModeLabel(item)}
+          </Badge>
+        </div>
+      </div>
+      <div className="grid gap-4 p-4 xl:grid-cols-2">
+        <div className="rounded-md border bg-background p-4">
+          <div className="mb-3 text-sm font-semibold">План действия</div>
+          <div className="grid gap-3">
+            {plan.steps.slice(0, 4).map((step, index) => (
+              <div key={step.title} className="grid grid-cols-[28px_1fr] gap-3">
+                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                  {index + 1}
+                </span>
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold">{step.title}</div>
+                  <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                    {step.description}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-md border bg-background p-4">
+          <div className="mb-3 text-sm font-semibold">Ожидаемый результат</div>
+          <div className="space-y-2">
+            <ProblemDetailMetric
+              label="Финансовый эффект"
+              value={
+                resultMoney ? formatMoney(resultMoney) : "будет после пересчёта"
+              }
+              tone={resultMoney ? "success" : "neutral"}
+            />
+            <ProblemDetailMetric
+              label="Режим выполнения"
+              value={
+                mode === "execute"
+                  ? "Можно применить"
+                  : mode === "inline"
+                    ? "Исправление здесь"
+                    : "Нужен шаг"
+              }
+              tone={
+                mode === "execute" || mode === "inline" ? "success" : "warning"
+              }
+            />
+            <ProblemDetailMetric
+              label="Контроль"
+              value="Проверка после обновления"
+              tone="info"
+            />
+          </div>
+          <div className="mt-4">
+            <MiniTrendChart tone={plan.tone === "danger" ? "danger" : "info"} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProblemAnalysisPanel({ item }: { item: ActionCenterItem }) {
+  const plan = actionDecisionPlan(item);
+  const facts = actionDecisionFacts(item);
+  const progress = solveProgress(item);
+  return (
+    <div className="grid gap-4 xl:grid-cols-2">
+      <div className="rounded-md border bg-card p-4 shadow-sm">
+        <div className="mb-3 text-sm font-semibold">Скорость и риск</div>
+        <MiniTrendChart tone={plan.tone === "danger" ? "danger" : "info"} />
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {facts.slice(0, 4).map((fact) => (
+            <Fact
+              key={fact.label}
+              label={fact.label}
+              value={fact.value}
+              sub={null}
+            />
+          ))}
+          {!facts.length ? (
+            <Fact
+              label="Сигнал"
+              value={problemCodeLabel(actionCode(item))}
+              sub={actionCode(item)}
+            />
+          ) : null}
+        </div>
+      </div>
+      <div className="grid gap-4">
+        <div className="rounded-md border bg-card p-4 shadow-sm">
+          <div className="text-sm font-semibold">Корневая причина</div>
+          <div className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            {plan.objective}
+          </div>
+        </div>
+        <div className="rounded-md border bg-card p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm font-semibold">Рекомендация</div>
+            <Badge variant="outline" className="rounded-full">
+              {progress.done}/{progress.total}
+            </Badge>
+          </div>
+          <div className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            {plan.subtitle}
+          </div>
+          <Progress value={progress.percent} className="mt-3 h-1.5" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProblemHistoryPanel({ item }: { item: ActionCenterItem }) {
+  const deadline = formatDeadline(item, new Date());
+  return (
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <EvidencePanel item={item} />
+      <div className="space-y-4">
+        <DataFreshness item={item} />
+        <div className="rounded-md border bg-card p-4 shadow-sm">
+          <div className="text-sm font-semibold">История состояния</div>
+          <div className="mt-3 space-y-2 text-sm text-muted-foreground">
+            <div className="rounded-md border bg-background px-3 py-2">
+              Текущий статус:{" "}
+              <span className="font-semibold text-foreground">
+                {humanStatusLabel(item.status)}
+              </span>
+            </div>
+            <div className="rounded-md border bg-background px-3 py-2">
+              Результат:{" "}
+              <span className="font-semibold text-foreground">
+                {humanResultLabel(item.result_status)}
+              </span>
+            </div>
+            <div className="rounded-md border bg-background px-3 py-2">
+              Срок:{" "}
+              <span className="font-semibold text-foreground">
+                {deadline.detail
+                  ? `${deadline.label}, ${deadline.detail}`
+                  : deadline.label}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProblemRelatedPanel({ item }: { item: ActionCenterItem }) {
+  const plan = actionDecisionPlan(item);
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <div className="rounded-md border bg-card p-4 shadow-sm">
+        <div className="text-sm font-semibold">Связанный товар</div>
+        <div className="mt-3 flex gap-3">
+          <ProductThumb
+            candidates={itemImageCandidates(item)}
+            label={itemProductTitle(item)}
+            className="h-20 w-16"
+          />
+          <div className="min-w-0">
+            <div className="line-clamp-2 text-sm font-semibold">
+              {itemProductTitle(item)}
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {objectLabel(item)}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <Badge variant="outline" className="rounded-full text-[10px]">
+                {sourceModuleLabel(item.source_module)}
+              </Badge>
+              <Badge variant="outline" className="rounded-full text-[10px]">
+                {problemCodeLabel(actionCode(item))}
+              </Badge>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="rounded-md border bg-card p-4 shadow-sm">
+        <div className="text-sm font-semibold">Что проверять рядом</div>
+        <div className="mt-3 space-y-2">
+          {plan.steps.map((step, index) => (
+            <div key={step.title} className="grid grid-cols-[24px_1fr] gap-2">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
+                {index + 1}
+              </span>
+              <div className="text-sm text-muted-foreground">
+                <span className="font-semibold text-foreground">
+                  {step.title}
+                </span>{" "}
+                {step.done}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ActionSuccessPanel({
+  item,
+  hasNext,
+  onNext,
+}: {
+  item: ActionCenterItem;
+  hasNext: boolean;
+  onNext: () => void;
+}) {
+  return (
+    <div className="rounded-md border bg-card p-8 text-center shadow-sm">
+      <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+        <CheckCircle2 className="h-8 w-8" />
+      </div>
+      <div className="mt-4 text-xl font-semibold">
+        Действие выполнено успешно
+      </div>
+      <div className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+        {problemTitle(item)} закрыта в очереди. После следующей ежедневной
+        проверки Action Center подтвердит результат на свежих данных.
+      </div>
+      <div className="mt-5 flex flex-wrap justify-center gap-2">
+        <Button size="sm" onClick={onNext} disabled={!hasNext}>
+          Следующая задача
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Button>
+        <Button asChild size="sm" variant="outline">
+          <Link
+            to="/results"
+            search={{
+              problem_instance_id: item.problem_instance_id
+                ? String(item.problem_instance_id)
+                : undefined,
+            }}
+          >
+            Открыть результаты
+            <BarChart3 className="h-3.5 w-3.5" />
+          </Link>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function FocusPanel({
   item,
   accountId,
@@ -5032,6 +6433,11 @@ function FocusPanel({
   onNext: () => void;
   hasNext: boolean;
 }) {
+  const [tab, setTab] = useState<ProblemDetailTab>("action");
+  useEffect(() => {
+    setTab("action");
+  }, [item?.id]);
+
   if (!item) {
     return (
       <div className="flex min-h-[420px] items-center justify-center rounded-md border bg-card p-8 text-center shadow-sm">
@@ -5058,96 +6464,290 @@ function FocusPanel({
   const mutationBusy = busy?.startsWith(item.id);
   const inline = hasInlineResolution(item);
   const manualTask = isManualTask(item);
-  const images = itemImageCandidates(item);
+  const resolution = manualTask ? (
+    <ManualTaskResolutionPanel
+      item={item}
+      busy={Boolean(mutationBusy)}
+      onStatus={onStatus}
+      onDoneNext={onDoneNext}
+      onNext={onNext}
+    />
+  ) : inline ? (
+    <InlineResolutionPanel
+      item={item}
+      accountId={accountId}
+      dateFrom={dateFrom}
+      dateTo={dateTo}
+      onChanged={onChanged}
+      onRecheck={onRecheck}
+      onNext={onNext}
+    />
+  ) : (
+    <ActionDecisionResolutionPanel
+      item={item}
+      href={href}
+      workLabel={workLabel || "Открыть"}
+      busy={Boolean(mutationBusy)}
+      onStatus={onStatus}
+      onDoneNext={onDoneNext}
+      onNext={onNext}
+    />
+  );
   return (
-    <div className="space-y-3">
-      <div className="rounded-md border bg-card px-4 py-3 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div className="flex min-w-0 items-start gap-3">
-            <ProductThumb
-              candidates={images}
-              label={problemTitle(item)}
-              className="h-16 w-12"
-            />
-            <div className="min-w-0 space-y-2">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <PriorityBadge item={item} />
-                <StatusBadge status={item.status} />
-                {item.nm_id ? (
-                  <Badge variant="outline" className="text-[10px]">
-                    nm {item.nm_id}
-                  </Badge>
-                ) : null}
-              </div>
-              <div>
-                <h2 className="text-lg font-semibold leading-tight">
-                  {problemTitle(item)}
-                </h2>
-                <div className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                  {item.short_explanation ||
-                    item.reason ||
-                    item.next_step ||
-                    problemCodeLabel(actionCode(item))}
-                </div>
-              </div>
-            </div>
+    <div className="space-y-4">
+      <ProblemDetailHeader
+        item={item}
+        tab={tab}
+        onTabChange={setTab}
+        onNext={onNext}
+        hasNext={hasNext}
+      />
+
+      {tab === "action" ? (
+        <div className="space-y-4">
+          {closed ? (
+            <ActionSuccessPanel item={item} hasNext={hasNext} onNext={onNext} />
+          ) : (
+            <ActionPreviewPanel item={item} />
+          )}
+          {resolution}
+        </div>
+      ) : tab === "analysis" ? (
+        <ProblemAnalysisPanel item={item} />
+      ) : tab === "history" ? (
+        <ProblemHistoryPanel item={item} />
+      ) : (
+        <ProblemRelatedPanel item={item} />
+      )}
+    </div>
+  );
+}
+
+function ReferenceProblemDetailPage({
+  item,
+  group,
+  accountId,
+  dateFrom,
+  dateTo,
+  busy,
+  onBack,
+  onStatus,
+  onDoneNext,
+  onRecheck,
+  onChanged,
+  onNext,
+  hasNext,
+}: {
+  item: ActionCenterItem | null;
+  group: ProblemGroupSummary | null;
+  accountId: number | null | undefined;
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  busy: string | null;
+  onBack: () => void;
+  onStatus: (
+    item: ActionCenterItem,
+    status: string,
+    next?: boolean,
+    options?: { deadline_at?: string; comment?: string },
+  ) => void;
+  onDoneNext: (item: ActionCenterItem) => void;
+  onRecheck: (item: ActionCenterItem) => void;
+  onChanged: () => Promise<void> | void;
+  onNext: () => void;
+  hasNext: boolean;
+}) {
+  const [tab, setTab] = useState<ProblemDetailTab>("analysis");
+
+  useEffect(() => {
+    setTab("analysis");
+  }, [item?.id]);
+
+  if (!item) {
+    return (
+      <div className="mx-auto flex min-h-[520px] w-full max-w-[1120px] items-center justify-center rounded-md border bg-card p-8 text-center shadow-sm">
+        <div className="max-w-sm space-y-3">
+          <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-600" />
+          <div className="text-lg font-semibold">Задач в группе нет</div>
+          <div className="text-sm text-muted-foreground">
+            Вернитесь к списку действий или обновите очередь.
           </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={!hasNext}
-            onClick={onNext}
-            className="self-start"
-          >
-            Далее
-            <ArrowRight className="h-3.5 w-3.5" />
+          <Button variant="outline" onClick={onBack}>
+            <ArrowLeft className="h-4 w-4" />
+            Назад
           </Button>
         </div>
       </div>
+    );
+  }
 
-      {manualTask ? (
-        <ManualTaskResolutionPanel
-          item={item}
-          busy={Boolean(mutationBusy)}
-          onStatus={onStatus}
-          onDoneNext={onDoneNext}
-          onNext={onNext}
-        />
-      ) : inline ? (
-        <InlineResolutionPanel
-          item={item}
-          accountId={accountId}
-          dateFrom={dateFrom}
-          dateTo={dateTo}
-          onChanged={onChanged}
-          onRecheck={onRecheck}
-          onNext={onNext}
-        />
-      ) : (
-        <ActionDecisionResolutionPanel
-          item={item}
-          href={href}
-          workLabel={workLabel || "Открыть"}
-          busy={Boolean(mutationBusy)}
-          onStatus={onStatus}
-          onDoneNext={onDoneNext}
-          onNext={onNext}
-        />
-      )}
+  const primary = primaryActionForItem(item);
+  const href = primary?.href ?? guidedFixHref(item) ?? null;
+  const workLabel = primary?.code
+    ? humanActionLabel(primary.code)
+    : guidedFixLabel(item);
+  const closed = isClosedAction(item);
+  const mutationBusy = busy?.startsWith(item.id);
+  const inline = hasInlineResolution(item);
+  const manualTask = isManualTask(item);
+  const plan = actionDecisionPlan(item);
+  const facts = actionDecisionFacts(item);
+  const money = moneyFromUnknown(item.money_impact_amount);
+  const deadline = formatDeadline(item, new Date());
+  const statFacts = [
+    {
+      label: "Эффект/риск",
+      value: money ? formatMoney(Math.abs(money)) : "—",
+      tone: money ? "danger" : "neutral",
+    },
+    {
+      label: "Следующий шаг",
+      value: plan.workLabel,
+      tone:
+        actionExecutionMode(item) === "inline" ||
+        actionExecutionMode(item) === "execute"
+          ? "success"
+          : "info",
+    },
+    {
+      label: "Срок",
+      value: deadline.detail
+        ? `${deadline.label}, ${deadline.detail}`
+        : deadline.label,
+      tone: isOverdueAction(item) ? "danger" : "neutral",
+    },
+    ...facts
+      .filter((fact) => !["Эффект/риск", "Товар"].includes(fact.label))
+      .slice(0, 2)
+      .map((fact) => ({
+        label: fact.label,
+        value: fact.value,
+        tone: fact.tone ?? "neutral",
+      })),
+  ].slice(0, 5);
+  const resolution = manualTask ? (
+    <ManualTaskResolutionPanel
+      item={item}
+      busy={Boolean(mutationBusy)}
+      onStatus={onStatus}
+      onDoneNext={onDoneNext}
+      onNext={onNext}
+    />
+  ) : inline ? (
+    <InlineResolutionPanel
+      item={item}
+      accountId={accountId}
+      dateFrom={dateFrom}
+      dateTo={dateTo}
+      onChanged={onChanged}
+      onRecheck={onRecheck}
+      onNext={onNext}
+    />
+  ) : (
+    <ActionDecisionResolutionPanel
+      item={item}
+      href={href}
+      workLabel={workLabel || "Открыть"}
+      busy={Boolean(mutationBusy)}
+      onStatus={onStatus}
+      onDoneNext={onDoneNext}
+      onNext={onNext}
+    />
+  );
 
-      <details className="group overflow-hidden rounded-md border bg-card shadow-sm">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 text-sm font-semibold marker:hidden">
-          <span className="flex items-center gap-2">
-            <ClipboardList className="h-4 w-4 text-muted-foreground" />
-            Детали проверки
-          </span>
-          <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
-        </summary>
-        <div className="grid gap-3 border-t bg-muted/10 p-3 xl:grid-cols-[minmax(0,1fr)_320px]">
-          <EvidencePanel item={item} />
-          <DataFreshness item={item} />
+  return (
+    <div className="mx-auto w-full max-w-[1120px] space-y-4">
+      <section className="overflow-hidden rounded-md border bg-card shadow-sm">
+        <div className="flex flex-col gap-3 border-b px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={onBack}>
+              <ArrowLeft className="h-4 w-4" />
+              Назад
+            </Button>
+            <PriorityBadge item={item} />
+            <h1 className="min-w-0 text-xl font-semibold leading-tight">
+              {problemTitle(item)}
+            </h1>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge
+              variant="outline"
+              className={`rounded-full ${actionStateTone(item)}`}
+            >
+              {actionModeLabel(item)}
+            </Badge>
+            {group ? (
+              <Badge variant="secondary" className="rounded-full">
+                {group.title}
+              </Badge>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onNext}
+              disabled={!hasNext}
+            >
+              Далее
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
-      </details>
+
+        <div className="px-5 py-4">
+          <div className="text-sm leading-relaxed text-muted-foreground">
+            {item.short_explanation ||
+              item.reason ||
+              item.next_step ||
+              problemCodeLabel(actionCode(item))}
+          </div>
+
+          <div className="mt-4 overflow-hidden rounded-md border bg-muted/10">
+            <div className="grid gap-0 md:grid-cols-[260px_repeat(4,minmax(0,1fr))]">
+              <div className="flex min-w-0 items-center gap-3 border-b p-4 md:border-b-0 md:border-r">
+                <ProductThumb
+                  candidates={itemImageCandidates(item)}
+                  label={itemProductTitle(item)}
+                  className="h-16 w-16 rounded-md"
+                />
+                <div className="min-w-0">
+                  <div className="line-clamp-2 text-sm font-semibold">
+                    {itemProductTitle(item)}
+                  </div>
+                  <div className="mt-1 truncate text-xs text-muted-foreground">
+                    {objectLabel(item)}
+                  </div>
+                </div>
+              </div>
+              {statFacts.slice(0, 4).map((fact) => (
+                <ProblemDetailMetric
+                  key={fact.label}
+                  label={fact.label}
+                  value={fact.value}
+                  tone={fact.tone}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+        <ProblemDetailTabs value={tab} onChange={setTab} />
+      </section>
+
+      {tab === "action" ? (
+        <div className="space-y-4">
+          {closed ? (
+            <ActionSuccessPanel item={item} hasNext={hasNext} onNext={onNext} />
+          ) : (
+            <ActionPreviewPanel item={item} />
+          )}
+          {!closed ? resolution : null}
+        </div>
+      ) : tab === "analysis" ? (
+        <ProblemAnalysisPanel item={item} />
+      ) : tab === "history" ? (
+        <ProblemHistoryPanel item={item} />
+      ) : (
+        <ProblemRelatedPanel item={item} />
+      )}
     </div>
   );
 }
@@ -5205,7 +6805,7 @@ function SummaryBar({
         : "text-muted-foreground",
     },
     {
-      label: "Можно делать",
+      label: "Требует решения",
       value: actionable,
       tone: "text-sky-700 dark:text-sky-300",
     },
@@ -5217,7 +6817,7 @@ function SummaryBar({
         : "text-muted-foreground",
     },
     {
-      label: "Риск",
+      label: "Оценка сигналов",
       value: moneyAtStake ? formatMoney(moneyAtStake) : "—",
       tone: moneyAtStake
         ? "text-red-700 dark:text-red-300"
@@ -5375,33 +6975,34 @@ function CompactFilterPanel({
 }) {
   const count = activeFilterCount(filters);
   return (
-    <details className="group overflow-hidden rounded-md border bg-card shadow-sm">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 marker:hidden">
+    <section className="overflow-hidden rounded-md border bg-card shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/10 px-4 py-3">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/30 text-muted-foreground">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-background text-primary">
             <SlidersHorizontal className="h-4 w-4" />
           </span>
           <div className="min-w-0">
-            <div className="text-sm font-semibold">Поиск и фильтры</div>
+            <div className="text-sm font-semibold">Фильтры и управление</div>
             <div className="truncate text-xs text-muted-foreground">
               {filters.q
                 ? `Поиск: ${filters.q}`
                 : count
                   ? `${count} активных фильтров`
-                  : "Показаны все задачи текущего режима"}
+                  : "Показаны все задачи выбранного режима"}
             </div>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {count ? (
-            <Badge variant="secondary" className="rounded-full">
-              {count}
-            </Badge>
-          ) : null}
-          <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
-        </div>
-      </summary>
-      <div className="border-t bg-muted/10 p-3">
+        {count ? (
+          <Badge variant="secondary" className="rounded-full">
+            {count} активно
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="rounded-full">
+            без ограничений
+          </Badge>
+        )}
+      </div>
+      <div className="p-3">
         <ActionCenterFilterDock
           filters={filters}
           updateFilters={updateFilters}
@@ -5409,7 +7010,470 @@ function CompactFilterPanel({
           canUseBeta={canUseBeta}
         />
       </div>
-    </details>
+    </section>
+  );
+}
+
+const DATA_HEALTH_DOMAIN_LABELS: Record<string, string> = {
+  finance: "финансы",
+  orders: "заказы",
+  sales: "продажи",
+  stocks: "остатки",
+  stock: "остатки",
+  ads: "реклама",
+  advertising: "реклама",
+  adverts: "реклама",
+  prices: "цены",
+  costs: "себестоимость",
+  cost: "себестоимость",
+  reputation: "репутация",
+  logistics: "логистика",
+};
+
+function dataHealthDomainLabel(domain: unknown): string {
+  const key = norm(domain);
+  return DATA_HEALTH_DOMAIN_LABELS[key] ?? String(domain ?? "данные");
+}
+
+function dataHealthProblemLabel(row: any): string {
+  const freshness = norm(row?.freshness_status);
+  if (freshness === "failed" || norm(row?.status) === "failed") {
+    return "ошибка";
+  }
+  if (freshness === "stale") return "устарели";
+  if (freshness === "missing") return "нет данных";
+  if (row?.permission_ok === false || row?.token_ok === false) {
+    return "нет доступа";
+  }
+  return "проверить";
+}
+
+function dataHealthProblemDomains(
+  status?: DataSyncStatusResponse | null,
+): any[] {
+  if (!status?.domains?.length) return [];
+  return status.domains.filter((row) => {
+    const freshness = norm(row.freshness_status);
+    const state = norm(row.status);
+    return (
+      ["failed", "stale", "missing"].includes(freshness) ||
+      ["failed", "error"].includes(state) ||
+      row.permission_ok === false ||
+      row.token_ok === false
+    );
+  });
+}
+
+function dataHealthWarningText(value: unknown): string {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const lower = text.toLowerCase();
+  if (lower.includes("money sources")) {
+    return "Источники денег расходятся по времени. Эффект считается предварительным до синхронизации.";
+  }
+  if (lower.includes("finance") && lower.includes("orders")) {
+    return "Финансы и заказы не синхронизированы за один период. Сначала обновите данные.";
+  }
+  if (lower.includes("429")) {
+    return "WB временно ограничил часть запросов. Повторите синхронизацию позже.";
+  }
+  if (lower.includes("token")) {
+    return "Для части источников не хватает доступа. Проверьте токены WB.";
+  }
+  return text;
+}
+
+function ActionCenterDataHealthBanner({
+  status,
+}: {
+  status?: DataSyncStatusResponse | null;
+}) {
+  const badDomains = dataHealthProblemDomains(status);
+  const alignment = norm(status?.data_alignment_status);
+  const overall = norm(status?.overall_state);
+  const warnings = status?.data_alignment_warnings ?? status?.warnings ?? [];
+  const shouldShow =
+    Boolean(status) &&
+    (badDomains.length > 0 ||
+      ["failed", "warning"].includes(overall) ||
+      (alignment && !["aligned", "ok"].includes(alignment)));
+  if (!shouldShow) return null;
+  const shown = badDomains.slice(0, 5);
+  return (
+    <Alert className="border-amber-500/35 bg-amber-500/5">
+      <AlertTriangle className="h-4 w-4 text-amber-700 dark:text-amber-300" />
+      <AlertTitle>Данные частично ненадёжны</AlertTitle>
+      <AlertDescription>
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+          <span>
+            Action Center сейчас показывает рабочие сигналы. Финальный эффект
+            подтверждается после синхронизации и перепроверки.
+          </span>
+          {alignment && alignment !== "aligned" ? (
+            <Badge
+              variant="outline"
+              className="rounded-full border-amber-500/35 bg-background"
+            >
+              сверка: {alignment}
+            </Badge>
+          ) : null}
+          {shown.map((row) => (
+            <Badge
+              key={`${row.domain}-${row.freshness_status}-${row.status}`}
+              variant="outline"
+              className="rounded-full border-amber-500/35 bg-background"
+            >
+              {dataHealthDomainLabel(row.domain)}: {dataHealthProblemLabel(row)}
+            </Badge>
+          ))}
+          {badDomains.length > shown.length ? (
+            <Badge variant="outline" className="rounded-full bg-background">
+              ещё {badDomains.length - shown.length}
+            </Badge>
+          ) : null}
+        </div>
+        {warnings.length ? (
+          <div className="mt-2 text-xs text-muted-foreground">
+            {dataHealthWarningText(warnings[0])}
+          </div>
+        ) : null}
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+function BusinessCasesStrip({ cases }: { cases: ActionBusinessCase[] }) {
+  if (!cases.length) return null;
+  const rawSignalMoney = cases.reduce(
+    (sum, item) => sum + item.rawSignalMoney,
+    0,
+  );
+  const objectMoney = cases.reduce((sum, item) => sum + item.money, 0);
+  const overlap = Math.max(0, rawSignalMoney - objectMoney);
+  return (
+    <section className="overflow-hidden rounded-md border bg-card shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b bg-muted/15 px-3 py-2">
+        <div>
+          <div className="text-sm font-semibold">
+            Связанные сигналы по товарам
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Если один товар попал в несколько проверок, работаем как с одним
+            бизнес-кейсом и не складываем эффект вслепую.
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline" className="rounded-full">
+            {cases.length} товаров
+          </Badge>
+          {overlap ? (
+            <Badge
+              variant="outline"
+              className="rounded-full border-amber-500/35 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+            >
+              пересечение {formatMoneyCompact(overlap)}
+            </Badge>
+          ) : null}
+        </div>
+      </div>
+      <div className="grid divide-y md:grid-cols-3 md:divide-x md:divide-y-0">
+        {cases.slice(0, 3).map((item) => (
+          <div key={item.key} className="min-w-0 p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold">
+                  {item.objectLabel}
+                </div>
+                <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                  {item.title}
+                </div>
+              </div>
+              <Badge variant="secondary" className="shrink-0 rounded-full">
+                {item.count}
+              </Badge>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {item.topCodes.map((code) => (
+                <span
+                  key={code.code}
+                  className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                >
+                  {code.label} · {code.count}
+                </span>
+              ))}
+            </div>
+            <div className="mt-2 text-xs text-muted-foreground">
+              Эффект кейса до {formatMoneyCompact(item.money)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function scenarioCoverageStatusLabel(status: ScenarioCoverageStatus): string {
+  return {
+    live: "работает",
+    partial: "частично",
+    missing: "нет",
+  }[status];
+}
+
+function scenarioCoverageModeLabel(mode: ScenarioCoverageMode): string {
+  return {
+    platform: "в платформе",
+    review: "через review",
+    manual: "ручной шаг",
+    planned: "добавить",
+  }[mode];
+}
+
+function scenarioCoverageStatusClass(status: ScenarioCoverageStatus): string {
+  return {
+    live: "border-emerald-500/35 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200",
+    partial:
+      "border-amber-500/35 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+    missing:
+      "border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300",
+  }[status];
+}
+
+function scenarioCoverageMatchesItem(
+  scenario: V1ScenarioCoverageItem,
+  item: ActionCenterItem,
+): boolean {
+  const payload = item.payload ?? {};
+  const raw = item.raw ?? {};
+  const text = [
+    actionCode(item),
+    item.action_type,
+    item.detector_code,
+    item.problem_code,
+    item.issue_code,
+    item.title,
+    item.reason,
+    item.source_module,
+    payload.problem_code,
+    payload.detector_code,
+    payload.issue_code,
+    payload.code,
+    payload.category,
+    payload.field_name,
+    payload.field_path,
+    raw.problem_code,
+    raw.detector_code,
+    raw.issue_code,
+    raw.code,
+    raw.category,
+  ]
+    .map(norm)
+    .join(" ");
+  return scenario.codes.some((code) => {
+    const normalized = norm(code);
+    return normalized && text.includes(normalized);
+  });
+}
+
+function ScenarioCoveragePanel({
+  items,
+  groups,
+}: {
+  items: ActionCenterItem[];
+  groups: ProblemGroupSummary[];
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const groupOpen = new Map(groups.map((group) => [group.key, group.open]));
+  const scenarioRows = ACTION_CENTER_V1_SCENARIO_CATALOG.map((scenario) => ({
+    ...scenario,
+    active: items.filter((item) => scenarioCoverageMatchesItem(scenario, item))
+      .length,
+  }));
+  const statusCounts = scenarioRows.reduce(
+    (acc, scenario) => {
+      acc[scenario.status] += 1;
+      return acc;
+    },
+    { live: 0, partial: 0, missing: 0 } as Record<
+      ScenarioCoverageStatus,
+      number
+    >,
+  );
+  const domainRows = PROBLEM_GROUP_ORDER.filter(
+    (key) => key !== "manual_tasks" && key !== "other",
+  )
+    .map((key) => {
+      const scenarios = scenarioRows.filter(
+        (scenario) => scenario.group === key,
+      );
+      if (!scenarios.length) return null;
+      const live = scenarios.filter(
+        (scenario) => scenario.status === "live",
+      ).length;
+      const partial = scenarios.filter(
+        (scenario) => scenario.status === "partial",
+      ).length;
+      const missing = scenarios.filter(
+        (scenario) => scenario.status === "missing",
+      ).length;
+      return {
+        key,
+        scenarios,
+        live,
+        partial,
+        missing,
+        open: groupOpen.get(key) ?? 0,
+      };
+    })
+    .filter(Boolean);
+  const attentionRows = scenarioRows.filter(
+    (scenario) => scenario.status !== "live" || scenario.active > 0,
+  );
+
+  return (
+    <section className="overflow-hidden rounded-md border bg-card shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/15 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+            <ClipboardCheck className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">Покрытие сценариев V1</div>
+            <div className="text-xs text-muted-foreground">
+              48 бизнес-сценариев: что уже детектируется и где нужен следующий
+              шаг в системе.
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge
+            variant="outline"
+            className={`rounded-full ${scenarioCoverageStatusClass("live")}`}
+          >
+            работает {statusCounts.live}
+          </Badge>
+          <Badge
+            variant="outline"
+            className={`rounded-full ${scenarioCoverageStatusClass("partial")}`}
+          >
+            частично {statusCounts.partial}
+          </Badge>
+          <Badge
+            variant="outline"
+            className={`rounded-full ${scenarioCoverageStatusClass("missing")}`}
+          >
+            нет {statusCounts.missing}
+          </Badge>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 gap-1.5 px-2"
+            onClick={() => setExpanded((value) => !value)}
+            aria-expanded={expanded}
+          >
+            {expanded ? "Свернуть" : "Детали"}
+            <ChevronDown
+              className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}
+            />
+          </Button>
+        </div>
+      </div>
+
+      {expanded ? (
+        <div className="border-t bg-muted/10 p-3">
+          <div className="mb-3 grid divide-y overflow-hidden rounded-md border bg-card md:grid-cols-4 md:divide-x md:divide-y-0">
+            {domainRows.map((row) => {
+              const cfg = PROBLEM_GROUP_CONFIG[row.key];
+              const readyPct = row.scenarios.length
+                ? Math.round(
+                    ((row.live + row.partial * 0.5) / row.scenarios.length) *
+                      100,
+                  )
+                : 0;
+              return (
+                <div key={row.key} className="min-w-0 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border bg-background text-primary">
+                        {cfg.icon}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="line-clamp-2 text-sm font-semibold leading-tight">
+                          {cfg.title}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                          задач {formatNumber(row.open)}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="text-xs font-semibold">{readyPct}%</span>
+                  </div>
+                  <Progress value={readyPct} className="mt-2 h-1" />
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+                      {row.live}
+                    </span>
+                    <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                      {row.partial}
+                    </span>
+                    <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      {row.missing}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="grid gap-2 lg:grid-cols-2 xl:grid-cols-3">
+            {attentionRows.map((scenario) => (
+              <div
+                key={scenario.id}
+                className="flex min-w-0 items-start justify-between gap-3 rounded-md border bg-background px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge
+                      variant="outline"
+                      className={`rounded-full text-[10px] ${scenarioCoverageStatusClass(scenario.status)}`}
+                    >
+                      {scenarioCoverageStatusLabel(scenario.status)}
+                    </Badge>
+                    <Badge
+                      variant="outline"
+                      className="rounded-full text-[10px]"
+                    >
+                      {scenarioCoverageModeLabel(scenario.mode)}
+                    </Badge>
+                    {scenario.active ? (
+                      <Badge
+                        variant="secondary"
+                        className="rounded-full text-[10px]"
+                      >
+                        сейчас {scenario.active}
+                      </Badge>
+                    ) : null}
+                  </div>
+                  <div className="mt-1 line-clamp-2 text-sm font-medium">
+                    {scenario.title}
+                  </div>
+                  <div className="mt-1 truncate text-[11px] text-muted-foreground">
+                    {PROBLEM_GROUP_CONFIG[scenario.group].title}
+                  </div>
+                </div>
+                {scenario.status === "live" ? (
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                ) : scenario.status === "partial" ? (
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                ) : (
+                  <Lock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -5418,7 +7482,7 @@ function ActionCenterMissionBar({
   counts,
   open,
   urgent,
-  actionable,
+  execution,
   blocked,
   overdue,
   moneyAtStake,
@@ -5428,7 +7492,7 @@ function ActionCenterMissionBar({
   counts: Record<TaskBoardMode, number>;
   open: number;
   urgent: number;
-  actionable: number;
+  execution: ActionExecutionSummary;
   blocked: number;
   overdue: number;
   moneyAtStake: number;
@@ -5458,48 +7522,26 @@ function ActionCenterMissionBar({
       icon: <SkipForward className="h-4 w-4" />,
     },
   ];
+  const needsUserStep = execution.decision + execution.manual;
+  const signalOnly = execution.signal;
   return (
     <section className="overflow-hidden rounded-md border bg-card shadow-sm">
-      <div className="grid gap-3 p-3 xl:grid-cols-[minmax(280px,0.9fr)_minmax(520px,1.4fr)_auto] xl:items-center">
+      <div className="flex flex-col gap-4 border-b px-4 py-4 xl:flex-row xl:items-center xl:justify-between">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border bg-primary/10 text-primary">
               <Gauge className="h-4 w-4" />
             </span>
             <div className="min-w-0">
-              <div className="truncate text-sm font-semibold">
-                Сегодня закрываем по очереди
-              </div>
-              <div className="text-xs text-muted-foreground">
-                Осталось {open}, можно сделать здесь {actionable}
+              <div className="text-base font-semibold">Фокус на сегодня</div>
+              <div className="text-sm text-muted-foreground">
+                Закрывайте задачи по очереди: сначала блокеры данных, затем
+                действия с деньгами, остатками, рекламой и карточками.
               </div>
             </div>
           </div>
-          <div className="mt-3 flex items-center gap-3">
-            <Progress value={progress} className="h-2" />
-            <span className="w-10 text-right text-sm font-semibold">
-              {progress}%
-            </span>
-          </div>
         </div>
-
-        <div className="grid gap-2 sm:grid-cols-5">
-          <MissionMetric label="Срочно" value={urgent} tone="danger" />
-          <MissionMetric label="Просрочено" value={overdue} tone="danger" />
-          <MissionMetric label="Блокеры" value={blocked} tone="warning" />
-          <MissionMetric
-            label="В платформе"
-            value={actionable}
-            tone="success"
-          />
-          <MissionMetric
-            label="Риск"
-            value={moneyAtStake ? formatMoneyCompact(moneyAtStake) : "—"}
-            tone={moneyAtStake ? "danger" : "muted"}
-          />
-        </div>
-
-        <div className="flex gap-1 rounded-md border bg-muted/20 p-1">
+        <div className="flex w-full gap-1 rounded-md border bg-muted/20 p-1 sm:w-auto">
           {tabs.map((tab) => {
             const active = mode === tab.value;
             return (
@@ -5507,7 +7549,7 @@ function ActionCenterMissionBar({
                 key={tab.value}
                 type="button"
                 onClick={() => onModeChange(tab.value)}
-                className={`flex h-9 items-center gap-2 rounded-md px-3 text-xs font-semibold transition-colors ${
+                className={`flex h-9 flex-1 items-center justify-center gap-2 rounded-md px-3 text-xs font-semibold transition-colors sm:flex-none ${
                   active
                     ? "bg-primary text-primary-foreground shadow-sm"
                     : "text-muted-foreground hover:bg-background hover:text-foreground"
@@ -5527,6 +7569,47 @@ function ActionCenterMissionBar({
               </button>
             );
           })}
+        </div>
+      </div>
+      <div className="grid divide-y sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-4">
+        <OverviewStatCard
+          label="Нужно решить"
+          value={open}
+          hint={`${urgent} срочно, ${overdue} просрочено`}
+          icon={<AlertTriangle className="h-4 w-4" />}
+          tone={urgent || overdue ? "danger" : "neutral"}
+        />
+        <OverviewStatCard
+          label="Можно применить"
+          value={execution.execute + execution.inline}
+          hint={`${execution.inline} в этом экране, ${execution.execute} после проверки`}
+          icon={<CheckCircle2 className="h-4 w-4" />}
+          tone={execution.execute + execution.inline ? "success" : "neutral"}
+        />
+        <OverviewStatCard
+          label="Нужно разобрать"
+          value={needsUserStep + blocked}
+          hint={`действие ${needsUserStep}, данные ${blocked}, проверить ${signalOnly}`}
+          icon={<ClipboardList className="h-4 w-4" />}
+          tone={blocked || needsUserStep ? "warning" : "neutral"}
+        />
+        <OverviewStatCard
+          label="Оценка без дублей"
+          value={moneyAtStake ? formatMoneyCompact(moneyAtStake) : "—"}
+          hint="до финальной сверки WB"
+          icon={<TrendingUp className="h-4 w-4" />}
+          tone={moneyAtStake ? "danger" : "neutral"}
+        />
+      </div>
+      <div className="flex flex-col gap-2 border-t bg-muted/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-sm font-medium">
+          Прогресс очереди: <span className="font-semibold">{progress}%</span>
+        </div>
+        <div className="flex min-w-0 flex-1 items-center gap-3 sm:max-w-md">
+          <Progress value={progress} className="h-2" />
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {counts.completed} выполнено
+          </span>
         </div>
       </div>
     </section>
@@ -5564,6 +7647,636 @@ function MissionMetric({
   );
 }
 
+function OverviewStatCard({
+  label,
+  value,
+  hint,
+  icon,
+  tone = "neutral",
+}: {
+  label: string;
+  value: React.ReactNode;
+  hint: string;
+  icon: React.ReactNode;
+  tone?: "danger" | "warning" | "success" | "info" | "neutral";
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "bg-red-500/10 text-red-700 dark:text-red-300"
+      : tone === "warning"
+        ? "bg-amber-500/10 text-amber-800 dark:text-amber-300"
+        : tone === "success"
+          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+          : tone === "info"
+            ? "bg-sky-500/10 text-sky-700 dark:text-sky-300"
+            : "bg-muted text-muted-foreground";
+  return (
+    <div className="min-w-0 border-l px-4 py-3 first:border-l-0">
+      <div className="flex items-start gap-3">
+        <span
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md ${toneClass}`}
+        >
+          {icon}
+        </span>
+        <div className="min-w-0">
+          <div className="truncate text-2xl font-semibold leading-none tracking-tight">
+            {value}
+          </div>
+          <div className="mt-1 truncate text-sm font-semibold">{label}</div>
+          <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+            {hint}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MiniImpactDonut({
+  groups,
+}: {
+  groups: ProblemGroupSummary[];
+}) {
+  const colors = [
+    "#0f766e",
+    "#dc2626",
+    "#0891b2",
+    "#2563eb",
+    "#9333ea",
+    "#ea580c",
+    "#ec4899",
+    "#64748b",
+  ];
+  const activeGroups = groups.filter((group) => group.open > 0);
+  const total = activeGroups.reduce((sum, group) => sum + group.open, 0);
+  const mainRows = activeGroups.slice(0, 8);
+  const otherOpen = Math.max(
+    0,
+    total - mainRows.reduce((sum, group) => sum + group.open, 0),
+  );
+  const rows = [
+    ...mainRows,
+    ...(otherOpen
+      ? [
+          {
+            ...PROBLEM_GROUP_CONFIG.other,
+            key: "other" as ProblemGroupKey,
+            items: [],
+            open: otherOpen,
+            closed: 0,
+            urgent: 0,
+            blockers: 0,
+            actionable: 0,
+            execution: emptyActionExecutionSummary(),
+            money: 0,
+            progress: 0,
+            topCodes: [],
+          },
+        ]
+      : []),
+  ]
+    .map((group, index) => ({
+      ...group,
+      color: colors[index % colors.length],
+    }));
+  let cursor = 0;
+  const slices = rows.map((group) => {
+    const start = cursor;
+    const end = total ? start + (group.open / total) * 100 : start;
+    cursor = end;
+    return `${group.color} ${start}% ${end}%`;
+  });
+  const background = slices.length
+    ? `conic-gradient(${slices.join(", ")})`
+    : "var(--muted)";
+  return (
+    <div className="grid gap-4 sm:grid-cols-[120px_minmax(0,1fr)] sm:items-center">
+      <div
+        className="relative mx-auto h-28 w-28 rounded-full border shadow-inner"
+        style={{ background }}
+      >
+        <div className="absolute inset-5 flex flex-col items-center justify-center rounded-full border bg-card text-center">
+          <span className="text-lg font-semibold">{total}</span>
+          <span className="text-[10px] text-muted-foreground">открыто</span>
+        </div>
+      </div>
+      <div className="space-y-2">
+        {rows.length ? (
+          rows.map((group) => {
+            const pct = total ? Math.round((group.open / total) * 100) : 0;
+            return (
+              <div
+                key={group.key}
+                className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-2 text-xs"
+              >
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: group.color }}
+                />
+                <span className="truncate text-muted-foreground">
+                  {group.title}
+                </span>
+                <span className="font-semibold">{pct}%</span>
+              </div>
+            );
+          })
+        ) : (
+          <div className="text-sm text-muted-foreground">Активных групп нет</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ActionCenterTodayOverview({
+  items,
+  groups,
+  onOpenGroup,
+}: {
+  items: ActionCenterItem[];
+  groups: ProblemGroupSummary[];
+  onOpenGroup: (key: ProblemGroupKey) => void;
+}) {
+  const topItems = sortByBusinessPriority(
+    items.filter((item) => !isClosedAction(item)),
+  ).slice(0, 5);
+  const distributionRows = groups.filter((group) => group.open > 0).slice(0, 7);
+  if (!topItems.length && !distributionRows.length) return null;
+  return (
+    <section className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_360px]">
+      <div className="overflow-hidden rounded-md border bg-card shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
+          <div>
+            <div className="text-base font-semibold">
+              Топ действий на сегодня
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Первые задачи отсортированы по приоритету, блокерам и денежному
+              риску.
+            </div>
+          </div>
+          <Badge variant="outline" className="rounded-full">
+            {topItems.length} в фокусе
+          </Badge>
+        </div>
+        <div className="divide-y">
+          {topItems.map((item) => {
+            const groupKey = problemGroupKey(item);
+            const cfg = PROBLEM_GROUP_CONFIG[groupKey];
+            const money = moneyFromUnknown(item.money_impact_amount);
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onOpenGroup(groupKey)}
+                className="grid w-full gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/25 md:grid-cols-[118px_minmax(0,1fr)_220px_96px_32px] md:items-center"
+              >
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <PriorityBadge item={item} />
+                  <Badge
+                    variant="outline"
+                    className={`rounded-full text-[10px] ${actionStateTone(item)}`}
+                  >
+                    {actionStateLabel(item)}
+                  </Badge>
+                </div>
+                <div className="min-w-0">
+                  <div className="line-clamp-1 text-sm font-semibold">
+                    {problemTitle(item)}
+                  </div>
+                  <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                    {item.short_explanation ||
+                      item.reason ||
+                      problemCodeLabel(actionCode(item))}
+                  </div>
+                </div>
+                <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                  <span
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${cfg.tone}`}
+                  >
+                    {cfg.icon}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium text-foreground">
+                      {itemProductTitle(item)}
+                    </span>
+                    <span className="block truncate">{objectLabel(item)}</span>
+                  </span>
+                </div>
+                <div
+                  className={`text-sm font-semibold ${
+                    money ? "text-red-700 dark:text-red-300" : "text-muted-foreground"
+                  }`}
+                >
+                  {money ? formatMoneyCompact(money) : "—"}
+                </div>
+                <ChevronRight className="hidden h-4 w-4 text-muted-foreground md:block" />
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <div className="rounded-md border bg-card p-4 shadow-sm">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold">Влияние по группам</div>
+              <div className="text-xs text-muted-foreground">
+                Где сейчас больше всего открытых задач.
+              </div>
+            </div>
+            <BarChart3 className="h-4 w-4 text-primary" />
+          </div>
+          <MiniImpactDonut groups={groups} />
+        </div>
+        <div className="rounded-md border bg-card p-4 shadow-sm">
+          <div className="mb-3 text-sm font-semibold">
+            Распределение проблем
+          </div>
+          <div className="space-y-2">
+            {distributionRows.map((group) => (
+              <button
+                key={group.key}
+                type="button"
+                onClick={() => onOpenGroup(group.key)}
+                className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted/30"
+              >
+                <span className="truncate text-xs text-muted-foreground">
+                  {group.title}
+                </span>
+                <span className="text-xs font-semibold">{group.open}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ReferenceStatCard({
+  icon,
+  value,
+  label,
+  hint,
+  tone = "neutral",
+}: {
+  icon: React.ReactNode;
+  value: React.ReactNode;
+  label: string;
+  hint: string;
+  tone?: "neutral" | "danger" | "warning" | "success" | "info";
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "bg-red-500/10 text-red-700 dark:text-red-300"
+      : tone === "warning"
+        ? "bg-amber-500/10 text-amber-800 dark:text-amber-300"
+        : tone === "success"
+          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+          : tone === "info"
+            ? "bg-sky-500/10 text-sky-700 dark:text-sky-300"
+            : "bg-primary/10 text-primary";
+  return (
+    <div className="min-w-0 border-b px-5 py-4 sm:border-b-0 sm:border-r last:border-r-0">
+      <div className="flex items-center gap-3">
+        <span
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${toneClass}`}
+        >
+          {icon}
+        </span>
+        <div className="min-w-0">
+          <div className="text-2xl font-semibold leading-none tracking-normal">
+            {value}
+          </div>
+          <div className="mt-1 text-sm font-semibold leading-tight">
+            {label}
+          </div>
+          <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+            {hint}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReferenceOverview({
+  items,
+  groups,
+  counts,
+  openCount,
+  urgentCount,
+  overdueCount,
+  execution,
+  blockerCount,
+  moneyAtStake,
+  moneyOverlap,
+  dataHealthStatus,
+  filters,
+  updateFilters,
+  resetFilters,
+  canUseBeta,
+  onOpenItem,
+  onOpenGroup,
+  onCreateManualTask,
+  canAssignTasks,
+  onRefresh,
+}: {
+  items: ActionCenterItem[];
+  groups: ProblemGroupSummary[];
+  counts: Record<TaskBoardMode, number>;
+  openCount: number;
+  urgentCount: number;
+  overdueCount: number;
+  execution: ActionExecutionSummary;
+  blockerCount: number;
+  moneyAtStake: number;
+  moneyOverlap: number;
+  dataHealthStatus?: DataSyncStatusResponse | null;
+  filters: ActionCenterFilterState;
+  updateFilters: (
+    patch: Partial<ActionCenterFilterState>,
+    options?: { groupKey?: ProblemGroupKey | null; replace?: boolean },
+  ) => void;
+  resetFilters: () => void;
+  canUseBeta: boolean;
+  onOpenItem: (item: ActionCenterItem) => void;
+  onOpenGroup: (key: ProblemGroupKey) => void;
+  onCreateManualTask: () => void;
+  canAssignTasks: boolean;
+  onRefresh: () => void;
+}) {
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const openCandidates = items.filter((item) => !isClosedAction(item));
+  const workCases = useMemo(
+    () => buildBusinessCases(openCandidates),
+    [openCandidates],
+  );
+  const topCases = workCases.slice(0, 7);
+  const urgentCaseCount = workCases.filter((item) => item.urgent).length;
+  const blockerCaseCount = workCases.filter((item) => item.blocker).length;
+  const caseGroups = useMemo(
+    () => buildBusinessCaseGroups(workCases),
+    [workCases],
+  );
+  const activeGroups = caseGroups.filter((group) => group.open > 0);
+  const readyCaseCount = workCases.filter(
+    (item) => item.execution.execute + item.execution.inline > 0,
+  ).length;
+  const readySignalCount = execution.execute + execution.inline;
+  const moneyHint = moneyOverlap
+    ? "Без повторных сигналов, до сверки WB"
+    : "По кейсам, до финальной сверки";
+  return (
+    <div className="mx-auto w-full max-w-[1280px] space-y-4">
+      <section className="overflow-hidden rounded-md border bg-card shadow-sm">
+        <div className="flex flex-col gap-4 border-b px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold leading-tight">
+              Центр действий
+            </h1>
+            <div className="mt-1 text-sm text-muted-foreground">
+              Ежедневный план действий для роста прибыли.
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              onClick={onCreateManualTask}
+              disabled={!canAssignTasks}
+              title={
+                canAssignTasks ? undefined : "Нужна роль оператора или выше"
+              }
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Поставить задачу
+            </Button>
+            <Button size="sm" variant="outline" onClick={onRefresh}>
+              <RefreshCw className="h-3.5 w-3.5" />
+              Обновить
+            </Button>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/results">
+                <BarChart3 className="h-3.5 w-3.5" />
+                Результаты
+              </Link>
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid sm:grid-cols-2 xl:grid-cols-4">
+          <ReferenceStatCard
+            icon={<AlertTriangle className="h-5 w-5" />}
+            value={topCases.length}
+            label="В фокусе сегодня"
+            hint={`${workCases.length} кейсов всего`}
+            tone={urgentCaseCount || overdueCount ? "danger" : "neutral"}
+          />
+          <ReferenceStatCard
+            icon={<CheckCircle2 className="h-5 w-5" />}
+            value={readyCaseCount}
+            label="Готово к выполнению"
+            hint={`${readySignalCount} действий внутри кейсов`}
+            tone={readyCaseCount ? "success" : "neutral"}
+          />
+          <ReferenceStatCard
+            icon={<Database className="h-5 w-5" />}
+            value={blockerCaseCount}
+            label="Кейсы без данных"
+            hint={`${blockerCount} сигналов требуют данных`}
+            tone={blockerCaseCount ? "warning" : "neutral"}
+          />
+          <ReferenceStatCard
+            icon={<TrendingUp className="h-5 w-5" />}
+            value={moneyAtStake ? formatMoneyCompact(moneyAtStake) : "—"}
+            label="Оценка без дублей"
+            hint={moneyHint}
+            tone={moneyAtStake ? "info" : "neutral"}
+          />
+        </div>
+      </section>
+
+      <ActionCenterDataHealthBanner status={dataHealthStatus} />
+
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.65fr)_340px]">
+        <div className="overflow-hidden rounded-md border bg-card shadow-sm">
+          <div className="flex flex-col gap-3 border-b px-5 py-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-lg font-semibold">
+                Топ кейсов на сегодня
+              </div>
+              <div className="text-sm text-muted-foreground">
+                Один товар или объект показывается как один кейс, даже если
+                внутри несколько сигналов.
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <div className="relative w-full md:w-[280px]">
+                <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  value={filters.q}
+                  onChange={(event) => updateFilters({ q: event.target.value })}
+                  placeholder="Поиск товара или задачи"
+                  className="h-9 rounded-md pl-9"
+                />
+              </div>
+              <Button
+                size="sm"
+                variant={filtersOpen ? "default" : "outline"}
+                onClick={() => setFiltersOpen((value) => !value)}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                Фильтры
+              </Button>
+            </div>
+          </div>
+
+          {filtersOpen ? (
+            <div className="border-b bg-muted/15 px-5 py-3">
+              <ActionCenterFilterDock
+                filters={filters}
+                updateFilters={updateFilters}
+                resetFilters={resetFilters}
+                canUseBeta={canUseBeta}
+              />
+            </div>
+          ) : null}
+
+          <div className="divide-y">
+            {topCases.length ? (
+              topCases.map((caseItem) => {
+                const item = caseItem.mainItem;
+                const money = caseItem.money;
+                return (
+                  <button
+                    key={caseItem.key}
+                    type="button"
+                    onClick={() => onOpenItem(item)}
+                    className="grid w-full gap-3 px-5 py-3 text-left transition-colors hover:bg-muted/25 md:grid-cols-[112px_minmax(0,1fr)_260px_120px_92px_28px] md:items-center"
+                  >
+                    <div className="flex flex-wrap gap-1.5">
+                      <PriorityBadge item={item} />
+                      {caseItem.count > 1 ? (
+                        <Badge variant="outline" className="rounded-full text-[10px]">
+                          {signalCountLabel(caseItem.count)}
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className={`rounded-full text-[10px] ${actionStateTone(item)}`}
+                        >
+                          {actionModeLabel(item)}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="line-clamp-1 text-sm font-semibold">
+                        {businessCaseDisplayTitle(caseItem)}
+                      </div>
+                      <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                        {businessCaseSubtitle(caseItem)}
+                      </div>
+                    </div>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <ProductThumb
+                        candidates={itemImageCandidates(item)}
+                        label={itemProductTitle(item)}
+                        className="h-12 w-12 rounded-md"
+                      />
+                      <div className="min-w-0">
+                        <div className="line-clamp-1 text-sm font-semibold">
+                          {itemProductTitle(item)}
+                        </div>
+                        <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                          {objectLabel(item)}
+                        </div>
+                      </div>
+                    </div>
+                    <div
+                      className={`text-sm font-semibold ${
+                        money
+                          ? "text-emerald-700 dark:text-emerald-300"
+                          : "text-muted-foreground"
+                      }`}
+                    >
+                      {money ? formatMoneyCompact(Math.abs(money)) : "—"}
+                    </div>
+                    <div className="text-xs font-medium text-muted-foreground">
+                      {caseItem.count > 1
+                        ? actionModeLabel(item)
+                        : sourceModuleLabel(item.source_module)}
+                    </div>
+                    <ChevronRight className="hidden h-4 w-4 text-muted-foreground md:block" />
+                  </button>
+                );
+              })
+            ) : (
+              <div className="flex min-h-[260px] items-center justify-center p-8 text-center">
+                <div className="max-w-sm">
+                  <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" />
+                  <div className="mt-3 text-base font-semibold">
+                    Действий нет
+                  </div>
+                  <div className="mt-1 text-sm text-muted-foreground">
+                    По текущим фильтрам всё закрыто.
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-md border bg-card p-5 shadow-sm">
+            <div className="text-base font-semibold">
+              Кейсы по категориям
+            </div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              Где сейчас больше всего сгруппированных проблем.
+            </div>
+            <div className="mt-5">
+              <MiniImpactDonut groups={caseGroups} />
+            </div>
+          </div>
+
+          <div className="rounded-md border bg-card p-5 shadow-sm">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div className="text-base font-semibold">
+                Распределение кейсов
+              </div>
+              <Badge variant="outline" className="rounded-full">
+                {activeGroups.length}
+              </Badge>
+            </div>
+            <div className="space-y-2">
+              {activeGroups.slice(0, 8).map((group) => (
+                <button
+                  key={group.key}
+                  type="button"
+                  onClick={() => onOpenGroup(group.key)}
+                  className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md px-2 py-2 text-left transition-colors hover:bg-muted/30"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">
+                      {group.title}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      {group.urgent} срочно
+                    </span>
+                  </span>
+                  <span className="text-sm font-semibold">{group.open}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function departmentRows(
   groups: ProblemGroupSummary[],
   domains?: PortalActionCenterCapabilityDomain[],
@@ -5587,12 +8300,13 @@ function departmentRows(
     rows.push({ key: group.key, domain: null, group });
   }
   return rows.sort((a, b) => {
+    const groupRankDelta =
+      problemGroupBusinessRank(a.key) - problemGroupBusinessRank(b.key);
+    if (groupRankDelta) return groupRankDelta;
     const aOpen = a.group?.open ?? 0;
     const bOpen = b.group?.open ?? 0;
     if (bOpen !== aOpen) return bOpen - aOpen;
-    const aPriority = a.domain?.priority ?? PROBLEM_GROUP_ORDER.indexOf(a.key);
-    const bPriority = b.domain?.priority ?? PROBLEM_GROUP_ORDER.indexOf(b.key);
-    return aPriority - bPriority;
+    return (a.domain?.priority ?? 99) - (b.domain?.priority ?? 99);
   });
 }
 
@@ -5643,8 +8357,8 @@ function DepartmentHub({
         <div>
           <div className="text-base font-semibold">Группы проблем</div>
           <div className="text-xs text-muted-foreground">
-            Выберите участок работы. Справа сразу видно первый шаг и действия в
-            платформе.
+            Выберите участок работы. Справа сразу видно первый шаг, форму
+            исправления или назначение.
           </div>
         </div>
         <Badge variant="outline" className="rounded-full">
@@ -5718,7 +8432,7 @@ function DepartmentListRow({
       <span className="min-w-0">
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-semibold">
-            {row.domain?.title || cfg.title}
+            {cfg.title}
           </span>
           {group?.blockers ? (
             <span className="shrink-0 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300">
@@ -5774,7 +8488,6 @@ function DepartmentPreview({
   const cfg = PROBLEM_GROUP_CONFIG[row.key];
   const catalog = TASK_DOMAIN_CATALOG[row.key];
   const group = row.group;
-  const stats = capabilityDomainStats(row.domain);
   const hasTasks = Boolean(group?.items.length);
   const firstOpen =
     group?.items.find((item) => !isClosedAction(item)) ??
@@ -5783,7 +8496,8 @@ function DepartmentPreview({
   const actionLabel = firstOpen
     ? humanActionLabel(primaryActionForItem(firstOpen)?.code)
     : catalog.workflow[0];
-  const capabilities = row.domain?.capabilities ?? [];
+  const directFixCount =
+    (group?.execution.execute ?? 0) + (group?.execution.inline ?? 0);
   return (
     <div className="h-fit overflow-hidden rounded-md border bg-card shadow-sm">
       <div className="border-b bg-muted/20 p-4">
@@ -5797,7 +8511,7 @@ function DepartmentPreview({
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-lg font-semibold leading-tight">
-                  {row.domain?.title || cfg.title}
+                  {cfg.title}
                 </h2>
                 {group?.blockers ? (
                   <Badge
@@ -5809,7 +8523,7 @@ function DepartmentPreview({
                 ) : null}
               </div>
               <div className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                {row.domain?.description || catalog.short}
+                {group?.subtitle || catalog.short}
               </div>
             </div>
           </div>
@@ -5824,7 +8538,7 @@ function DepartmentPreview({
         </div>
       </div>
 
-      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+      <div className="p-4">
         <div className="space-y-4">
           <div className="grid gap-2 sm:grid-cols-4">
             <MissionMetric
@@ -5838,12 +8552,12 @@ function DepartmentPreview({
               tone={group?.urgent ? "danger" : "muted"}
             />
             <MissionMetric
-              label="В платформе"
-              value={stats.executeReady}
-              tone={stats.executeReady ? "success" : "muted"}
+              label="Можно применить"
+              value={directFixCount}
+              tone={directFixCount ? "success" : "muted"}
             />
             <MissionMetric
-              label="Риск"
+              label="Оценка сигналов"
               value={group?.money ? formatMoney(group.money) : "—"}
               tone={group?.money ? "danger" : "muted"}
             />
@@ -5880,41 +8594,6 @@ function DepartmentPreview({
             </div>
           </div>
         </div>
-
-        <div className="space-y-3">
-          <div className="rounded-md border bg-muted/10 p-3">
-            <div className="text-sm font-semibold">Что умеет платформа</div>
-            <div className="mt-2 space-y-2">
-              {capabilities.slice(0, 5).map((capability) => (
-                <div
-                  key={capability.key}
-                  className="flex items-center justify-between gap-2 rounded-md bg-background px-2 py-1.5 text-xs"
-                >
-                  <span className="min-w-0 truncate">{capability.title}</span>
-                  <Badge
-                    variant="outline"
-                    className={`shrink-0 rounded-full text-[10px] ${capabilityExecutionTone(
-                      capability.execute_status,
-                    )}`}
-                  >
-                    {capabilityExecutionLabel(capability.execute_status)}
-                  </Badge>
-                </div>
-              ))}
-              {!capabilities.length ? (
-                <div className="text-sm text-muted-foreground">
-                  Действия ведутся локально через очередь задач.
-                </div>
-              ) : null}
-            </div>
-          </div>
-          {stats.wbWriteMissing ? (
-            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-200">
-              Запись в WB ещё не подключена для {stats.wbWriteMissing} действий.
-              Пока показываем безопасный review или внутреннюю задачу.
-            </div>
-          ) : null}
-        </div>
       </div>
     </div>
   );
@@ -5934,22 +8613,13 @@ function workspaceActionForGroup(
     return [{ label: "Заполнить здесь", href }];
   }
   if (group.key === "price") {
-    return [
-      { label: "Проверить цену", href: href ?? "/pricing" },
-      { label: "Запись цены в WB не подключена", disabled: true },
-    ];
+    return [{ label: "Проверить цену", href: href ?? "/pricing" }];
   }
   if (group.key === "stock") {
-    return [
-      { label: "Поставки и остатки", href: href ?? "/logistics" },
-      { label: "Применить план", disabled: true },
-    ];
+    return [{ label: "Поставки и остатки", href: href ?? "/logistics" }];
   }
   if (group.key === "ads_promo") {
-    return [
-      { label: "Реклама", href: href ?? "/ads" },
-      { label: "Остановить кампанию", disabled: true },
-    ];
+    return [{ label: "Открыть рекламу", href: href ?? "/ads" }];
   }
   if (group.key === "card_quality") {
     return [{ label: "Исправить карточку", href: href ?? "/cards" }];
@@ -5973,7 +8643,6 @@ function DepartmentPlaybook({
 }) {
   const catalog = TASK_DOMAIN_CATALOG[group.key];
   const actions = workspaceActionForGroup(group, selected);
-  const capabilities = domain?.capabilities ?? [];
   return (
     <aside className="space-y-3 xl:sticky xl:top-4 xl:self-start">
       <div className="rounded-md border bg-card p-4 shadow-sm">
@@ -5997,7 +8666,7 @@ function DepartmentPlaybook({
                     ? catalog.short
                     : index === catalog.workflow.length - 1
                       ? catalog.doneSignal
-                      : "Выполните действие в платформе или назначьте ответственного."}
+                      : "Выполните доступный шаг или назначьте ответственного."}
                 </div>
               </div>
             </div>
@@ -6005,7 +8674,7 @@ function DepartmentPlaybook({
         </div>
       </div>
       <div className="rounded-md border bg-card p-4 shadow-sm">
-        <div className="text-sm font-semibold">Действия в платформе</div>
+        <div className="text-sm font-semibold">Доступные действия</div>
         <div className="mt-3 grid gap-2">
           {actions.map((action) =>
             action.disabled ? (
@@ -6040,38 +8709,6 @@ function DepartmentPlaybook({
           )}
         </div>
       </div>
-      {capabilities.length ? (
-        <div className="rounded-md border bg-card p-4 shadow-sm">
-          <div className="text-sm font-semibold">Готовность API</div>
-          <div className="mt-3 space-y-2">
-            {capabilities.slice(0, 5).map((capability) => (
-              <div
-                key={capability.key}
-                className="rounded-md border bg-muted/15 px-3 py-2"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0 truncate text-xs font-semibold">
-                    {capability.title}
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className={`shrink-0 rounded-full text-[10px] ${capabilityExecutionTone(
-                      capability.execute_status,
-                    )}`}
-                  >
-                    {capabilityExecutionLabel(capability.execute_status)}
-                  </Badge>
-                </div>
-                {capability.implementation_gaps?.length ? (
-                  <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
-                    {capability.implementation_gaps[0]}
-                  </div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
     </aside>
   );
 }
@@ -6239,17 +8876,15 @@ function DepartmentWorkspace({
                   Срочно {urgentItems.length}
                 </Badge>
                 <Badge variant="outline" className="rounded-full">
-                  В платформе {actionableItems.length}
-                </Badge>
-                <Badge variant="outline" className="rounded-full">
-                  Блокеры {blockerItems.length}
+                  Можно применить{" "}
+                  {group.execution.execute + group.execution.inline}
                 </Badge>
                 {group.money ? (
                   <Badge
                     variant="outline"
                     className="rounded-full border-red-500/35 bg-red-500/10 text-red-700 dark:text-red-300"
                   >
-                    Риск {formatMoney(group.money)}
+                    Оценка сигналов {formatMoney(group.money)}
                   </Badge>
                 ) : null}
               </div>
@@ -6283,7 +8918,7 @@ function DepartmentWorkspace({
           </div>
         </div>
       </div>
-      <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)_300px]">
+      <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
         <DepartmentQueuePanel
           queueItems={queueItems}
           selected={selected}
@@ -6306,12 +8941,6 @@ function DepartmentWorkspace({
           onNext={onNext}
           hasNext={hasNext}
         />
-        <DepartmentPlaybook
-          group={group}
-          domain={domain}
-          selected={selected}
-          onCreateManualTask={onCreateManualTask}
-        />
       </div>
     </div>
   );
@@ -6319,7 +8948,7 @@ function DepartmentWorkspace({
 
 function capabilityExecutionLabel(status: string): string {
   const key = norm(status);
-  if (key === "ready") return "в платформе";
+  if (key === "ready") return "Готово";
   if (key === "preview_only") return "проверка";
   if (key === "manual") return "вручную";
   if (key === "missing_wb_write") return "нужна запись WB";
@@ -6407,6 +9036,9 @@ function TaskDomainCatalog({
           group,
         }))),
   ].sort((a, b) => {
+    const groupRankDelta =
+      problemGroupBusinessRank(a.key) - problemGroupBusinessRank(b.key);
+    if (groupRankDelta) return groupRankDelta;
     const aOpen = a.group?.open ?? 0;
     const bOpen = b.group?.open ?? 0;
     if (bOpen !== aOpen) return bOpen - aOpen;
@@ -6421,8 +9053,8 @@ function TaskDomainCatalog({
         <div>
           <div className="text-sm font-semibold">Рабочие контуры</div>
           <div className="text-xs text-muted-foreground">
-            Карта возможностей: что система уже находит, что можно решить здесь,
-            и где нужен WB write executor.
+            Карта возможностей: что система уже находит, какие действия готовы,
+            и где нужна запись в WB.
           </div>
         </div>
         <Badge variant="outline">{rows.length} контуров</Badge>
@@ -6471,16 +9103,16 @@ function TaskDomainCatalog({
                       {stats.total || catalog.taskTypes.length}
                     </span>
                     <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
-                      решает {stats.executeReady}
+                      готово {stats.executeReady}
                     </span>
                     {stats.apiTracked ? (
                       <span className="rounded-full bg-teal-500/10 px-2 py-0.5 text-[10px] font-medium text-teal-700 dark:text-teal-300">
-                        WB API {stats.apiTracked}
+                        WB {stats.apiTracked}
                       </span>
                     ) : null}
                     {stats.apiPartial ? (
                       <span className="rounded-full bg-slate-500/10 px-2 py-0.5 text-[10px] font-medium text-slate-700 dark:text-slate-300">
-                        API audit {stats.apiPartial}
+                        проверка {stats.apiPartial}
                       </span>
                     ) : null}
                     {stats.preview ? (
@@ -6490,7 +9122,7 @@ function TaskDomainCatalog({
                     ) : null}
                     {stats.wbWriteMissing ? (
                       <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-300">
-                        WB write {stats.wbWriteMissing}
+                        запись WB {stats.wbWriteMissing}
                       </span>
                     ) : null}
                     {stats.apiGaps ? (
@@ -6590,6 +9222,7 @@ function ProblemGroupRow({
       : mode === "deactivated"
         ? "Скрыто"
         : "Открыто";
+  const inAppCount = group.execution.execute + group.execution.inline;
   return (
     <button
       type="button"
@@ -6658,12 +9291,16 @@ function ProblemGroupRow({
           }
         />
         <GroupRowMetric
-          label="Можно"
-          value={group.actionable}
-          tone="text-sky-700 dark:text-sky-300"
+          label="Применить"
+          value={inAppCount}
+          tone={
+            inAppCount
+              ? "text-emerald-700 dark:text-emerald-300"
+              : "text-muted-foreground"
+          }
         />
         <GroupRowMetric
-          label="Риск"
+          label="Эффект"
           value={group.money ? formatMoney(group.money) : "—"}
           tone={
             group.money
@@ -6736,8 +9373,8 @@ function ProblemGroupsOverview({
                 : "Открыто"}
           </span>
           <span>Срочно</span>
-          <span>Можно</span>
-          <span>Риск</span>
+          <span>Применить</span>
+          <span>Эффект</span>
           <span>Прогресс</span>
           <span className="text-right">Действие</span>
         </div>
@@ -6788,7 +9425,7 @@ function QueueProgress({
       <Progress value={percent} className="mt-3 h-2" />
       <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
         <div className="rounded-md bg-muted/40 px-2 py-1.5">
-          <div className="text-muted-foreground">сейчас</div>
+          <div className="text-muted-foreground">решить</div>
           <div className="font-semibold">{actionable}</div>
         </div>
         <div className="rounded-md bg-red-500/10 px-2 py-1.5 text-red-700 dark:text-red-300">
@@ -6861,7 +9498,7 @@ function CommandFilter({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className={`h-10 min-w-[140px] max-w-[220px] justify-between rounded-md border-border/70 bg-background px-3 shadow-sm ${
+          className={`h-10 w-full justify-between rounded-md border-border/70 bg-background px-3 shadow-sm xl:w-[190px] ${
             isActive ? "border-primary/45 bg-primary/5 text-primary" : ""
           }`}
         >
@@ -6973,11 +9610,11 @@ function MoreFiltersMenu({
             placeholder="Любой эффект"
           />
           <CommandFilter
-            label="Доверие"
+            label="Данные"
             value={filters.trust_state}
             onValueChange={(value) => updateFilters({ trust_state: value })}
             items={TRUST_STATE_FILTERS}
-            placeholder="Любое доверие"
+            placeholder="Любые данные"
           />
         </div>
       </PopoverContent>
@@ -6998,70 +9635,69 @@ function ActionCenterFilterDock({
 }) {
   const count = activeFilterCount(filters);
   return (
-    <div className="rounded-md border bg-card shadow-sm">
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-col gap-2 p-2 xl:flex-row xl:items-center">
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-            <Input
-              value={filters.q}
-              onChange={(event) => updateFilters({ q: event.target.value })}
-              placeholder="Поиск по nm, артикулу, причине или коду"
-              className="h-10 rounded-md border-border/70 bg-muted/20 pl-9 pr-9 text-sm shadow-sm"
-            />
-            {filters.q ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="absolute right-1 top-1 h-8 w-8"
-                onClick={() => updateFilters({ q: "" })}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            ) : null}
-          </div>
-
-          <div className="flex shrink-0 flex-wrap gap-1.5 xl:justify-end">
-            <CommandFilter
-              label="Модуль"
-              value={filters.source_module}
-              onValueChange={(value) => updateFilters({ source_module: value })}
-              items={SOURCE_MODULES}
-              placeholder="Все модули"
-            />
-            <CommandFilter
-              label="Статус"
-              value={filters.status}
-              onValueChange={(value) => updateFilters({ status: value })}
-              items={STATUSES}
-              placeholder="Все статусы"
-            />
-            <CommandFilter
-              label="Приоритет"
-              value={filters.priority}
-              onValueChange={(value) => updateFilters({ priority: value })}
-              items={PRIORITIES.map((item) => ({
-                value: item,
-                label: priorityLabel(item),
-              }))}
-              placeholder="Любой приоритет"
-            />
-            <CommandFilter
-              label="Сортировка"
-              value={filters.sort}
-              onValueChange={(value) => updateFilters({ sort: value })}
-              items={ACTION_CENTER_SORT_OPTIONS}
-              placeholder="Сортировка"
-              includeAll={false}
-            />
-            <MoreFiltersMenu filters={filters} updateFilters={updateFilters} />
-          </div>
+    <div className="space-y-3">
+      <div className="grid gap-3 xl:grid-cols-[minmax(320px,1fr)_auto] xl:items-start">
+        <div className="relative min-w-0">
+          <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+          <Input
+            value={filters.q}
+            onChange={(event) => updateFilters({ q: event.target.value })}
+            placeholder="Поиск действия, товара, SKU, причины или кода"
+            className="h-11 rounded-md border-border/70 bg-background pl-9 pr-9 text-sm shadow-sm"
+          />
+          {filters.q ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute right-1 top-1.5 h-8 w-8"
+              onClick={() => updateFilters({ q: "" })}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          ) : null}
         </div>
 
-        <div className="flex min-w-0 items-center gap-1.5 border-t bg-muted/15 px-2 py-2">
-          <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
-            Вид
+        <div className="grid gap-2 sm:grid-cols-2 xl:flex xl:justify-end">
+          <CommandFilter
+            label="Модуль"
+            value={filters.source_module}
+            onValueChange={(value) => updateFilters({ source_module: value })}
+            items={SOURCE_MODULES}
+            placeholder="Все модули"
+          />
+          <CommandFilter
+            label="Статус"
+            value={filters.status}
+            onValueChange={(value) => updateFilters({ status: value })}
+            items={STATUSES}
+            placeholder="Все статусы"
+          />
+          <CommandFilter
+            label="Приоритет"
+            value={filters.priority}
+            onValueChange={(value) => updateFilters({ priority: value })}
+            items={PRIORITIES.map((item) => ({
+              value: item,
+              label: priorityLabel(item),
+            }))}
+            placeholder="Любой приоритет"
+          />
+          <CommandFilter
+            label="Сортировка"
+            value={filters.sort}
+            onValueChange={(value) => updateFilters({ sort: value })}
+            items={ACTION_CENTER_SORT_OPTIONS}
+            placeholder="Сортировка"
+            includeAll={false}
+          />
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 border-t pt-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="hidden shrink-0 text-xs font-medium text-muted-foreground sm:inline">
+            Быстрый вид
           </span>
           <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {ACTION_CENTER_SAVED_VIEWS.map((view) => {
@@ -7072,7 +9708,7 @@ function ActionCenterFilterDock({
                   type="button"
                   size="sm"
                   variant={active ? "default" : "outline"}
-                  className={`h-8 shrink-0 rounded-md px-2.5 text-xs ${
+                  className={`h-8 shrink-0 rounded-full px-3 text-xs ${
                     active ? "shadow-sm" : "border-border/70 bg-background"
                   }`}
                   onClick={() => updateFilters({ view: view.value })}
@@ -7082,38 +9718,40 @@ function ActionCenterFilterDock({
               );
             })}
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {canUseBeta ? (
-              <Button
-                size="sm"
-                variant={filters.include_beta ? "default" : "outline"}
-                className="h-8 rounded-md border-border/70"
-                onClick={() =>
-                  updateFilters({ include_beta: !filters.include_beta })
-                }
-              >
-                <Sparkles className="h-3.5 w-3.5" />
-                Бета
-              </Button>
-            ) : null}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <MoreFiltersMenu filters={filters} updateFilters={updateFilters} />
+          {canUseBeta ? (
             <Button
               size="sm"
-              variant="ghost"
-              className="h-8 rounded-md px-3"
-              onClick={resetFilters}
+              variant={filters.include_beta ? "default" : "outline"}
+              className="h-9 rounded-md border-border/70"
+              onClick={() =>
+                updateFilters({ include_beta: !filters.include_beta })
+              }
             >
-              <X className="h-3.5 w-3.5" />
-              Сбросить
-              {count ? (
-                <Badge
-                  variant="secondary"
-                  className="ml-1 h-5 rounded-full px-1.5 text-[10px]"
-                >
-                  {count}
-                </Badge>
-              ) : null}
+              <Sparkles className="h-3.5 w-3.5" />
+              Бета
             </Button>
-          </div>
+          ) : null}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-9 rounded-md px-3"
+            onClick={resetFilters}
+          >
+            <X className="h-3.5 w-3.5" />
+            Сбросить
+            {count ? (
+              <Badge
+                variant="secondary"
+                className="ml-1 h-5 rounded-full px-1.5 text-[10px]"
+              >
+                {count}
+              </Badge>
+            ) : null}
+          </Button>
         </div>
       </div>
     </div>
@@ -8107,12 +10745,15 @@ export function ActionCenterPageContainer({
     () => normalizeProblemGroupKey(routeSearch.group),
     [routeSearch.group],
   );
+  const routeActionId = routeSearch.action_id ?? null;
   const routeFilterKey = useMemo(
     () => JSON.stringify(routeSearch ?? {}),
     [routeSearch],
   );
   const [filters, setFilters] = useState<ActionCenterFilterState>(routeFilters);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    () => routeActionId,
+  );
   const [selectedGroupKey, setSelectedGroupKey] =
     useState<ProblemGroupKey | null>(() => routeGroupKey);
   const [taskBoardMode, setTaskBoardMode] = useState<TaskBoardMode>("active");
@@ -8133,9 +10774,16 @@ export function ActionCenterPageContainer({
   }, [canUseBeta, routeFilterKey]);
 
   useEffect(() => {
-    setSelectedGroupKey(routeGroupKey);
-    setSelectedId(null);
-  }, [routeGroupKey]);
+    setSelectedGroupKey((current) => {
+      if (current === routeGroupKey) return current;
+      setSelectedId(routeActionId);
+      return routeGroupKey;
+    });
+  }, [routeActionId, routeGroupKey]);
+
+  useEffect(() => {
+    if (routeActionId) setSelectedId(routeActionId);
+  }, [routeActionId]);
 
   const navigateActionCenter = (
     nextFilters: ActionCenterFilterState,
@@ -8243,6 +10891,12 @@ export function ActionCenterPageContainer({
     queryFn: () => fetchActionCenterCapabilities(activeId!),
     enabled: !!activeId,
     staleTime: 5 * 60_000,
+  });
+  const dataSyncStatusQuery = useQuery({
+    queryKey: ["action-center-data-sync-status", activeId],
+    queryFn: () => fetchDataSyncStatus(activeId!),
+    enabled: !!activeId,
+    staleTime: 60_000,
   });
   const missingCostRevenueQuery = useQuery({
     queryKey: [
@@ -8363,13 +11017,15 @@ export function ActionCenterPageContainer({
   useEffect(() => {
     if (
       selectedGroupKey &&
+      !isLoading &&
+      problemGroups.length > 0 &&
       !problemGroups.some((group) => group.key === selectedGroupKey)
     ) {
       setSelectedGroupKey(null);
       setSelectedId(null);
       navigateActionCenter(filters, null);
     }
-  }, [problemGroups, selectedGroupKey]);
+  }, [filters, isLoading, problemGroups, selectedGroupKey]);
 
   const switchTaskBoardMode = (mode: TaskBoardMode) => {
     setTaskBoardMode(mode);
@@ -8409,9 +11065,16 @@ export function ActionCenterPageContainer({
       : [];
   const actionableItems =
     taskBoardMode === "active" ? openItems.filter(isActionable) : [];
-  const overviewMoneyAtStake = problemGroups.reduce(
-    (sum, group) => sum + moneyFromUnknown(group.money),
-    0,
+  const coreExecutionSummary = useMemo(
+    () =>
+      actionExecutionSummary(
+        openItems.filter((item) => !isContentQualityOpportunityAction(item)),
+      ),
+    [openItems],
+  );
+  const overviewImpactSummary = useMemo(
+    () => dedupedImpactSummary(openItems),
+    [openItems],
   );
 
   const selected = useMemo(() => {
@@ -8523,6 +11186,21 @@ export function ActionCenterPageContainer({
     navigateActionCenter(filters, key, false);
   };
 
+  const openProblemItem = (item: ActionCenterItem) => {
+    const key = problemGroupKey(item);
+    setSelectedGroupKey(key);
+    setSelectedId(item.id);
+    navigate({
+      to: "/action-center",
+      search: {
+        ...actionCenterSearchFromState(filters),
+        group: key,
+        action_id: item.id,
+      } as ActionCenterSearch,
+      replace: false,
+    });
+  };
+
   const closeProblemGroup = () => {
     setSelectedGroupKey(null);
     setSelectedId(null);
@@ -8549,42 +11227,6 @@ export function ActionCenterPageContainer({
 
   return (
     <PageShell>
-      <PageHeader
-        title="Центр действий"
-        description={
-          selectedGroup
-            ? `${selectedGroup.title}: ${taskBoardModeTitle(taskBoardMode).toLowerCase()} ${workItems.length}, срочно ${urgentItems.length}.`
-            : serverTotal > rawItems.length
-              ? `Показано ${filteredItems.length} из ${serverTotal} задач. Сейчас: ${taskBoardModeTitle(taskBoardMode).toLowerCase()} ${boardItems.length}.`
-              : `${taskBoardModeTitle(taskBoardMode)}: ${boardItems.length}. Выберите группу проблем и закрывайте задачи по очереди.`
-        }
-        actions={
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              onClick={() => setManualTaskOpen(true)}
-              disabled={!canAssignTasks}
-              title={
-                canAssignTasks ? undefined : "Нужна роль оператора или выше"
-              }
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Поставить задачу
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => refetch()}>
-              <RefreshCw className="h-3.5 w-3.5" />
-              Обновить
-            </Button>
-            <Button asChild size="sm" variant="outline">
-              <Link to="/results">
-                <BarChart3 className="h-3.5 w-3.5" />
-                Результаты
-              </Link>
-            </Button>
-          </div>
-        }
-      />
-
       <ManualTaskDialog
         open={manualTaskOpen}
         onOpenChange={setManualTaskOpen}
@@ -8607,55 +11249,37 @@ export function ActionCenterPageContainer({
 
       <div className="space-y-4">
         {!selectedGroup ? (
-          <>
-            <ActionCenterMissionBar
-              mode={taskBoardMode}
-              counts={taskBoardCounts}
-              open={openItems.length}
-              urgent={urgentItems.length}
-              overdue={overdueItems.length}
-              actionable={actionableItems.length}
-              blocked={blockerItems.length}
-              moneyAtStake={overviewMoneyAtStake}
-              onModeChange={switchTaskBoardMode}
-            />
-
-            <CompactFilterPanel
-              filters={filters}
-              updateFilters={updateFilters}
-              resetFilters={resetFilters}
-              canUseBeta={canUseBeta}
-            />
-
-            <DepartmentHub
-              groups={problemGroups}
-              domains={capabilityDomains}
-              mode={taskBoardMode}
-              onOpen={openProblemGroup}
-            />
-          </>
-        ) : null}
-
-        {!selectedGroup ? null : (
-          <DepartmentWorkspace
+          <ReferenceOverview
+            items={openItems}
+            groups={problemGroups}
+            counts={taskBoardCounts}
+            openCount={openItems.length}
+            urgentCount={urgentItems.length}
+            overdueCount={overdueItems.length}
+            execution={coreExecutionSummary}
+            blockerCount={blockerItems.length}
+            moneyAtStake={overviewImpactSummary.value}
+            moneyOverlap={overviewImpactSummary.overlap}
+            dataHealthStatus={dataSyncStatusQuery.data}
+            filters={filters}
+            updateFilters={updateFilters}
+            resetFilters={resetFilters}
+            canUseBeta={canUseBeta}
+            onOpenItem={openProblemItem}
+            onOpenGroup={openProblemGroup}
+            onCreateManualTask={() => setManualTaskOpen(true)}
+            canAssignTasks={canAssignTasks}
+            onRefresh={() => refetch()}
+          />
+        ) : (
+          <ReferenceProblemDetailPage
+            item={selected}
             group={selectedGroup}
-            domain={selectedDomain}
-            mode={taskBoardMode}
-            queueItems={queueItems}
-            selected={selected}
-            selectedIndex={selectedIndex}
-            openItems={openItems}
-            urgentItems={urgentItems}
-            actionableItems={actionableItems}
-            blockerItems={blockerItems}
-            currentUserId={currentUserId}
             accountId={activeId}
             dateFrom={dateFrom}
             dateTo={dateTo}
-            busy={busy}
-            recheckBusy={recheckBusy}
-            onClose={closeProblemGroup}
-            onSelect={(id) => setSelectedId(id)}
+            busy={busy || recheckBusy}
+            onBack={closeProblemGroup}
             onStatus={saveStatus}
             onDoneNext={(item) => saveStatus(item, "done", true)}
             onRecheck={recheck}
@@ -8667,8 +11291,6 @@ export function ActionCenterPageContainer({
             }}
             onNext={goNext}
             hasNext={Boolean(nextItem)}
-            onApplyGroupRecalculate={applyGroupRecalculate}
-            onCreateManualTask={() => setManualTaskOpen(true)}
           />
         )}
       </div>

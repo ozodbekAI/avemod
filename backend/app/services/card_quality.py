@@ -59,7 +59,10 @@ from app.schemas.card_quality import (
 from app.schemas.portal import PortalActionRead, PortalProductQualityRead
 from app.services.result_tracking import ResultTrackingService
 from app.services.accounts import AccountService
-from app.services.checker_problem_bridge import build_checker_problem_bridge
+from app.services.checker_problem_bridge import (
+    CheckerProblemBridge,
+    build_checker_problem_bridge,
+)
 from app.services.guided_fixes import GuidedFixMapper
 from app.services.checker_core.ai_fixer import CheckerAIFixer
 from app.services.checker_core.text_policy import (
@@ -7142,13 +7145,14 @@ class CardQualityAnalysisService:
     def _action_from_issue(
         self, *, account_id: int, issue: CardQualityIssue
     ) -> PortalActionRead:
-        priority = "P1" if issue.severity == "critical" else "P2"
         payload = self._issue_payload(issue)
         payload["deep_link"] = f"/products/{issue.nm_id}?tab=quality"
         bridge = build_checker_problem_bridge(
             issue, account_id=account_id, nm_id=issue.nm_id, issue_id=issue.id
         )
         payload.update(bridge.payload)
+        priority = self._action_priority(issue, bridge)
+        severity = self._action_display_severity(issue, bridge)
         guided_fix = self.guided_fixes.map(
             source_module="checker",
             action_type="CARD_QUALITY_FIX",
@@ -7165,7 +7169,7 @@ class CardQualityAnalysisService:
             detector_code=issue.issue_code,
             title=issue.title,
             priority=priority,
-            severity=self._action_severity(issue.severity),
+            severity=severity,
             status=self._action_status(issue.status),
             reason=issue.business_explanation or "",
             next_step=issue.recommended_fix
@@ -7186,6 +7190,33 @@ class CardQualityAnalysisService:
             can_update=True,
             guided_fix=guided_fix,
         )
+
+    def _action_priority(
+        self, issue: CardQualityIssue, bridge: CheckerProblemBridge
+    ) -> str:
+        raw_severity = str(issue.severity or "").strip().lower()
+        if bridge.impact_type == "data_blocker" or bridge.trust_state == "blocked":
+            return "P0"
+        if bridge.payload.get("financial_loss_confirmed") is True:
+            return "P1" if raw_severity == "critical" else "P2"
+        if bridge.payload.get("business_metric_evidence") is True:
+            return "P2" if raw_severity in {"critical", "high"} else "P3"
+        return "P3" if raw_severity in {"critical", "high"} else "P4"
+
+    def _action_display_severity(
+        self, issue: CardQualityIssue, bridge: CheckerProblemBridge
+    ) -> str:
+        if bridge.impact_type == "data_blocker" or bridge.trust_state == "blocked":
+            return "critical"
+        if bridge.payload.get("financial_loss_confirmed") is True:
+            return self._action_severity(issue.severity)
+        if bridge.payload.get("business_metric_evidence") is True:
+            raw = self._action_severity(issue.severity)
+            return "high" if raw == "critical" else raw
+        raw = self._action_severity(issue.severity)
+        if raw in {"critical", "high"}:
+            return "medium"
+        return raw
 
     def _action_status(self, status: str | None) -> str:
         raw = str(status or "new").lower()

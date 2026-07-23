@@ -189,6 +189,7 @@ export interface ActionCenterItem {
   allowed_actions: ActionCenterAllowedActionCode[];
   allowed_action_items: ActionCenterAllowedActionItem[];
   guided_fix?: PortalAction["guided_fix"];
+  can_execute: boolean;
   can_update: boolean;
   can_update_reason: string | null;
   can_recheck: boolean;
@@ -2166,6 +2167,10 @@ export function adaptActionCenterItem(
   const hasUpdateTarget =
     (!!action.source_module && action.source_id != null) || actionId != null;
   const updateFlag = action.can_update ?? action.can_update_status;
+  const canExecute =
+    action.can_execute === true ||
+    payload.can_execute === true ||
+    raw.can_execute === true;
   const baseCanUpdate =
     hasUpdateTarget && (updateFlag === undefined ? true : updateFlag === true);
   const evidenceState = evidenceStateWithFreshness(
@@ -2526,6 +2531,7 @@ export function adaptActionCenterItem(
     allowed_actions: allowedActions,
     allowed_action_items: allowedActionItems,
     guided_fix: action.guided_fix,
+    can_execute: canExecute,
     can_update: canUpdate,
     can_update_reason: evidenceBlocksAction
       ? "Недостаточно доказательств: задача доступна только для просмотра."

@@ -17,10 +17,19 @@ from sqlalchemy.schema import CreateTable
 
 from app.models.accounts import WBAccount
 from app.models.auth import AuthUser
-from app.models.card_quality import CardQualityAnalysisRun, CardQualityFixedFileEntry, CardQualityIssue, CardQualitySnapshot
+from app.models.card_quality import (
+    CardQualityAnalysisRun,
+    CardQualityFixedFileEntry,
+    CardQualityIssue,
+    CardQualitySnapshot,
+)
 from app.models.operator import ResultEvent
 from app.models.product_cards import WBProductCard
-from app.schemas.card_quality import CardQualityFixedFileEntryMutation, CardQualityIssueRead, CardQualityIssueStatusUpdate
+from app.schemas.card_quality import (
+    CardQualityFixedFileEntryMutation,
+    CardQualityIssueRead,
+    CardQualityIssueStatusUpdate,
+)
 from app.services.card_quality import (
     CardQualityAnalysisService,
     CardQualityNormalizationService,
@@ -28,7 +37,10 @@ from app.services.card_quality import (
     NormalizedCard,
     _sanitize_wb_update_snapshot,
 )
-from app.services.checker_core.wb_validator import get_catalog, validate_card_characteristics
+from app.services.checker_core.wb_validator import (
+    get_catalog,
+    validate_card_characteristics,
+)
 
 
 @compiles(JSONB, "sqlite")
@@ -102,7 +114,9 @@ def test_card_quality_conditional_fill_characteristic_is_checked_when_active() -
     assert get_catalog().is_no_touch_characteristic("Модель брюк", card=card) is False
 
 
-def test_card_quality_conditional_fill_characteristic_is_skipped_when_inactive() -> None:
+def test_card_quality_conditional_fill_characteristic_is_skipped_when_inactive() -> (
+    None
+):
     card = {"characteristics": [{"name": "Тип низа", "value": ["юбка"]}]}
 
     assert get_catalog().is_no_touch_characteristic("Модель брюк", card=card) is True
@@ -117,7 +131,9 @@ def test_card_quality_fixed_file_ignores_no_touch_characteristics() -> None:
         ]
     )
 
-    issues = service._apply_fixed_file_priority(card, [], {"ИКПУ": "new", "Артикул OZON": "new"})
+    issues = service._apply_fixed_file_priority(
+        card, [], {"ИКПУ": "new", "Артикул OZON": "new"}
+    )
 
     assert issues == []
 
@@ -134,14 +150,25 @@ def test_card_quality_fixed_file_only_characteristics_are_not_ai_candidates() ->
     issues = service.rules._characteristic_rules(card)
 
     assert all("Состав" not in issue.field_name for issue in issues)
-    assert service._skip_ai_audit_issue({"name": "Состав", "message": "Проверить состав"}) is True
+    assert (
+        service._skip_ai_audit_issue({"name": "Состав", "message": "Проверить состав"})
+        is True
+    )
 
 
 def test_card_quality_ai_audit_skips_no_touch_characteristics() -> None:
     service = CardQualityAnalysisService()
 
-    assert service._skip_ai_audit_issue({"name": "ИКПУ", "message": "Заполнить ИКПУ"}) is True
-    assert service._skip_ai_audit_issue({"name": "Артикул OZON", "message": "Нет значения"}) is True
+    assert (
+        service._skip_ai_audit_issue({"name": "ИКПУ", "message": "Заполнить ИКПУ"})
+        is True
+    )
+    assert (
+        service._skip_ai_audit_issue(
+            {"name": "Артикул OZON", "message": "Нет значения"}
+        )
+        is True
+    )
 
 
 class _SQLiteAsyncSessionAdapter:
@@ -188,7 +215,11 @@ def _card_quality_recheck_session() -> tuple[Session, _SQLiteAsyncSessionAdapter
         ):
             conn.execute(CreateTable(table, if_not_exists=True))
     sync_session = Session(engine)
-    sync_session.add(WBAccount(id=1, name="Checker test account", timezone="Europe/Moscow", is_active=True))
+    sync_session.add(
+        WBAccount(
+            id=1, name="Checker test account", timezone="Europe/Moscow", is_active=True
+        )
+    )
     sync_session.flush()
     return sync_session, _SQLiteAsyncSessionAdapter(sync_session)
 
@@ -203,7 +234,10 @@ def _card(**overrides) -> NormalizedCard:
         "brand": "Avemod",
         "subject_name": "Костюмы",
         "vendor_code": "AV-1",
-        "characteristics": [{"name": "Цвет", "value": ["черный"]}, {"name": "Состав", "value": ["хлопок"]}],
+        "characteristics": [
+            {"name": "Цвет", "value": ["черный"]},
+            {"name": "Состав", "value": ["хлопок"]},
+        ],
         "photos": [
             "https://example.test/1.jpg",
             "https://example.test/2.jpg",
@@ -233,7 +267,9 @@ def test_card_quality_clean_card_keeps_high_score() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ai_compound_characteristic_exposes_candidate_and_allowed_values() -> None:
+async def test_ai_compound_characteristic_exposes_candidate_and_allowed_values() -> (
+    None
+):
     service = CardQualityAnalysisService()
     service.ai_fixer = SimpleNamespace(
         is_enabled=True,
@@ -269,7 +305,9 @@ async def test_ai_compound_characteristic_exposes_candidate_and_allowed_values()
         {},
     )
 
-    issue = next(item for item in issues if item.field_name == "characteristics.Вид застежки")
+    issue = next(
+        item for item in issues if item.field_name == "characteristics.Вид застежки"
+    )
     assert issue.alternatives == ["пуговицы, молния"]
     assert issue.ai_alternatives == ["пуговицы, молния"]
     assert issue.expected_value_json["candidate_values"] == ["пуговицы, молния"]
@@ -279,7 +317,15 @@ async def test_ai_compound_characteristic_exposes_candidate_and_allowed_values()
 
 def test_card_quality_missing_core_fields_is_critical_and_bounded() -> None:
     issues, summary = CardQualityRuleEngine().analyze(
-        _card(title="", description="", characteristics=[], photos=[], videos=[], brand="", subject_name="")
+        _card(
+            title="",
+            description="",
+            characteristics=[],
+            photos=[],
+            videos=[],
+            brand="",
+            subject_name="",
+        )
     )
 
     assert {issue.issue_code for issue in issues} >= {
@@ -337,12 +383,14 @@ def test_card_quality_logical_photo_count_uses_photo_objects() -> None:
 
 
 def test_card_quality_few_photos_matches_source_rule() -> None:
-    issues, _summary = CardQualityRuleEngine().analyze(_card(photos=[{"canonical_url": "https://example.test/1.jpg", "variants": {}}]))
+    issues, _summary = CardQualityRuleEngine().analyze(
+        _card(photos=[{"canonical_url": "https://example.test/1.jpg", "variants": {}}])
+    )
 
     assert "few_photos" in {issue.issue_code for issue in issues}
 
 
-def test_card_quality_action_preserves_actual_issue_severity() -> None:
+def test_card_quality_action_does_not_mark_content_opportunity_as_urgent() -> None:
     issue = CardQualityIssue(
         id=55,
         account_id=1,
@@ -361,11 +409,14 @@ def test_card_quality_action_preserves_actual_issue_severity() -> None:
 
     action = CardQualityAnalysisService()._action_from_issue(account_id=1, issue=issue)
 
-    assert action.severity == "critical"
+    assert action.priority == "P3"
+    assert action.severity == "medium"
     assert action.can_execute is False
 
 
-def test_card_quality_action_contract_uses_issue_status_payload_and_estimated_opportunity() -> None:
+def test_card_quality_action_contract_uses_issue_status_payload_and_estimated_opportunity() -> (
+    None
+):
     issue = CardQualityIssue(
         id=56,
         account_id=1,
@@ -395,6 +446,8 @@ def test_card_quality_action_contract_uses_issue_status_payload_and_estimated_op
     assert action.reason == "Short titles reduce discoverability."
     assert action.next_step == "Add searchable product details."
     assert action.expected_impact_amount is None
+    assert action.priority == "P3"
+    assert action.severity == "medium"
     assert action.priority_score == 15.0
     assert action.payload["issue_code"] == "title_too_short"
     assert action.payload["field_name"] == "title"
@@ -438,6 +491,8 @@ def test_card_quality_content_issue_does_not_become_confirmed_financial_loss() -
     action = CardQualityAnalysisService()._action_from_issue(account_id=1, issue=issue)
 
     assert action.source_module == "checker"
+    assert action.priority == "P3"
+    assert action.severity == "medium"
     assert action.payload["bridge_kind"] == "content_quality"
     assert action.trust_state == "opportunity"
     assert action.impact_type == "opportunity"
@@ -449,7 +504,9 @@ def test_card_quality_content_issue_does_not_become_confirmed_financial_loss() -
 
 
 @pytest.mark.asyncio
-async def test_checker_product_recheck_improves_score_and_records_result_event() -> None:
+async def test_checker_product_recheck_improves_score_and_records_result_event() -> (
+    None
+):
     sync_session, session = _card_quality_recheck_session()
     now = datetime(2026, 7, 12, tzinfo=timezone.utc)
     snapshot = CardQualitySnapshot(
@@ -493,7 +550,9 @@ async def test_checker_product_recheck_improves_score_and_records_result_event()
 
     service = CardQualityAnalysisService()
 
-    async def _fake_analyze_product(session_arg, *, account_id, nm_id, force, requested_by_user_id=None, run=None):
+    async def _fake_analyze_product(
+        session_arg, *, account_id, nm_id, force, requested_by_user_id=None, run=None
+    ):
         issue.status = "resolved"
         issue.resolved_at = now
         sync_session.add(
@@ -539,7 +598,9 @@ async def test_checker_product_recheck_improves_score_and_records_result_event()
 
     service.analyze_product = _fake_analyze_product  # type: ignore[method-assign]
 
-    response = await service.recheck_product(session, account_id=1, nm_id=1001, requested_by_user_id=42)
+    response = await service.recheck_product(
+        session, account_id=1, nm_id=1001, requested_by_user_id=42
+    )
 
     assert response.status == "completed"
     assert response.run_id == 99
@@ -563,12 +624,18 @@ async def test_checker_product_recheck_pending_when_no_after_data() -> None:
     sync_session, session = _card_quality_recheck_session()
     service = CardQualityAnalysisService()
 
-    async def _fake_analyze_product(session_arg, *, account_id, nm_id, force, requested_by_user_id=None, run=None):
-        return SimpleNamespace(message="product card is not present in finance product cards")
+    async def _fake_analyze_product(
+        session_arg, *, account_id, nm_id, force, requested_by_user_id=None, run=None
+    ):
+        return SimpleNamespace(
+            message="product card is not present in finance product cards"
+        )
 
     service.analyze_product = _fake_analyze_product  # type: ignore[method-assign]
 
-    response = await service.recheck_product(session, account_id=1, nm_id=100404, requested_by_user_id=42)
+    response = await service.recheck_product(
+        session, account_id=1, nm_id=100404, requested_by_user_id=42
+    )
 
     assert response.status == "completed"
     assert response.result_status == "pending_data"
@@ -580,7 +647,9 @@ async def test_checker_product_recheck_pending_when_no_after_data() -> None:
     assert event.payload_json["after_snapshot"] == {}
 
 
-def test_card_quality_issue_contract_content_issue_is_opportunity_not_confirmed_loss() -> None:
+def test_card_quality_issue_contract_content_issue_is_opportunity_not_confirmed_loss() -> (
+    None
+):
     issue = CardQualityIssueRead.model_validate(
         CardQualityIssue(
             id=157,
@@ -658,7 +727,9 @@ def test_card_quality_missing_source_data_becomes_data_blocker() -> None:
     assert action.money_trust.show_as_confirmed_money is False
 
 
-def test_card_quality_issue_contract_data_blocker_has_blocked_state_and_missing_data() -> None:
+def test_card_quality_issue_contract_data_blocker_has_blocked_state_and_missing_data() -> (
+    None
+):
     issue = CardQualityIssueRead.model_validate(
         CardQualityIssue(
             id=158,
@@ -767,13 +838,20 @@ def test_card_quality_issue_contract_unsupported_wb_apply_reason_is_explicit() -
     [
         ("title_too_short", "title", "title", "title"),
         ("description_too_short", "description", "description", "description"),
-        ("wb_allowed_values", "characteristics", "characteristics.Состав", "characteristics"),
+        (
+            "wb_allowed_values",
+            "characteristics",
+            "characteristics.Состав",
+            "characteristics",
+        ),
         ("media_no_video_info", "media", "videos", "media"),
         ("subject_mismatch", "identity", "subject_name", "category"),
         ("no_description", "description", "description", "description"),
     ],
 )
-def test_card_quality_issue_group_maps_from_code_category_and_field(code: str, category: str, field_name: str, expected_group: str) -> None:
+def test_card_quality_issue_group_maps_from_code_category_and_field(
+    code: str, category: str, field_name: str, expected_group: str
+) -> None:
     issue = CardQualityIssueRead.model_validate(
         CardQualityIssue(
             id=161,
@@ -795,7 +873,9 @@ def test_card_quality_issue_group_maps_from_code_category_and_field(code: str, c
     assert issue.issue_group == expected_group
 
 
-def test_card_quality_issue_with_business_metrics_is_operational_opportunity_until_financial_confirmation() -> None:
+def test_card_quality_issue_with_business_metrics_is_operational_opportunity_until_financial_confirmation() -> (
+    None
+):
     issue = CardQualityIssue(
         id=59,
         account_id=1,
@@ -901,8 +981,12 @@ def test_card_quality_queue_bucket_matches_source_semantics() -> None:
 def test_card_quality_fixed_file_parser_accepts_source_template_headers() -> None:
     workbook = Workbook()
     sheet = workbook.active
-    sheet.append(["Артикул WB", "Бренд", "Предмет", "Характеристика", "Эталонное значение"])
-    sheet.append([245405620, "Avemod", "Костюмы", "Состав", "хлопок 80%, полиэстер 20%"])
+    sheet.append(
+        ["Артикул WB", "Бренд", "Предмет", "Характеристика", "Эталонное значение"]
+    )
+    sheet.append(
+        [245405620, "Avemod", "Костюмы", "Состав", "хлопок 80%, полиэстер 20%"]
+    )
     payload = BytesIO()
     workbook.save(payload)
 
@@ -924,7 +1008,9 @@ def test_card_quality_fixed_file_parser_accepts_wide_source_workbook() -> None:
     sheet = workbook.active
     sheet.title = "Лист1"
     sheet.append(["nmID", "brand", "subjectName", "Пол", "Состав", "Ставка НДС"])
-    sheet.append([245405620, "Avemod", "Костюмы", "Женский", "хлопок 80%;полиэстер 20%", 5])
+    sheet.append(
+        [245405620, "Avemod", "Костюмы", "Женский", "хлопок 80%;полиэстер 20%", 5]
+    )
     sheet.append([245405621, "Avemod", "Костюмы", "", "полиэстер", None])
     payload = BytesIO()
     workbook.save(payload)
@@ -970,7 +1056,9 @@ async def test_card_quality_fixed_file_table_flow_filters_updates_and_exports() 
         workbook = Workbook()
         sheet = workbook.active
         sheet.append(["nmID", "brand", "subjectName", "Пол", "Состав", "Модель брюк"])
-        sheet.append([245405620, "Avemod", "Костюмы", "Женский", "хлопок", "классические"])
+        sheet.append(
+            [245405620, "Avemod", "Костюмы", "Женский", "хлопок", "классические"]
+        )
         sheet.append([245405621, "Avemod", "Брюки", "Женский", "полиэстер", "палаццо"])
         payload = BytesIO()
         workbook.save(payload)
@@ -1006,7 +1094,9 @@ async def test_card_quality_fixed_file_table_flow_filters_updates_and_exports() 
             session,
             account_id=1,
             entry_id=page.items[0].id,
-            payload=CardQualityFixedFileEntryMutation(fixed_value="хлопок 80%; полиэстер 20%"),
+            payload=CardQualityFixedFileEntryMutation(
+                fixed_value="хлопок 80%; полиэстер 20%"
+            ),
         )
         assert updated.fixed_value == "хлопок 80%; полиэстер 20%"
 
@@ -1019,7 +1109,13 @@ async def test_card_quality_fixed_file_table_flow_filters_updates_and_exports() 
         )
         loaded = load_workbook(BytesIO(exported))
         rows = list(loaded.active.iter_rows(values_only=True))
-        assert rows[0] == ("nmID", "brand", "subjectName", "Характеристика", "Эталонное значение")
+        assert rows[0] == (
+            "nmID",
+            "brand",
+            "subjectName",
+            "Характеристика",
+            "Эталонное значение",
+        )
         assert rows[1][3:] == ("Состав", "хлопок 80%; полиэстер 20%")
         assert rows[2][3:] == ("Состав", "полиэстер")
     finally:
@@ -1035,8 +1131,14 @@ def test_card_quality_ai_audit_dedupe_key_accepts_list_values() -> None:
 def test_card_quality_ai_category_mapping_prefers_source_field_path() -> None:
     service = CardQualityAnalysisService()
 
-    assert service._map_ai_issue_category("text", "characteristics.Тип посадки") == "characteristics"
-    assert service._map_ai_issue_category("qualification", "characteristics.Состав") == "characteristics"
+    assert (
+        service._map_ai_issue_category("text", "characteristics.Тип посадки")
+        == "characteristics"
+    )
+    assert (
+        service._map_ai_issue_category("qualification", "characteristics.Состав")
+        == "characteristics"
+    )
     assert service._map_ai_issue_category("text", "description") == "description"
 
 
@@ -1056,7 +1158,11 @@ def test_card_quality_no_safe_ai_fix_requires_human_check() -> None:
     merged = service._merge_ai_fix(
         normalized=_card(),
         issue=issue,
-        fix={"recommended_value": None, "suggestion_kind": "no_safe_fix", "reason": "Недостаточно visual evidence"},
+        fix={
+            "recommended_value": None,
+            "suggestion_kind": "no_safe_fix",
+            "reason": "Недостаточно visual evidence",
+        },
         recommended=None,
         invalid_reason=None,
     )
@@ -1154,7 +1260,10 @@ class _FakeAnalyzeFailureSession:
 
     async def flush(self) -> None:
         for item in self.added:
-            if isinstance(item, CardQualityAnalysisRun) and getattr(item, "id", None) is None:
+            if (
+                isinstance(item, CardQualityAnalysisRun)
+                and getattr(item, "id", None) is None
+            ):
                 item.id = self.next_id
                 self.next_id += 1
 
@@ -1228,9 +1337,15 @@ async def test_card_quality_analyze_records_failed_run_after_rollback() -> None:
     session = _FakeAnalyzeFailureSession()
 
     with pytest.raises(RuntimeError, match="classifier exploded"):
-        await service.analyze_product(session, account_id=1, nm_id=245405620, force=True, requested_by_user_id=7)
+        await service.analyze_product(
+            session, account_id=1, nm_id=245405620, force=True, requested_by_user_id=7
+        )
 
-    failed_runs = [item for item in session.added if isinstance(item, CardQualityAnalysisRun) and item.status == "failed"]
+    failed_runs = [
+        item
+        for item in session.added
+        if isinstance(item, CardQualityAnalysisRun) and item.status == "failed"
+    ]
     assert session.rolled_back is True
     assert session.committed is True
     assert failed_runs
@@ -1258,7 +1373,12 @@ async def test_card_quality_status_reopen_clears_resolved_at() -> None:
     session = _FakeIssueSession(issue)
 
     updated = await CardQualityAnalysisService().update_issue_status(
-        session, account_id=1, issue_id=77, status="new", changed_by_user_id=10, reason="recheck"
+        session,
+        account_id=1,
+        issue_id=77,
+        status="new",
+        changed_by_user_id=10,
+        reason="recheck",
     )
 
     assert updated.status == "new"
@@ -1285,7 +1405,12 @@ async def test_card_quality_status_rejects_illegal_transition() -> None:
 
     with pytest.raises(ValueError, match="illegal_status_transition"):
         await CardQualityAnalysisService().update_issue_status(
-            _FakeIssueSession(issue), account_id=1, issue_id=78, status="resolved", changed_by_user_id=10, reason=None
+            _FakeIssueSession(issue),
+            account_id=1,
+            issue_id=78,
+            status="resolved",
+            changed_by_user_id=10,
+            reason=None,
         )
 
 
@@ -1360,7 +1485,9 @@ def test_card_quality_status_update_has_no_wb_apply_flag_by_default() -> None:
 
 
 @pytest.mark.asyncio
-async def test_card_quality_default_fix_does_not_write_to_wb(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_card_quality_default_fix_does_not_write_to_wb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service = CardQualityAnalysisService()
     issue = _quality_issue(
         issue_id=77,
@@ -1393,7 +1520,9 @@ async def test_card_quality_default_fix_does_not_write_to_wb(monkeypatch: pytest
 
 
 @pytest.mark.asyncio
-async def test_card_quality_accept_local_wrapper_does_not_write_to_wb(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_card_quality_accept_local_wrapper_does_not_write_to_wb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service = CardQualityAnalysisService()
     issue = _quality_issue(
         issue_id=77,
@@ -1424,7 +1553,9 @@ async def test_card_quality_accept_local_wrapper_does_not_write_to_wb(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_card_quality_mark_fixed_does_not_write_to_wb(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_card_quality_mark_fixed_does_not_write_to_wb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service = CardQualityAnalysisService()
     issue = _quality_issue(
         issue_id=77,
@@ -1451,7 +1582,9 @@ async def test_card_quality_mark_fixed_does_not_write_to_wb(monkeypatch: pytest.
 
 
 @pytest.mark.asyncio
-async def test_card_quality_save_draft_keeps_issue_status_in_sync_and_no_wb_write(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_card_quality_save_draft_keeps_issue_status_in_sync_and_no_wb_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service = CardQualityAnalysisService()
     issue = _quality_issue(
         issue_id=77,
@@ -1479,7 +1612,9 @@ async def test_card_quality_save_draft_keeps_issue_status_in_sync_and_no_wb_writ
 
 
 @pytest.mark.asyncio
-async def test_card_quality_submit_without_confirm_returns_confirmation_required(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_card_quality_submit_without_confirm_returns_confirmation_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service = CardQualityAnalysisService()
     issue = _quality_issue(
         issue_id=77,
@@ -1537,7 +1672,9 @@ async def test_card_quality_human_check_fix_requires_manual_value() -> None:
 
 
 @pytest.mark.asyncio
-async def test_card_quality_human_check_cannot_apply_to_wb_even_with_confirm(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_card_quality_human_check_cannot_apply_to_wb_even_with_confirm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service = CardQualityAnalysisService()
     issue = _quality_issue(
         issue_id=77,
@@ -1570,7 +1707,9 @@ async def test_card_quality_human_check_cannot_apply_to_wb_even_with_confirm(mon
 
 
 @pytest.mark.asyncio
-async def test_card_quality_unsupported_field_cannot_apply_to_wb(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_card_quality_unsupported_field_cannot_apply_to_wb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service = CardQualityAnalysisService()
     issue = _quality_issue(
         issue_id=77,
@@ -1603,7 +1742,9 @@ async def test_card_quality_unsupported_field_cannot_apply_to_wb(monkeypatch: py
 
 
 @pytest.mark.asyncio
-async def test_card_quality_wb_submit_waits_validation_and_keeps_status_in_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_card_quality_wb_submit_waits_validation_and_keeps_status_in_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service = CardQualityAnalysisService()
     issue = _quality_issue(
         issue_id=77,
@@ -1646,7 +1787,9 @@ async def test_card_quality_wb_submit_waits_validation_and_keeps_status_in_sync(
 
 
 @pytest.mark.asyncio
-async def test_card_quality_recheck_refreshes_issue_status_and_result(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_card_quality_recheck_refreshes_issue_status_and_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service = CardQualityAnalysisService()
     issue = _quality_issue(
         issue_id=77,
@@ -1674,7 +1817,9 @@ async def test_card_quality_recheck_refreshes_issue_status_and_result(monkeypatc
         requested_by_user_id=10,
     )
 
-    assert calls == [{"account_id": 1, "nm_id": 245405620, "force": True, "requested_by_user_id": 10}]
+    assert calls == [
+        {"account_id": 1, "nm_id": 245405620, "force": True, "requested_by_user_id": 10}
+    ]
     assert updated.status == "resolved"
     assert updated.status_reason == "auto_resolve_absent_from_latest_analysis"
     assert updated.can_recheck is True
@@ -1682,7 +1827,9 @@ async def test_card_quality_recheck_refreshes_issue_status_and_result(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_card_quality_missing_content_token_blocks_wb_submit(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_card_quality_missing_content_token_blocks_wb_submit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service = CardQualityAnalysisService()
     issue = _quality_issue(
         issue_id=77,
@@ -1694,7 +1841,11 @@ async def test_card_quality_missing_content_token_blocks_wb_submit(monkeypatch: 
     monkeypatch.setattr(
         service,
         "_apply_issue_fix_to_wb",
-        AsyncMock(side_effect=ValueError("content_token_permission_required:WB token for category 'content' is not configured")),
+        AsyncMock(
+            side_effect=ValueError(
+                "content_token_permission_required:WB token for category 'content' is not configured"
+            )
+        ),
     )
 
     response = await service.fix_issue(
@@ -1723,8 +1874,12 @@ def test_wb_update_snapshot_uses_official_update_fields_only() -> None:
             "title": "Новое название",
             "description": "Описание",
             "dimensions": {"length": 35, "width": 40, "height": 15, "weightBrutto": 3},
-            "characteristics": [{"id": 14177450, "name": "Состав", "value": ["хлопок"]}],
-            "sizes": [{"chrtID": 123, "techSize": "ONE SIZE", "skus": ["1234567890123"]}],
+            "characteristics": [
+                {"id": 14177450, "name": "Состав", "value": ["хлопок"]}
+            ],
+            "sizes": [
+                {"chrtID": 123, "techSize": "ONE SIZE", "skus": ["1234567890123"]}
+            ],
             "subjectID": 777,
             "subjectName": "Костюмы",
             "imtID": 987,
@@ -1771,7 +1926,9 @@ async def test_wb_update_payload_preserves_existing_kiz_marked_flag() -> None:
             "vendorCode": "AV-1",
             "title": "Старое название",
             "description": "Описание",
-            "sizes": [{"chrtID": 123, "techSize": "ONE SIZE", "skus": ["1234567890123"]}],
+            "sizes": [
+                {"chrtID": 123, "techSize": "ONE SIZE", "skus": ["1234567890123"]}
+            ],
         },
     )
     issue = _issue()
@@ -1818,8 +1975,14 @@ async def test_card_quality_issue_pages_use_source_pipeline_order() -> None:
         offset=0,
     )
 
-    assert [item.issue_code for item in page.items] == ["title_too_short", "wb_allowed_values"]
-    assert service._issue_payload(title_issue)["source_order"] < service._issue_payload(wb_issue)["source_order"]
+    assert [item.issue_code for item in page.items] == [
+        "title_too_short",
+        "wb_allowed_values",
+    ]
+    assert (
+        service._issue_payload(title_issue)["source_order"]
+        < service._issue_payload(wb_issue)["source_order"]
+    )
 
 
 def test_card_quality_queue_keeps_status_then_source_pipeline_order() -> None:
@@ -1847,9 +2010,15 @@ def test_card_quality_queue_keeps_status_then_source_pipeline_order() -> None:
         status="postponed",
     )
 
-    ordered = sorted([wb_issue, postponed_title, title_issue], key=service._queue_sort_key)
+    ordered = sorted(
+        [wb_issue, postponed_title, title_issue], key=service._queue_sort_key
+    )
 
-    assert [issue.issue_code for issue in ordered] == ["title_too_short", "wb_allowed_values", "title_too_long"]
+    assert [issue.issue_code for issue in ordered] == [
+        "title_too_short",
+        "wb_allowed_values",
+        "title_too_long",
+    ]
 
 
 def test_card_quality_final_filters_collapse_compound_overlaps() -> None:
@@ -1894,7 +2063,9 @@ def test_card_quality_final_filters_collapse_compound_overlaps() -> None:
     assert collapsed == [compound]
 
 
-def test_card_quality_final_filters_merge_same_field_competitors_into_human_check() -> None:
+def test_card_quality_final_filters_merge_same_field_competitors_into_human_check() -> (
+    None
+):
     service = CardQualityAnalysisService()
     wb_issue = service.rules._issue(
         "wb_allowed_values",
@@ -1929,10 +2100,15 @@ def test_card_quality_final_filters_merge_same_field_competitors_into_human_chec
     assert collapsed[0].requires_human_check is True
     assert collapsed[0].suggested_value is None
     assert collapsed[0].ai_alternatives == ["жилет", "жакет"]
-    assert collapsed[0].ai_evidence["merged_issue_codes"] == ["ai_photo", "wb_allowed_values"]
+    assert collapsed[0].ai_evidence["merged_issue_codes"] == [
+        "ai_photo",
+        "wb_allowed_values",
+    ]
 
 
-def test_card_quality_final_filters_drop_description_refresh_when_stronger_description_issue_exists() -> None:
+def test_card_quality_final_filters_drop_description_refresh_when_stronger_description_issue_exists() -> (
+    None
+):
     service = CardQualityAnalysisService()
     refresh = service.rules._issue(
         "description_refresh_needed",
@@ -1960,7 +2136,9 @@ def test_card_quality_final_filters_drop_description_refresh_when_stronger_descr
     assert [issue.issue_code for issue in collapsed] == ["description_too_short"]
 
 
-def test_card_quality_final_filters_drop_destructive_ai_issue_without_safe_value() -> None:
+def test_card_quality_final_filters_drop_destructive_ai_issue_without_safe_value() -> (
+    None
+):
     service = CardQualityAnalysisService()
     issue = replace(
         service.rules._issue(

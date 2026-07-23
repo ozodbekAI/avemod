@@ -377,6 +377,12 @@ class PriceSafetyCalculator:
                     f"({missing}). Исправьте данные, затем перепроверьте безопасную маржу."
                 )
             if price_safety.target_price is not None:
+                if not price_safety.can_recommend_price_increase:
+                    return (
+                        f"Не повышайте цену автоматически: безопасный минимум {price_safety.min_safe_price} RUB, "
+                        f"а текущая эффективная цена {price_safety.reference_price} RUB. Проверьте формулу маржи, "
+                        "себестоимость, комиссии, логистику, скидки и СПП, затем перепроверьте безопасную маржу."
+                    )
                 return (
                     f"Поднимите эффективную цену минимум до {price_safety.target_price} RUB, чтобы сохранить "
                     f"целевую маржу {price_safety.target_margin_pct}%. Если рынок не принимает такую цену, проверьте себестоимость и комиссии."

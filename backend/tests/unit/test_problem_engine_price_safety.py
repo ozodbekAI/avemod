@@ -175,6 +175,39 @@ def test_negative_profit_recommendation_does_not_raise_price_when_current_price_
     assert "Цена уже выше безопасного минимума" in recommendation
 
 
+def test_price_below_safe_margin_does_not_raise_when_current_effective_price_is_safe() -> None:
+    calculator = PriceSafetyCalculator(target_margin_pct=Decimal("10"))
+    safety = calculator.evaluate(
+        problem_code="price_below_safe_margin",
+        resolved=_resolution(
+            {
+                "price_current": Decimal("18900"),
+                "price_after_discount": Decimal("15876"),
+                "cost_price": Decimal("3773"),
+                "commission_per_unit": Decimal("1589.72"),
+                "logistics_per_unit": Decimal("2694.54"),
+                "acquiring_per_unit": Decimal("553.89"),
+                "storage_fee_per_unit": Decimal("0"),
+                "unit_profit": Decimal("-2385.19"),
+                "margin_pct": Decimal("35.91"),
+            },
+            problem_code="price_below_safe_margin",
+        ),
+    )
+    recommendation = calculator.recommendation(
+        problem_code="price_below_safe_margin",
+        base_recommendation="Проверьте цену.",
+        price_safety=safety,
+    )
+
+    assert safety is not None
+    assert safety.target_price == Decimal("9567.94")
+    assert safety.can_recommend_price_increase is False
+    assert "Поднимите эффективную цену" not in recommendation
+    assert "Не повышайте цену автоматически" in recommendation
+    assert "формулу маржи" in recommendation
+
+
 def test_dead_stock_safe_promo_is_blocked_when_margin_would_break() -> None:
     calculator = PriceSafetyCalculator(target_margin_pct=Decimal("10"), proposed_discount_pct=Decimal("10"))
     safety = calculator.evaluate(

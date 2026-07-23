@@ -464,7 +464,11 @@ class PortalService:
                     "executor_key": "costs.inline_save",
                     "problem_codes": ("missing_cost_blocks_profit",),
                     "action_codes": ("review_cost", "upload_cost", "open_data_fix"),
-                    "task_examples": ("заполнить себестоимость", "указать прочие расходы", "пересчитать прибыль"),
+                    "task_examples": (
+                        "заполнить себестоимость",
+                        "указать прочие расходы",
+                        "пересчитать прибыль",
+                    ),
                     "ui_route": "/action-center?group=data_blockers",
                     "current_support_note": "Локальное исправление работает через costs inline save, WB продажи и финальный отчет не редактируются.",
                 },
@@ -475,9 +479,17 @@ class PortalService:
                     "detect_status": "ready",
                     "execute_status": "manual",
                     "executor_key": "data_quality.sku_mapping_review",
-                    "problem_codes": ("unmatched_sku", "manual_cost_unresolved_sku", "manual_cost_ambiguous_match"),
+                    "problem_codes": (
+                        "unmatched_sku",
+                        "manual_cost_unresolved_sku",
+                        "manual_cost_ambiguous_match",
+                    ),
                     "action_codes": ("map_sku", "open_data_fix"),
-                    "task_examples": ("сопоставить SKU", "объяснить связь", "перепроверить строку"),
+                    "task_examples": (
+                        "сопоставить SKU",
+                        "объяснить связь",
+                        "перепроверить строку",
+                    ),
                     "ui_route": "/action-center?group=data_blockers",
                     "current_support_note": "Сейчас фиксируется как проверенная оператором связка; автоматическое массовое слияние SKU остается отдельным executor.",
                 },
@@ -490,7 +502,11 @@ class PortalService:
                     "executor_key": "data_quality.expense_classify",
                     "problem_codes": ("expense_unclassified",),
                     "action_codes": ("classify_expense", "open_data_fix"),
-                    "task_examples": ("выбрать категорию расхода", "проверить сумму", "пересчитать маржу"),
+                    "task_examples": (
+                        "выбрать категорию расхода",
+                        "проверить сумму",
+                        "пересчитать маржу",
+                    ),
                     "ui_route": "/action-center?group=data_blockers",
                 },
                 {
@@ -501,7 +517,11 @@ class PortalService:
                     "execute_status": "ready",
                     "executor_key": "jobs.data_sync_status",
                     "action_codes": ("refresh_data", "recheck"),
-                    "task_examples": ("обновить продажи", "обновить финансы", "обновить остатки"),
+                    "task_examples": (
+                        "обновить продажи",
+                        "обновить финансы",
+                        "обновить остатки",
+                    ),
                     "ui_route": "/data-quality",
                 },
             ),
@@ -527,9 +547,21 @@ class PortalService:
                     "executor_key": "card_quality.apply_wb",
                     "safe_write": True,
                     "required_token_categories": ("content",),
-                    "problem_codes": ("low_conversion_card", "no_sales_with_views", "price_offer_blocks_conversion"),
-                    "action_codes": ("review_content", "check_card_quality", "run_checker"),
-                    "task_examples": ("исправить название", "улучшить описание", "перепроверить карточку"),
+                    "problem_codes": (
+                        "low_conversion_card",
+                        "no_sales_with_views",
+                        "price_offer_blocks_conversion",
+                    ),
+                    "action_codes": (
+                        "review_content",
+                        "check_card_quality",
+                        "run_checker",
+                    ),
+                    "task_examples": (
+                        "исправить название",
+                        "улучшить описание",
+                        "перепроверить карточку",
+                    ),
                     "ui_route": "/action-center?group=card_quality",
                     "current_support_note": "WB apply идет через card quality review и требует подтверждения.",
                 },
@@ -541,7 +573,11 @@ class PortalService:
                     "execute_status": "preview_only",
                     "executor_key": "card_quality.characteristics_review",
                     "required_token_categories": ("content",),
-                    "task_examples": ("добавить характеристику", "проверить категорию", "сформировать draft"),
+                    "task_examples": (
+                        "добавить характеристику",
+                        "проверить категорию",
+                        "сформировать draft",
+                    ),
                     "ui_route": "/checker",
                 },
                 {
@@ -553,7 +589,11 @@ class PortalService:
                     "executor_key": "photo_studio.review",
                     "problem_codes": ("low_ads_ctr", "low_conversion_card"),
                     "action_codes": ("review_content",),
-                    "task_examples": ("проверить главное фото", "поставить задачу дизайнеру", "сравнить CTR"),
+                    "task_examples": (
+                        "проверить главное фото",
+                        "поставить задачу дизайнеру",
+                        "сравнить CTR",
+                    ),
                     "ui_route": "/photo",
                 },
                 {
@@ -563,7 +603,11 @@ class PortalService:
                     "detect_status": "partial",
                     "execute_status": "preview_only",
                     "executor_key": "product360.events",
-                    "task_examples": ("проверить поисковые позиции", "сопоставить событие и метрику", "сформировать гипотезу"),
+                    "task_examples": (
+                        "проверить поисковые позиции",
+                        "сопоставить событие и метрику",
+                        "сформировать гипотезу",
+                    ),
                     "ui_route": "/products",
                 },
             ),
@@ -584,9 +628,21 @@ class PortalService:
                     "detect_status": "ready",
                     "execute_status": "preview_only",
                     "executor_key": "pricing.review",
-                    "problem_codes": ("negative_unit_profit", "price_below_safe_margin", "promo_not_profitable"),
-                    "action_codes": ("open_price_review", "review_price", "pricing_review"),
-                    "task_examples": ("проверить цену", "рассчитать безопасную", "отправить на review"),
+                    "problem_codes": (
+                        "negative_unit_profit",
+                        "price_below_safe_margin",
+                        "promo_not_profitable",
+                    ),
+                    "action_codes": (
+                        "open_price_review",
+                        "review_price",
+                        "pricing_review",
+                    ),
+                    "task_examples": (
+                        "проверить цену",
+                        "рассчитать безопасную",
+                        "отправить на review",
+                    ),
                     "ui_route": "/action-center?group=price",
                     "current_support_note": "Автоматический price-write endpoint не включен, поэтому изменение не отправляется напрямую в WB.",
                 },
@@ -598,9 +654,17 @@ class PortalService:
                     "execute_status": "missing_wb_write",
                     "executor_key": "wb.prices.write",
                     "required_token_categories": ("prices",),
-                    "problem_codes": ("negative_unit_profit", "price_below_safe_margin", "raise_price_possible_high_demand"),
+                    "problem_codes": (
+                        "negative_unit_profit",
+                        "price_below_safe_margin",
+                        "raise_price_possible_high_demand",
+                    ),
                     "action_codes": ("apply_price", "apply_discount"),
-                    "task_examples": ("поднять цену", "снизить скидку", "применить безопасную цену"),
+                    "task_examples": (
+                        "поднять цену",
+                        "снизить скидку",
+                        "применить безопасную цену",
+                    ),
                     "current_support_note": "Нужен официальный WB write client для prices/discounts и review-lock перед включением.",
                 },
                 {
@@ -610,9 +674,18 @@ class PortalService:
                     "detect_status": "partial",
                     "execute_status": "preview_only",
                     "executor_key": "agent.price_scenarios",
-                    "problem_codes": ("stockout_risk_14d", "overstock_slow_moving", "dead_stock", "raise_price_possible_high_demand"),
+                    "problem_codes": (
+                        "stockout_risk_14d",
+                        "overstock_slow_moving",
+                        "dead_stock",
+                        "raise_price_possible_high_demand",
+                    ),
                     "action_codes": ("create_scenario", "price_agent_review"),
-                    "task_examples": ("сохранить товар до поставки", "реагировать на спрос", "балансировать цену по складу"),
+                    "task_examples": (
+                        "сохранить товар до поставки",
+                        "реагировать на спрос",
+                        "балансировать цену по складу",
+                    ),
                     "ui_route": "/agent/scenarios",
                 },
                 {
@@ -624,7 +697,11 @@ class PortalService:
                     "executor_key": "promotions.profit_review",
                     "problem_codes": ("promo_not_profitable",),
                     "action_codes": ("review_promo", "safe_promo", "reduce_promo"),
-                    "task_examples": ("проверить акцию", "убрать убыточное промо", "пересчитать маржу"),
+                    "task_examples": (
+                        "проверить акцию",
+                        "убрать убыточное промо",
+                        "пересчитать маржу",
+                    ),
                     "ui_route": "/prices",
                 },
             ),
@@ -645,9 +722,25 @@ class PortalService:
                     "detect_status": "ready",
                     "execute_status": "preview_only",
                     "executor_key": "ads.efficiency_review",
-                    "problem_codes": ("ads_spend_without_profit", "ads_spend_no_orders", "high_ad_drr", "high_ad_cpo", "low_ads_ctr", "ads_stockout_risk"),
-                    "action_codes": ("review_ads", "pause_ads", "lower_ads", "review_bids"),
-                    "task_examples": ("проверить DRR", "найти расход без заказов", "снизить ставку"),
+                    "problem_codes": (
+                        "ads_spend_without_profit",
+                        "ads_spend_no_orders",
+                        "high_ad_drr",
+                        "high_ad_cpo",
+                        "low_ads_ctr",
+                        "ads_stockout_risk",
+                    ),
+                    "action_codes": (
+                        "review_ads",
+                        "pause_ads",
+                        "lower_ads",
+                        "review_bids",
+                    ),
+                    "task_examples": (
+                        "проверить DRR",
+                        "найти расход без заказов",
+                        "снизить ставку",
+                    ),
                     "ui_route": "/ads",
                 },
                 {
@@ -658,8 +751,16 @@ class PortalService:
                     "execute_status": "missing_wb_write",
                     "executor_key": "wb.ads.campaign_control",
                     "required_token_categories": ("promotion",),
-                    "action_codes": ("pause_ads", "start_ads", "remove_product_from_campaign"),
-                    "task_examples": ("остановить РК", "запустить после восстановления", "убрать убыточный товар"),
+                    "action_codes": (
+                        "pause_ads",
+                        "start_ads",
+                        "remove_product_from_campaign",
+                    ),
+                    "task_examples": (
+                        "остановить РК",
+                        "запустить после восстановления",
+                        "убрать убыточный товар",
+                    ),
                     "current_support_note": "Сейчас ads client читает статистику и кампании, write методы не подключены.",
                 },
                 {
@@ -670,8 +771,16 @@ class PortalService:
                     "execute_status": "missing_wb_write",
                     "executor_key": "wb.ads.bid_budget_write",
                     "required_token_categories": ("promotion",),
-                    "action_codes": ("change_bid", "exclude_cluster", "change_daily_budget"),
-                    "task_examples": ("снизить дневной лимит", "исключить кластер", "тестировать позицию"),
+                    "action_codes": (
+                        "change_bid",
+                        "exclude_cluster",
+                        "change_daily_budget",
+                    ),
+                    "task_examples": (
+                        "снизить дневной лимит",
+                        "исключить кластер",
+                        "тестировать позицию",
+                    ),
                 },
                 {
                     "key": "ads_agent_scenarios",
@@ -681,7 +790,11 @@ class PortalService:
                     "execute_status": "preview_only",
                     "executor_key": "agent.ads_scenarios",
                     "action_codes": ("create_ads_scenario", "review_ads_scenario"),
-                    "task_examples": ("защита бюджета", "поиск лучшей позиции", "масштабирование без риска"),
+                    "task_examples": (
+                        "защита бюджета",
+                        "поиск лучшей позиции",
+                        "масштабирование без риска",
+                    ),
                     "ui_route": "/agent/scenarios",
                 },
             ),
@@ -702,9 +815,18 @@ class PortalService:
                     "detect_status": "ready",
                     "execute_status": "preview_only",
                     "executor_key": "stockops.risk_review",
-                    "problem_codes": ("low_stock_risk", "stockout_now_with_recent_orders", "stockout_risk_14d", "fast_stock_depletion"),
+                    "problem_codes": (
+                        "low_stock_risk",
+                        "stockout_now_with_recent_orders",
+                        "stockout_risk_14d",
+                        "fast_stock_depletion",
+                    ),
                     "action_codes": ("plan_supply", "review_stock"),
-                    "task_examples": ("проверить OOS", "оценить упущенную выручку", "подготовить поставку"),
+                    "task_examples": (
+                        "проверить OOS",
+                        "оценить упущенную выручку",
+                        "подготовить поставку",
+                    ),
                     "ui_route": "/stock-control",
                 },
                 {
@@ -714,9 +836,17 @@ class PortalService:
                     "detect_status": "ready",
                     "execute_status": "preview_only",
                     "executor_key": "stockops.overstock_review",
-                    "problem_codes": ("overstock_slow_moving", "dead_stock", "storage_cost_pressure"),
+                    "problem_codes": (
+                        "overstock_slow_moving",
+                        "dead_stock",
+                        "storage_cost_pressure",
+                    ),
                     "action_codes": ("liquidate_stock", "review_price", "plan_supply"),
-                    "task_examples": ("разобрать пересток", "пересчитать хранение", "создать план распродажи"),
+                    "task_examples": (
+                        "разобрать пересток",
+                        "пересчитать хранение",
+                        "создать план распродажи",
+                    ),
                     "ui_route": "/stock-control",
                 },
                 {
@@ -727,7 +857,11 @@ class PortalService:
                     "execute_status": "preview_only",
                     "executor_key": "stockops.supply_plan",
                     "action_codes": ("create_supply_plan", "export_supply"),
-                    "task_examples": ("выбрать склад", "учесть сезонность", "экспортировать подсортировку"),
+                    "task_examples": (
+                        "выбрать склад",
+                        "учесть сезонность",
+                        "экспортировать подсортировку",
+                    ),
                     "ui_route": "/stock-control",
                     "current_support_note": "Есть read/supply context. Автоматическое создание поставки в WB требует отдельного write executor.",
                 },
@@ -740,7 +874,11 @@ class PortalService:
                     "executor_key": "supplies.acceptance_options",
                     "required_token_categories": ("supplies",),
                     "action_codes": ("review_acceptance_slot",),
-                    "task_examples": ("проверить коэффициент", "найти выгодный слот", "уведомить ответственного"),
+                    "task_examples": (
+                        "проверить коэффициент",
+                        "найти выгодный слот",
+                        "уведомить ответственного",
+                    ),
                     "ui_route": "/stock-control",
                 },
             ),
@@ -764,9 +902,17 @@ class PortalService:
                     "detect_status": "ready",
                     "execute_status": "preview_only",
                     "executor_key": "problem_engine.profitability",
-                    "problem_codes": ("negative_unit_profit", "price_below_safe_margin", "promo_not_profitable"),
+                    "problem_codes": (
+                        "negative_unit_profit",
+                        "price_below_safe_margin",
+                        "promo_not_profitable",
+                    ),
                     "action_codes": ("review_price", "review_ads", "review_promo"),
-                    "task_examples": ("разобрать прибыль", "найти причину минуса", "пересчитать результат"),
+                    "task_examples": (
+                        "разобрать прибыль",
+                        "найти причину минуса",
+                        "пересчитать результат",
+                    ),
                     "ui_route": "/action-center?group=profitability",
                 },
                 {
@@ -776,7 +922,11 @@ class PortalService:
                     "detect_status": "ready",
                     "execute_status": "ready",
                     "executor_key": "money_trust.classifier",
-                    "task_examples": ("пометить риск как предварительный", "ждать финансы WB", "убрать ложные убытки"),
+                    "task_examples": (
+                        "пометить риск как предварительный",
+                        "ждать финансы WB",
+                        "убрать ложные убытки",
+                    ),
                     "ui_route": "/results",
                 },
                 {
@@ -786,9 +936,17 @@ class PortalService:
                     "detect_status": "partial",
                     "execute_status": "preview_only",
                     "executor_key": "agent.commercial_scenarios",
-                    "problem_codes": ("raise_price_possible_high_demand", "fast_stock_depletion", "dead_stock"),
+                    "problem_codes": (
+                        "raise_price_possible_high_demand",
+                        "fast_stock_depletion",
+                        "dead_stock",
+                    ),
                     "action_codes": ("create_scenario", "review_price"),
-                    "task_examples": ("рост спроса", "падение заказов", "растянуть остаток до поставки"),
+                    "task_examples": (
+                        "рост спроса",
+                        "падение заказов",
+                        "растянуть остаток до поставки",
+                    ),
                     "ui_route": "/agent/scenarios",
                 },
             ),
@@ -812,9 +970,17 @@ class PortalService:
                     "detect_status": "ready",
                     "execute_status": "preview_only",
                     "executor_key": "reputation.inbox",
-                    "problem_codes": ("negative_reviews_need_reply", "questions_need_reply", "low_product_rating"),
+                    "problem_codes": (
+                        "negative_reviews_need_reply",
+                        "questions_need_reply",
+                        "low_product_rating",
+                    ),
                     "action_codes": ("reply_review", "reply_question", "review_rating"),
-                    "task_examples": ("ответить на отзыв", "ответить на вопрос", "разобрать рейтинг"),
+                    "task_examples": (
+                        "ответить на отзыв",
+                        "ответить на вопрос",
+                        "разобрать рейтинг",
+                    ),
                     "ui_route": "/reputation",
                 },
                 {
@@ -826,7 +992,11 @@ class PortalService:
                     "executor_key": "reputation.publish",
                     "required_token_categories": ("feedbacks_questions",),
                     "action_codes": ("publish_reply", "approve_draft"),
-                    "task_examples": ("проверить draft", "одобрить ответ", "отправить в WB"),
+                    "task_examples": (
+                        "проверить draft",
+                        "одобрить ответ",
+                        "отправить в WB",
+                    ),
                     "ui_route": "/reputation",
                     "current_support_note": "Публикация зависит от runtime-настроек reputation модуля и прав API.",
                 },
@@ -838,7 +1008,11 @@ class PortalService:
                     "execute_status": "manual",
                     "executor_key": "claims.detect",
                     "action_codes": ("open_claim_case", "review_case"),
-                    "task_examples": ("создать кейс", "проверить доказательства", "назначить ответственного"),
+                    "task_examples": (
+                        "создать кейс",
+                        "проверить доказательства",
+                        "назначить ответственного",
+                    ),
                     "ui_route": "/cases",
                 },
             ),
@@ -863,7 +1037,12 @@ class PortalService:
                     "execute_status": "ready",
                     "executor_key": "portal.manual_action_create",
                     "action_codes": ("create_task", "assign"),
-                    "task_examples": ("изменить title", "проверить фото", "обновить карточку", "проверить рекламу"),
+                    "task_examples": (
+                        "изменить title",
+                        "проверить фото",
+                        "обновить карточку",
+                        "проверить рекламу",
+                    ),
                     "ui_route": "/action-center?group=manual_tasks",
                 },
                 {
@@ -874,7 +1053,11 @@ class PortalService:
                     "execute_status": "ready",
                     "executor_key": "portal.manual_task_items",
                     "action_codes": ("mark_done", "skip_product", "reopen"),
-                    "task_examples": ("закрыть товар", "пропустить строку", "видеть прогресс"),
+                    "task_examples": (
+                        "закрыть товар",
+                        "пропустить строку",
+                        "видеть прогресс",
+                    ),
                     "ui_route": "/action-center?group=manual_tasks",
                 },
                 {
@@ -885,7 +1068,11 @@ class PortalService:
                     "execute_status": "ready",
                     "executor_key": "portal.action_status",
                     "action_codes": ("postpone", "dismiss", "reopen"),
-                    "task_examples": ("отложить на 1 день", "отключить как неактуальное", "вернуть в активные"),
+                    "task_examples": (
+                        "отложить на 1 день",
+                        "отключить как неактуальное",
+                        "вернуть в активные",
+                    ),
                     "ui_route": "/action-center",
                 },
             ),
@@ -911,7 +1098,11 @@ class PortalService:
                     "executor_key": "data_quality.reconciliation",
                     "problem_codes": ("sale_without_finance", "finance_without_sale"),
                     "action_codes": ("recheck", "open_results"),
-                    "task_examples": ("обновить финансы", "пересчитать сверку", "убрать ложный убыток"),
+                    "task_examples": (
+                        "обновить финансы",
+                        "пересчитать сверку",
+                        "убрать ложный убыток",
+                    ),
                     "ui_route": "/results",
                 },
                 {
@@ -922,7 +1113,11 @@ class PortalService:
                     "execute_status": "ready",
                     "executor_key": "jobs.problem_evaluation",
                     "action_codes": ("recheck", "refresh_data"),
-                    "task_examples": ("ночной анализ", "перепроверка после исправления", "обновление очереди"),
+                    "task_examples": (
+                        "ночной анализ",
+                        "перепроверка после исправления",
+                        "обновление очереди",
+                    ),
                     "ui_route": "/data-quality",
                 },
                 {
@@ -933,7 +1128,11 @@ class PortalService:
                     "execute_status": "preview_only",
                     "executor_key": "agent.scenarios",
                     "action_codes": ("create_scenario", "run_scenario"),
-                    "task_examples": ("настроить правило", "запустить вручную", "проверить лог"),
+                    "task_examples": (
+                        "настроить правило",
+                        "запустить вручную",
+                        "проверить лог",
+                    ),
                     "ui_route": "/agent/scenarios",
                 },
                 {
@@ -944,7 +1143,11 @@ class PortalService:
                     "execute_status": "ready",
                     "executor_key": "result_tracking",
                     "action_codes": ("result_event", "compare_after"),
-                    "task_examples": ("проверить after snapshot", "оценить эффект", "сохранить результат"),
+                    "task_examples": (
+                        "проверить after snapshot",
+                        "оценить эффект",
+                        "сохранить результат",
+                    ),
                     "ui_route": "/results",
                 },
             ),
@@ -1267,9 +1470,7 @@ class PortalService:
             ),
         },
         "per_product_completion": {
-            "safety_requirements": (
-                "Completion changes only local task item status.",
-            ),
+            "safety_requirements": ("Completion changes only local task item status.",),
         },
         "task_deactivation": {
             "safety_requirements": (
@@ -1925,16 +2126,11 @@ class PortalService:
                         *(trace_raw.get("safety_requirements") or ()),
                     )
                 )
-                if (
-                    execute_status == "missing_wb_write"
-                    and not safety_requirements
-                ):
-                    safety_requirements = (
-                        [
-                            "Require explicit confirmation, raw WB result storage "
-                            "and recheck before enabling write mode.",
-                        ]
-                    )
+                if execute_status == "missing_wb_write" and not safety_requirements:
+                    safety_requirements = [
+                        "Require explicit confirmation, raw WB result storage "
+                        "and recheck before enabling write mode.",
+                    ]
                 if not (wb_connector_ids or wb_api_endpoints or wb_reference_urls):
                     wb_tracking_status = "local_only"
                 elif execute_status == "missing_wb_write":
@@ -1979,9 +2175,7 @@ class PortalService:
                         execute_status=execute_status,  # type: ignore[arg-type]
                         executor_key=cap_raw.get("executor_key"),
                         safe_write=bool(cap_raw.get("safe_write") or False),
-                        confirm_required=bool(
-                            cap_raw.get("confirm_required", True)
-                        ),
+                        confirm_required=bool(cap_raw.get("confirm_required", True)),
                         required_token_categories=list(
                             cap_raw.get("required_token_categories") or []
                         ),
@@ -2015,9 +2209,7 @@ class PortalService:
                     icon=domain_raw.get("icon"),
                     first_step=domain_raw.get("first_step"),
                     capabilities=capabilities,
-                    jvo_reference_urls=list(
-                        domain_raw.get("jvo_reference_urls") or []
-                    ),
+                    jvo_reference_urls=list(domain_raw.get("jvo_reference_urls") or []),
                 )
             )
             summary["capability_count"] += len(capabilities)
@@ -8900,7 +9092,12 @@ class PortalService:
             local_quality = await self.card_quality.product_quality(
                 session, account_id=account.id, nm_id=nm_id
             )
-            if local_quality.status not in {"unavailable", "not_configured", "empty", "not_analyzed"}:
+            if local_quality.status not in {
+                "unavailable",
+                "not_configured",
+                "empty",
+                "not_analyzed",
+            }:
                 return local_quality
         except Exception:
             local_quality = None
@@ -13932,13 +14129,7 @@ class PortalService:
         for issue in quality.issues:
             if not isinstance(issue, dict):
                 continue
-            severity = "high" if issue.get("severity") == "critical" else "low"
             score_impact = self._optional_float(issue.get("score_impact")) or 0
-            priority = (
-                "P2"
-                if issue.get("severity") == "critical" or score_impact >= 15
-                else "P4"
-            )
             source_id = (
                 str(issue.get("id"))
                 if issue.get("id") is not None
@@ -13949,6 +14140,12 @@ class PortalService:
                 account_id=account_id,
                 nm_id=quality.nm_id,
                 issue_id=source_id,
+            )
+            priority = self._checker_content_priority(
+                issue.get("severity"), score_impact, bridge.payload
+            )
+            severity = self._checker_content_severity(
+                issue.get("severity"), bridge.payload
             )
             payload = {
                 "category": issue.get("category"),
@@ -13993,6 +14190,41 @@ class PortalService:
                 )
             )
         return actions
+
+    def _checker_content_priority(
+        self, severity: Any, score_impact: float, payload: dict[str, Any]
+    ) -> str:
+        raw_severity = str(severity or "").strip().lower()
+        if (
+            payload.get("impact_type") == "data_blocker"
+            or payload.get("trust_state") == "blocked"
+        ):
+            return "P0"
+        if payload.get("financial_loss_confirmed") is True:
+            return "P1" if raw_severity == "critical" else "P2"
+        if payload.get("business_metric_evidence") is True:
+            return (
+                "P2"
+                if raw_severity in {"critical", "high"} or score_impact >= 15
+                else "P3"
+            )
+        return (
+            "P3" if raw_severity in {"critical", "high"} or score_impact >= 15 else "P4"
+        )
+
+    def _checker_content_severity(self, severity: Any, payload: dict[str, Any]) -> str:
+        raw = str(severity or "low").strip().lower()
+        normalized = raw if raw in {"critical", "high", "medium", "low"} else "low"
+        if (
+            payload.get("impact_type") == "data_blocker"
+            or payload.get("trust_state") == "blocked"
+        ):
+            return "critical"
+        if payload.get("financial_loss_confirmed") is True:
+            return normalized
+        if payload.get("business_metric_evidence") is True:
+            return "high" if normalized == "critical" else normalized
+        return "medium" if normalized in {"critical", "high"} else normalized
 
     def _checker_setup_actions(
         self, *, account_id: int, module_statuses: dict[str, str]
@@ -14974,6 +15206,13 @@ class PortalService:
         self, *, code: str, severity: Any, payload: dict[str, Any]
     ) -> str:
         normalized = code.lower()
+        if self._is_content_quality_priority_guard(normalized, payload):
+            raw_severity = str(severity or "").strip().lower()
+            return (
+                "P3"
+                if raw_severity in {"critical", "error", "high", "warning"}
+                else "P4"
+            )
         if "cost" in normalized or normalized in {
             "seller_other_expense_missing",
             "expense_finance_report_missing",
@@ -14994,6 +15233,45 @@ class PortalService:
         return {"critical": "P0", "error": "P1", "warning": "P2", "info": "P4"}.get(
             str(severity or "").lower(), "P3"
         )
+
+    @staticmethod
+    def _is_content_quality_priority_guard(
+        normalized_code: str, payload: dict[str, Any]
+    ) -> bool:
+        if payload.get("financial_loss_confirmed") is True:
+            return False
+        if str(payload.get("impact_type") or "").strip().lower() in {
+            "data_blocker",
+            "confirmed_loss",
+        }:
+            return False
+        if str(payload.get("trust_state") or "").strip().lower() == "blocked":
+            return False
+        text = " ".join(
+            str(value or "")
+            for value in (
+                normalized_code,
+                payload.get("problem_code"),
+                payload.get("issue_code"),
+                payload.get("category"),
+                payload.get("field_name"),
+                payload.get("field_path"),
+                payload.get("source_module"),
+            )
+        ).lower()
+        content_tokens = (
+            "checker",
+            "card_quality",
+            "content_quality",
+            "title",
+            "description",
+            "photo",
+            "image",
+            "media",
+            "characteristic",
+            "seo",
+        )
+        return any(token in text for token in content_tokens)
 
     def _severity_from_priority(self, priority: str) -> str:
         return {

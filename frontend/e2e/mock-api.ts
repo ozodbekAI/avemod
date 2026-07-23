@@ -172,6 +172,28 @@ const portalActionsPage = {
   },
 };
 
+const missingCostsPage = {
+  total: 1,
+  limit: 200,
+  offset: 0,
+  summary: {
+    missing_sku_count: 1,
+    affected_revenue: 125000,
+    revenue_cost_coverage_percent: 75,
+  },
+  items: [
+    {
+      sku_id: 7007001,
+      nm_id: 1001001,
+      vendor_code: "E2E-001",
+      tech_size: "46",
+      product_title: "Product 360 deep link",
+      affected_revenue: 125000,
+      photo_url: "https://images.wbstatic.net/c516x688/new/1001001-1.jpg",
+    },
+  ],
+};
+
 const resultEvent = {
   id: "result-42",
   account_id: 1,
@@ -1383,6 +1405,21 @@ export async function installMockApi(page: Page) {
     }
     if (path === "/portal/actions" || path === "/portal/action-center") {
       await route.fulfill(json(portalActionsPage));
+      return;
+    }
+    if (path === "/costs/missing") {
+      await route.fulfill(json(missingCostsPage));
+      return;
+    }
+    if (path === "/costs/inline-save") {
+      await route.fulfill(
+        json({
+          status: "ok",
+          saved: 1,
+          updated: 1,
+          rows: [{ sku_id: 7007001, cost_price: 450 }],
+        }),
+      );
       return;
     }
     if (path === "/portal/results" || path === "/portal/problems/42/results") {

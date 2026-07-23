@@ -168,11 +168,36 @@ test("logistics workspace uses Russian decision-first UI with sortable shipment 
   await expect(page.getByRole("heading", { name: "Логистика WB" })).toBeVisible(
     { timeout: 30_000 },
   );
-  await expect(page.getByText("Рабочий пульт продавца")).toBeVisible();
-  await expect(page.getByText("Рабочие зоны")).toBeVisible();
-  await expect(page.getByText("Склады, где теряются деньги")).toBeVisible();
-  await expect(page.getByText("Доверие к расчёту")).toBeVisible();
-  await page.getByRole("tab", { name: /Подсортировка/ }).click();
+  await expect(page.getByText("1. Главное")).toBeVisible();
+  await expect(
+    page.getByText("Где теряются деньги", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Как читать страницу")).toBeVisible();
+  await expect(page.getByText("2. Задачи и потерянный спрос")).toHaveCount(0);
+  await expect(page.getByText("3. Подробный разбор")).toHaveCount(0);
+
+  await page.getByRole("button", { name: /Потерянный спрос/ }).click();
+  await expect(page.getByText("2. Задачи и потерянный спрос")).toBeVisible();
+  await expect(page.getByText("1. Главное")).toHaveCount(0);
+  await expect(
+    page.getByText("Где теряются деньги", { exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByText("3. Подробный разбор")).toHaveCount(0);
+  await page.getByRole("button", { name: /Коледино: дефицит/ }).click();
+  await expect(page.getByText("3. Подробный разбор")).toBeVisible();
+  await expect(page.getByText("2. Задачи и потерянный спрос")).toHaveCount(0);
+  await expect(page.getByText("Очередь задач")).toBeVisible();
+  await expect(page.getByText("Контроль маршрута")).toBeVisible();
+  await expect(page.getByText("Лучшие направления")).toBeVisible();
+
+  await page.getByRole("button", { name: "Главное" }).click();
+  await expect(page.getByText("1. Главное")).toBeVisible();
+  await page.getByRole("button", { name: /Запас и отгрузка/ }).click();
+  await expect(page.getByText("2. Куда и сколько везти")).toBeVisible();
+  await expect(page.getByText("1. Главное")).toHaveCount(0);
+  await expect(page.getByText("3. Подробный разбор")).toHaveCount(0);
+  await page.getByRole("button", { name: /Коледино.*отгрузка/ }).click();
+  await expect(page.getByText("3. Подробный разбор")).toBeVisible();
   await expect(page.getByText("Подсортировка по выгоде")).toBeVisible();
   await expect(page.getByText("Направления")).toBeVisible();
   await expect(

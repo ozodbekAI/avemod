@@ -5,7 +5,13 @@ import {
 } from "@/lib/action-center-contract";
 import type { PortalResultEventsPage } from "@/lib/portal";
 import { problemStatusLabel } from "@/lib/problem-ux-copy";
-import { STATUSES, type DeskFilter, type ImpactBucketKey, ISSUE_TEXT_PATTERNS, IMPACT_BUCKETS } from "@/lib/action-center-labels";
+import {
+  STATUSES,
+  type DeskFilter,
+  type ImpactBucketKey,
+  ISSUE_TEXT_PATTERNS,
+  IMPACT_BUCKETS,
+} from "@/lib/action-center-labels";
 import { guidedFixHref } from "@/lib/action-center-actions";
 import { normalizeText } from "@/lib/action-center-utils";
 import {
@@ -66,9 +72,7 @@ export function actionAllowedActions(a: ActionCenterItem): string[] {
   return a.allowed_actions;
 }
 
-export function statusOptionsForAction(
-  a: ActionCenterItem,
-): typeof STATUSES {
+export function statusOptionsForAction(a: ActionCenterItem): typeof STATUSES {
   if (!isProblemLikeAction(a)) return STATUSES;
   const allowed = new Set(actionAllowedActions(a));
   const filtered = STATUSES.filter(
@@ -85,7 +89,10 @@ export function statusOptionsForAction(
 }
 
 export function isSystemHandledAction(a: ActionCenterItem): boolean {
-  if (normalizeText(a.source_module) === "manual" || a.source_kind === "manual") {
+  if (
+    normalizeText(a.source_module) === "manual" ||
+    a.source_kind === "manual"
+  ) {
     return false;
   }
   const code = actionCode(a);
@@ -158,8 +165,50 @@ export function isClosedAction(a: ActionCenterItem): boolean {
   return CLOSED_ACTION_STATUSES.has(normalizedStatus(a.status));
 }
 
+export function isContentQualityOpportunityAction(
+  a: ActionCenterItem,
+): boolean {
+  const payload = a.payload ?? {};
+  const source = normalizeText(a.source_module);
+  const impact = normalizeText(a.impact_type);
+  const trust = normalizeText(a.trust_state ?? a.money_trust?.state);
+  const text = [
+    source,
+    a.source_kind,
+    actionCode(a),
+    a.problem_code,
+    a.detector_code,
+    a.issue_code,
+    payload.problem_code,
+    payload.issue_code,
+    payload.category,
+    payload.field_name,
+    payload.field_path,
+  ]
+    .map(normalizeText)
+    .join(" ");
+  const isContent =
+    payload.content_quality_signal === true ||
+    payload.checker_problem_bridge === true ||
+    source === "checker" ||
+    text.includes("checker") ||
+    text.includes("card_quality") ||
+    text.includes("content_quality") ||
+    text.includes("title") ||
+    text.includes("description") ||
+    text.includes("photo") ||
+    text.includes("image") ||
+    text.includes("media");
+  if (!isContent) return false;
+  if (payload.financial_loss_confirmed === true) return false;
+  if (impact === "confirmed_loss" || impact === "data_blocker") return false;
+  if (trust === "blocked") return false;
+  return impact === "opportunity" || trust === "opportunity";
+}
+
 export function isUrgentAction(a: ActionCenterItem): boolean {
   if (isClosedAction(a)) return false;
+  if (isContentQualityOpportunityAction(a)) return false;
   const priority = normalizeText(a.priority);
   const severity = normalizeText(a.severity);
   return (

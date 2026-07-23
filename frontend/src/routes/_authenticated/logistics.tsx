@@ -11,18 +11,9 @@ import {
   type Table as ReactTableInstance,
 } from "@tanstack/react-table";
 import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
   Activity,
   AlertTriangle,
+  ArrowLeft,
   ArrowDown,
   ArrowUpRight,
   ArrowUpDown,
@@ -791,110 +782,1005 @@ function LogisticsPage() {
           )}
 
           {data && (
-            <>
-              <LogisticsMissionControl
-                kpis={data.kpis}
-                tasks={visibleTasks}
-                warehouses={warehouses}
-                sources={data.data_sources}
-                capabilities={data.api_capabilities}
-                selectedTask={selectedTask}
-                selectedWarehouse={selectedWarehouse}
-                periodDays={periodDays}
-                onSelectTask={(task) => {
-                  setSelectedTaskId(task.id);
-                  if (task.warehouse_name) {
-                    setSelectedWarehouseName(task.warehouse_name);
-                  }
-                }}
-                onSelectWarehouse={setSelectedWarehouseName}
-                onExportTasks={() => exportCsv("tasks")}
-                exportingTasks={exportingDataset === "tasks"}
-              />
-
-              <Tabs defaultValue="plan" className="w-full">
-                <LogisticsWorkflowTabsList />
-
-                <TabsContent value="plan" className="mt-4">
-                  <DecisionDesk
-                    tasks={visibleTasks}
-                    products={products}
-                    warehouses={warehouses}
-                    regionalShipments={regionalShipments}
-                    shipmentPlanning={data.shipment_planning ?? null}
-                    selectedTask={selectedTask}
-                    selectedWarehouse={selectedWarehouse}
-                    selectedTaskId={selectedTask?.id ?? null}
-                    selectedWarehouseName={
-                      selectedWarehouse?.warehouse_name ?? null
-                    }
-                    periodDays={periodDays}
-                    onSelectTask={(task) => {
-                      setSelectedTaskId(task.id);
-                      if (task.warehouse_name) {
-                        setSelectedWarehouseName(task.warehouse_name);
-                      }
-                    }}
-                    onSelectWarehouse={setSelectedWarehouseName}
-                    onExportTasks={() => exportCsv("tasks")}
-                    exportingTasks={exportingDataset === "tasks"}
-                  />
-                </TabsContent>
-
-                <TabsContent value="shipment" className="mt-4">
-                  <ShipmentBuilderWorkspace
-                    warehouses={warehouses}
-                    products={products}
-                    supplies={data.supplies}
-                    regionalShipments={regionalShipments}
-                    shipmentPlanning={data.shipment_planning ?? null}
-                    periodDays={periodDays}
-                    onSelectWarehouse={setSelectedWarehouseName}
-                    onExport={() => exportCsv("shipment")}
-                    exporting={exportingDataset === "shipment"}
-                  />
-                </TabsContent>
-
-                <TabsContent value="warehouses" className="mt-4">
-                  <WarehouseWorkspace
-                    rows={warehouses}
-                    supplies={data.supplies}
-                    products={products}
-                    controls={data.warehouse_controls ?? []}
-                    disabledWarehouses={disabledWarehouses}
-                    selectedWarehouse={selectedWarehouse}
-                    selectedName={selectedWarehouse?.warehouse_name ?? null}
-                    periodDays={periodDays}
-                    onSelect={setSelectedWarehouseName}
-                    onToggleWarehouse={toggleWarehouseTasks}
-                    onExport={() => exportCsv("controls")}
-                    exporting={exportingDataset === "controls"}
-                  />
-                </TabsContent>
-
-                <TabsContent value="supplies" className="mt-4">
-                  <SupplyWorkspace rows={data.supplies} />
-                </TabsContent>
-
-                <TabsContent value="details" className="mt-4">
-                  <LogisticsDetailsWorkspace
-                    paidStorage={data.paid_storage_details ?? []}
-                    acceptance={data.acceptance_details ?? []}
-                    transit={data.transit_tariffs ?? []}
-                    sellerWarehouses={data.seller_warehouses ?? []}
-                    sources={data.data_sources}
-                    capabilities={data.api_capabilities}
-                    onExport={exportCsv}
-                    exportingDataset={exportingDataset}
-                  />
-                </TabsContent>
-              </Tabs>
-            </>
+            <LogisticsDrilldownWorkspace
+              data={data}
+              tasks={visibleTasks}
+              products={products}
+              warehouses={warehouses}
+              regionalShipments={regionalShipments}
+              selectedTask={selectedTask}
+              selectedWarehouse={selectedWarehouse}
+              selectedTaskId={selectedTask?.id ?? null}
+              selectedWarehouseName={selectedWarehouse?.warehouse_name ?? null}
+              disabledWarehouses={disabledWarehouses}
+              periodDays={periodDays}
+              onSelectTask={(task) => {
+                setSelectedTaskId(task.id);
+                if (task.warehouse_name) {
+                  setSelectedWarehouseName(task.warehouse_name);
+                }
+              }}
+              onSelectWarehouse={setSelectedWarehouseName}
+              onToggleWarehouse={toggleWarehouseTasks}
+              onExport={exportCsv}
+              exportingDataset={exportingDataset}
+            />
           )}
         </div>
       )}
     </PageShell>
   );
+}
+
+function LogisticsDrilldownWorkspace({
+  data,
+  tasks,
+  products,
+  warehouses,
+  regionalShipments,
+  selectedTask,
+  selectedWarehouse,
+  selectedTaskId,
+  selectedWarehouseName,
+  disabledWarehouses,
+  periodDays,
+  onSelectTask,
+  onSelectWarehouse,
+  onToggleWarehouse,
+  onExport,
+  exportingDataset,
+}: {
+  data: LogisticsOverview;
+  tasks: LogisticsTaskRow[];
+  products: ProductRow[];
+  warehouses: WarehouseRow[];
+  regionalShipments: RegionalShipmentRow[];
+  selectedTask: LogisticsTaskRow | null;
+  selectedWarehouse: WarehouseRow | null;
+  selectedTaskId: string | null;
+  selectedWarehouseName: string | null;
+  disabledWarehouses: Set<string>;
+  periodDays: number;
+  onSelectTask: (task: LogisticsTaskRow) => void;
+  onSelectWarehouse: (name: string) => void;
+  onToggleWarehouse: (name: string) => void;
+  onExport: (dataset: LogisticsExportDataset) => void;
+  exportingDataset: LogisticsExportDataset | null;
+}) {
+  const [area, setArea] = useState<DrilldownArea | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelectedItemId(null);
+  }, [area]);
+
+  const model = useMemo(
+    () =>
+      area
+        ? buildDrilldownModel({
+            area,
+            kpis: data.kpis,
+            tasks,
+            warehouses,
+            products,
+            shipmentPlanning: data.shipment_planning ?? null,
+            sources: data.data_sources,
+            capabilities: data.api_capabilities,
+          })
+        : null,
+    [
+      area,
+      data.api_capabilities,
+      data.data_sources,
+      data.kpis,
+      data.shipment_planning,
+      products,
+      tasks,
+      warehouses,
+    ],
+  );
+  const activeItem =
+    model?.items.find((item) => item.id === selectedItemId) ?? null;
+
+  const selectArea = (nextArea: DrilldownArea) => {
+    setArea(nextArea);
+    setSelectedItemId(null);
+  };
+
+  const selectItem = (item: DrilldownItem) => {
+    setSelectedItemId(item.id);
+    if (item.task) {
+      onSelectTask(item.task);
+    }
+    if (item.warehouse) {
+      onSelectWarehouse(item.warehouse.warehouse_name);
+    }
+  };
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [area, selectedItemId]);
+
+  const goToOverview = () => {
+    setArea(null);
+    setSelectedItemId(null);
+  };
+  const goToArea = () => {
+    setSelectedItemId(null);
+  };
+
+  if (!model) {
+    return (
+      <DrilldownOverview
+        kpis={data.kpis}
+        warehouses={warehouses}
+        tasks={tasks}
+        sources={data.data_sources}
+        capabilities={data.api_capabilities}
+        activeArea={area}
+        onSelectArea={selectArea}
+      />
+    );
+  }
+
+  if (!activeItem) {
+    return (
+      <DrilldownAreaPage
+        model={model}
+        onBack={goToOverview}
+        onSelect={selectItem}
+      />
+    );
+  }
+
+  return (
+    <DrilldownDetailPage
+      model={model}
+      item={activeItem}
+      selectedTask={selectedTask}
+      selectedWarehouse={selectedWarehouse}
+      selectedTaskId={selectedTaskId}
+      selectedWarehouseName={selectedWarehouseName}
+      data={data}
+      tasks={tasks}
+      products={products}
+      warehouses={warehouses}
+      regionalShipments={regionalShipments}
+      disabledWarehouses={disabledWarehouses}
+      periodDays={periodDays}
+      onBackToArea={goToArea}
+      onBackToOverview={goToOverview}
+      onSelectTask={onSelectTask}
+      onSelectWarehouse={onSelectWarehouse}
+      onToggleWarehouse={onToggleWarehouse}
+      onExport={onExport}
+      exportingDataset={exportingDataset}
+    />
+  );
+}
+
+type DrilldownArea = "money" | "demand" | "stock" | "sources";
+
+type DrilldownItem = {
+  id: string;
+  title: string;
+  detail: string;
+  metric: string;
+  metricLabel: string;
+  risk?: string | null;
+  task?: LogisticsTaskRow;
+  warehouse?: WarehouseRow;
+  product?: ProductRow;
+  source?: DataSourceRow;
+  capability?: CapabilityRow;
+};
+
+type DrilldownModel = {
+  area: DrilldownArea;
+  title: string;
+  subtitle: string;
+  icon: LucideIcon;
+  items: DrilldownItem[];
+};
+
+function DrilldownAreaPage({
+  model,
+  onBack,
+  onSelect,
+}: {
+  model: DrilldownModel;
+  onBack: () => void;
+  onSelect: (item: DrilldownItem) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <DrilldownPageHeader
+        step={`2. ${model.title}`}
+        title={model.title}
+        subtitle={model.subtitle}
+        icon={model.icon}
+        badge={`${formatNumber(model.items.length)} элементов`}
+        onBack={onBack}
+        backLabel="К главным показателям"
+      />
+      <DrilldownItemList
+        model={model}
+        activeItemId={null}
+        layout="wide"
+        showHeader={false}
+        onSelect={onSelect}
+      />
+    </div>
+  );
+}
+
+function DrilldownDetailPage({
+  model,
+  item,
+  selectedTask,
+  selectedWarehouse,
+  selectedTaskId,
+  selectedWarehouseName,
+  data,
+  tasks,
+  products,
+  warehouses,
+  regionalShipments,
+  disabledWarehouses,
+  periodDays,
+  onBackToArea,
+  onBackToOverview,
+  onSelectTask,
+  onSelectWarehouse,
+  onToggleWarehouse,
+  onExport,
+  exportingDataset,
+}: {
+  model: DrilldownModel;
+  item: DrilldownItem;
+  selectedTask: LogisticsTaskRow | null;
+  selectedWarehouse: WarehouseRow | null;
+  selectedTaskId: string | null;
+  selectedWarehouseName: string | null;
+  data: LogisticsOverview;
+  tasks: LogisticsTaskRow[];
+  products: ProductRow[];
+  warehouses: WarehouseRow[];
+  regionalShipments: RegionalShipmentRow[];
+  disabledWarehouses: Set<string>;
+  periodDays: number;
+  onBackToArea: () => void;
+  onBackToOverview: () => void;
+  onSelectTask: (task: LogisticsTaskRow) => void;
+  onSelectWarehouse: (name: string) => void;
+  onToggleWarehouse: (name: string) => void;
+  onExport: (dataset: LogisticsExportDataset) => void;
+  exportingDataset: LogisticsExportDataset | null;
+}) {
+  return (
+    <div className="space-y-4">
+      <DrilldownPageHeader
+        step="3. Подробный разбор"
+        title={item.title}
+        subtitle={item.detail}
+        icon={model.icon}
+        badge={`${item.metricLabel}: ${item.metric}`}
+        risk={item.risk}
+        onBack={onBackToArea}
+        backLabel={`К разделу: ${model.title}`}
+        onRoot={onBackToOverview}
+      />
+      <DrilldownDetailPanel
+        area={model.area}
+        item={item}
+        selectedTask={selectedTask}
+        selectedWarehouse={selectedWarehouse}
+        selectedTaskId={selectedTaskId}
+        selectedWarehouseName={selectedWarehouseName}
+        data={data}
+        tasks={tasks}
+        products={products}
+        warehouses={warehouses}
+        regionalShipments={regionalShipments}
+        disabledWarehouses={disabledWarehouses}
+        periodDays={periodDays}
+        onSelectTask={onSelectTask}
+        onSelectWarehouse={onSelectWarehouse}
+        onToggleWarehouse={onToggleWarehouse}
+        onExport={onExport}
+        exportingDataset={exportingDataset}
+      />
+    </div>
+  );
+}
+
+function DrilldownPageHeader({
+  step,
+  title,
+  subtitle,
+  icon: Icon,
+  badge,
+  risk,
+  backLabel,
+  onBack,
+  onRoot,
+}: {
+  step: string;
+  title: string;
+  subtitle: string;
+  icon: LucideIcon;
+  badge?: string | null;
+  risk?: string | null;
+  backLabel: string;
+  onBack: () => void;
+  onRoot?: () => void;
+}) {
+  return (
+    <section className="rounded-md border bg-background p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="outline" size="sm" onClick={onBack}>
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          {backLabel}
+        </Button>
+        {onRoot ? (
+          <>
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            <Button variant="ghost" size="sm" onClick={onRoot}>
+              Главное
+            </Button>
+          </>
+        ) : null}
+      </div>
+      <div className="mt-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="inline-flex items-center gap-2 rounded-md border bg-muted/40 px-2.5 py-1 text-xs font-medium text-muted-foreground">
+            <Icon className="h-3.5 w-3.5" />
+            {step}
+          </div>
+          <h2 className="mt-3 text-2xl font-semibold">{title}</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+            {subtitle}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {risk ? <RiskBadge level={risk} /> : null}
+          {badge ? <Badge variant="outline">{badge}</Badge> : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DrilldownOverview({
+  kpis,
+  warehouses,
+  tasks,
+  sources,
+  capabilities,
+  activeArea,
+  onSelectArea,
+}: {
+  kpis: LogisticsKpis;
+  warehouses: WarehouseRow[];
+  tasks: LogisticsTaskRow[];
+  sources: DataSourceRow[];
+  capabilities: CapabilityRow[];
+  activeArea: DrilldownArea | null;
+  onSelectArea: (area: DrilldownArea) => void;
+}) {
+  const totalLogistics =
+    kpis.logistics_cost +
+    kpis.return_logistics_cost +
+    kpis.storage_cost +
+    kpis.acceptance_cost;
+  const readySources = sources.filter((source) =>
+    isHealthyDataStatus(source.status),
+  ).length;
+  const readyApis = capabilities.filter((capability) =>
+    isHealthyDataStatus(capability.status),
+  ).length;
+  const maxWarehouseLoss = Math.max(
+    ...warehouses.map((row) => row.missed_revenue),
+    1,
+  );
+  const chartRows = warehouses
+    .slice()
+    .sort((a, b) => b.missed_revenue - a.missed_revenue)
+    .slice(0, 6)
+    .map((row) => ({
+      name: compactProduct(row.warehouse_name),
+      loss: Math.round(row.missed_revenue),
+      cost: Math.round(
+        row.logistics_cost + row.storage_cost + row.acceptance_cost,
+      ),
+      risk: row.risk_level,
+    }));
+  const maxChartLoss = Math.max(...chartRows.map((row) => row.loss), 1);
+
+  return (
+    <section className="space-y-4 rounded-md border bg-background p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="inline-flex items-center gap-2 rounded-md border bg-muted/40 px-2.5 py-1 text-xs font-medium text-muted-foreground">
+            <Layers3 className="h-3.5 w-3.5" />
+            1. Главное
+          </div>
+          <h2 className="mt-3 text-2xl font-semibold">
+            Сначала видим бизнес, потом проваливаемся в детали
+          </h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+            Нажмите на карточку: откроется отдельная страница раздела со
+            связанными складами, задачами, товарами или источниками. Следующий
+            клик ведёт в подробный разбор.
+          </p>
+        </div>
+        <Badge variant="outline">{formatNumber(tasks.length)} задач</Badge>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <DrilldownMetricCard
+          active={activeArea === "money"}
+          title="Деньги"
+          value={formatMoney(kpis.revenue)}
+          detail={`расходы ${formatMoney(totalLogistics)}`}
+          icon={CircleDollarSign}
+          tone="emerald"
+          bars={[
+            kpis.revenue,
+            totalLogistics,
+            kpis.for_pay,
+            kpis.missed_revenue,
+          ]}
+          onClick={() => onSelectArea("money")}
+        />
+        <DrilldownMetricCard
+          active={activeArea === "demand"}
+          title="Потерянный спрос"
+          value={formatMoney(kpis.missed_revenue)}
+          detail={`${formatNumber(kpis.missed_orders_qty)} заказов`}
+          icon={TrendingDown}
+          tone="rose"
+          bars={warehouses
+            .slice(0, 5)
+            .map((row) => row.missed_revenue / maxWarehouseLoss)}
+          onClick={() => onSelectArea("demand")}
+        />
+        <DrilldownMetricCard
+          active={activeArea === "stock"}
+          title="Запас и отгрузка"
+          value={`${formatNumber(kpis.stock_units)} шт`}
+          detail={`${formatNumber(kpis.available_acceptance_slots)} слотов`}
+          icon={PackagePlus}
+          tone="sky"
+          bars={warehouses.slice(0, 5).map((row) => row.stock_units)}
+          onClick={() => onSelectArea("stock")}
+        />
+        <DrilldownMetricCard
+          active={activeArea === "sources"}
+          title="Данные и API"
+          value={`${formatNumber(readySources)}/${formatNumber(sources.length)}`}
+          detail={`${formatNumber(readyApis)}/${formatNumber(capabilities.length)} API`}
+          icon={Database}
+          tone="amber"
+          bars={sources.map((source) =>
+            isHealthyDataStatus(source.status) ? 1 : 0,
+          )}
+          onClick={() => onSelectArea("sources")}
+        />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <Card className="rounded-md">
+          <CardHeader className="border-b p-4">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <TrendingDown className="h-4 w-4 text-muted-foreground" />
+              Где теряются деньги
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 p-4">
+            {chartRows.map((row) => {
+              const width = Math.max((row.loss / maxChartLoss) * 100, 8);
+              return (
+                <div
+                  key={row.name}
+                  className="grid gap-2 rounded-md border bg-background px-3 py-2.5"
+                >
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="truncate font-medium">{row.name}</span>
+                    <span className="shrink-0 font-semibold">
+                      {formatMoney(row.loss)}
+                    </span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${width}%`,
+                        backgroundColor: riskChartColor(row.risk),
+                      }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                    <span>логистика и хранение</span>
+                    <span>{formatMoney(row.cost)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+        <Card className="rounded-md">
+          <CardHeader className="border-b p-4">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ClipboardList className="h-4 w-4 text-muted-foreground" />
+              Как читать страницу
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 p-4 text-sm">
+            <DrilldownRuleStep number="1" text="Выберите главный показатель." />
+            <DrilldownRuleStep
+              number="2"
+              text="Откроется отдельная страница раздела."
+            />
+            <DrilldownRuleStep
+              number="3"
+              text="Откройте элемент и смотрите подробный расчёт."
+            />
+          </CardContent>
+        </Card>
+      </div>
+    </section>
+  );
+}
+
+function DrilldownMetricCard({
+  active,
+  title,
+  value,
+  detail,
+  icon: Icon,
+  tone,
+  bars,
+  onClick,
+}: {
+  active: boolean;
+  title: string;
+  value: string;
+  detail: string;
+  icon: LucideIcon;
+  tone: "emerald" | "rose" | "sky" | "amber";
+  bars: number[];
+  onClick: () => void;
+}) {
+  const toneClass = {
+    emerald: "bg-emerald-500",
+    rose: "bg-rose-500",
+    sky: "bg-sky-500",
+    amber: "bg-amber-500",
+  }[tone];
+  const max = Math.max(...bars.map((value) => Math.abs(value)), 1);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "grid min-h-36 gap-3 rounded-md border bg-card p-4 text-left transition hover:border-primary/40",
+        active && "border-primary bg-primary/5",
+      )}
+    >
+      <span className="flex items-start justify-between gap-3">
+        <span className="min-w-0">
+          <span className="block text-sm font-medium text-muted-foreground">
+            {title}
+          </span>
+          <span className="mt-1 block truncate text-2xl font-semibold">
+            {value}
+          </span>
+          <span className="mt-1 block truncate text-xs text-muted-foreground">
+            {detail}
+          </span>
+        </span>
+        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-background">
+          <Icon className="h-4 w-4" />
+        </span>
+      </span>
+      <span className="mt-auto flex h-8 items-end gap-1">
+        {bars.slice(0, 7).map((bar, index) => (
+          <span
+            key={`${title}-${index}`}
+            className={cn("w-full rounded-t-sm", toneClass)}
+            style={{
+              height: `${Math.max((Math.abs(bar) / max) * 100, 12)}%`,
+              opacity: active ? 0.95 : 0.45,
+            }}
+          />
+        ))}
+      </span>
+    </button>
+  );
+}
+
+function DrilldownRuleStep({ number, text }: { number: string; text: string }) {
+  return (
+    <div className="grid grid-cols-[28px_minmax(0,1fr)] items-start gap-3">
+      <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border bg-muted text-xs font-semibold">
+        {number}
+      </span>
+      <span className="leading-6 text-muted-foreground">{text}</span>
+    </div>
+  );
+}
+
+function DrilldownItemList({
+  model,
+  activeItemId,
+  layout,
+  showHeader = true,
+  onSelect,
+}: {
+  model: DrilldownModel;
+  activeItemId: string | null;
+  layout: "rail" | "wide";
+  showHeader?: boolean;
+  onSelect: (item: DrilldownItem) => void;
+}) {
+  const Icon = model.icon;
+  return (
+    <Card
+      className={cn(
+        "rounded-md",
+        layout === "rail" && "xl:sticky xl:top-20 xl:self-start",
+      )}
+    >
+      {showHeader ? (
+        <CardHeader className="border-b p-4">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Icon className="h-4 w-4 text-muted-foreground" />
+            2. {model.title}
+          </CardTitle>
+          <div className="text-xs text-muted-foreground">{model.subtitle}</div>
+        </CardHeader>
+      ) : null}
+      <CardContent
+        className={cn(
+          "grid gap-2 p-3",
+          layout === "rail" && "max-h-[760px] overflow-y-auto",
+          layout === "wide" && "md:grid-cols-2 2xl:grid-cols-3",
+        )}
+      >
+        {model.items.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onSelect(item)}
+            className={cn(
+              "grid gap-2 rounded-md border px-3 py-3 text-left transition hover:bg-muted/50",
+              activeItemId === item.id && "border-primary bg-primary/5",
+            )}
+          >
+            <span className="flex items-start justify-between gap-3">
+              <span className="min-w-0">
+                <span className="line-clamp-2 text-sm font-semibold">
+                  {item.title}
+                </span>
+                <span className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                  {item.detail}
+                </span>
+              </span>
+              {item.risk ? <RiskBadge level={item.risk} /> : null}
+            </span>
+            <span className="grid grid-cols-2 gap-2 text-xs">
+              <MetricInline label={item.metricLabel} value={item.metric} />
+              <MetricInline
+                label="Подробно"
+                value={activeItemId === item.id ? "открыто" : "открыть"}
+              />
+            </span>
+          </button>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DrilldownDetailPanel({
+  area,
+  item,
+  selectedTask,
+  selectedWarehouse,
+  selectedTaskId,
+  selectedWarehouseName,
+  data,
+  tasks,
+  products,
+  warehouses,
+  regionalShipments,
+  disabledWarehouses,
+  periodDays,
+  onSelectTask,
+  onSelectWarehouse,
+  onToggleWarehouse,
+  onExport,
+  exportingDataset,
+}: {
+  area: DrilldownArea;
+  item: DrilldownItem | null;
+  selectedTask: LogisticsTaskRow | null;
+  selectedWarehouse: WarehouseRow | null;
+  selectedTaskId: string | null;
+  selectedWarehouseName: string | null;
+  data: LogisticsOverview;
+  tasks: LogisticsTaskRow[];
+  products: ProductRow[];
+  warehouses: WarehouseRow[];
+  regionalShipments: RegionalShipmentRow[];
+  disabledWarehouses: Set<string>;
+  periodDays: number;
+  onSelectTask: (task: LogisticsTaskRow) => void;
+  onSelectWarehouse: (name: string) => void;
+  onToggleWarehouse: (name: string) => void;
+  onExport: (dataset: LogisticsExportDataset) => void;
+  exportingDataset: LogisticsExportDataset | null;
+}) {
+  if (!item) {
+    return (
+      <Alert className="rounded-md">
+        <PackageSearch className="h-4 w-4" />
+        <AlertTitle>Выберите элемент</AlertTitle>
+        <AlertDescription>
+          Сначала нажмите на показатель, затем на склад, задачу или источник.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (area === "sources") {
+    return (
+      <div className="space-y-4">
+        <LogisticsDetailsWorkspace
+          paidStorage={data.paid_storage_details ?? []}
+          acceptance={data.acceptance_details ?? []}
+          transit={data.transit_tariffs ?? []}
+          sellerWarehouses={data.seller_warehouses ?? []}
+          sources={data.data_sources}
+          capabilities={data.api_capabilities}
+          onExport={onExport}
+          exportingDataset={exportingDataset}
+        />
+      </div>
+    );
+  }
+
+  if (area === "stock") {
+    return (
+      <div className="space-y-4">
+        <ShipmentBuilderWorkspace
+          warehouses={warehouses}
+          products={products}
+          supplies={data.supplies}
+          regionalShipments={regionalShipments}
+          shipmentPlanning={data.shipment_planning ?? null}
+          periodDays={periodDays}
+          onSelectWarehouse={onSelectWarehouse}
+          onExport={() => onExport("shipment")}
+          exporting={exportingDataset === "shipment"}
+        />
+      </div>
+    );
+  }
+
+  if (area === "money" && item.warehouse) {
+    return (
+      <WarehouseWorkspace
+        rows={warehouses}
+        supplies={data.supplies}
+        products={products}
+        controls={data.warehouse_controls ?? []}
+        disabledWarehouses={disabledWarehouses}
+        selectedWarehouse={item.warehouse}
+        selectedName={item.warehouse.warehouse_name}
+        periodDays={periodDays}
+        onSelect={onSelectWarehouse}
+        onToggleWarehouse={onToggleWarehouse}
+        onExport={() => onExport("controls")}
+        exporting={exportingDataset === "controls"}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <DecisionDesk
+        tasks={tasks}
+        products={products}
+        warehouses={warehouses}
+        regionalShipments={regionalShipments}
+        shipmentPlanning={data.shipment_planning ?? null}
+        selectedTask={item.task ?? selectedTask}
+        selectedWarehouse={item.warehouse ?? selectedWarehouse}
+        selectedTaskId={item.task?.id ?? selectedTaskId}
+        selectedWarehouseName={
+          item.warehouse?.warehouse_name ?? selectedWarehouseName
+        }
+        periodDays={periodDays}
+        onSelectTask={onSelectTask}
+        onSelectWarehouse={onSelectWarehouse}
+        onExportTasks={() => onExport("tasks")}
+        exportingTasks={exportingDataset === "tasks"}
+      />
+    </div>
+  );
+}
+
+function buildDrilldownModel({
+  area,
+  kpis,
+  tasks,
+  warehouses,
+  products,
+  shipmentPlanning,
+  sources,
+  capabilities,
+}: {
+  area: DrilldownArea;
+  kpis: LogisticsKpis;
+  tasks: LogisticsTaskRow[];
+  warehouses: WarehouseRow[];
+  products: ProductRow[];
+  shipmentPlanning: ShipmentPlanningRead | null;
+  sources: DataSourceRow[];
+  capabilities: CapabilityRow[];
+}): DrilldownModel {
+  if (area === "money") {
+    return {
+      area,
+      title: "Деньги по складам",
+      subtitle: "Расходы, маржа и где логистика съедает прибыль.",
+      icon: CircleDollarSign,
+      items: warehouses
+        .slice()
+        .sort(
+          (a, b) =>
+            b.logistics_cost +
+            b.storage_cost +
+            b.acceptance_cost -
+            (a.logistics_cost + a.storage_cost + a.acceptance_cost),
+        )
+        .slice(0, 12)
+        .map((row) => ({
+          id: `warehouse:${row.warehouse_name}`,
+          title: row.warehouse_name,
+          detail: `${row.region_name || "регион не определён"} · ${formatPercent(row.logistics_share_percent)} от выручки`,
+          metric: formatMoney(
+            row.logistics_cost +
+              row.storage_cost +
+              row.acceptance_cost +
+              row.return_logistics_cost,
+          ),
+          metricLabel: "расход",
+          risk: row.risk_level,
+          warehouse: row,
+        })),
+    };
+  }
+
+  if (area === "stock") {
+    const plannedWarehouses = new Map(
+      (shipmentPlanning?.warehouses ?? [])
+        .filter((option) => option.warehouse_name)
+        .map((option) => [
+          option.warehouse_name?.toLocaleLowerCase("ru") ?? "",
+          option,
+        ]),
+    );
+    return {
+      area,
+      title: "Куда и сколько везти",
+      subtitle: "Склады и товары для отгрузки с учётом приёмки.",
+      icon: PackagePlus,
+      items: warehouses
+        .map((row) => {
+          const planned = plannedWarehouses.get(
+            row.warehouse_name.toLocaleLowerCase("ru"),
+          );
+          const calc = calculateWarehouse(row, PRODUCTION_PLANNING_DAYS);
+          return {
+            row,
+            planned,
+            replenishmentQty: Math.max(
+              planned?.shortage_qty ?? calc.replenishmentQty,
+              0,
+            ),
+          };
+        })
+        .sort(
+          (a, b) =>
+            riskWeight(a.row.risk_level) - riskWeight(b.row.risk_level) ||
+            b.replenishmentQty - a.replenishmentQty ||
+            b.row.missed_revenue - a.row.missed_revenue,
+        )
+        .slice(0, 12)
+        .map(({ row, planned, replenishmentQty }) => {
+          return {
+            id: `stock:${row.warehouse_name}`,
+            title: row.warehouse_name,
+            detail:
+              planned?.reason ||
+              `${acceptanceLabel(row.acceptance_status)} · ${row.region_name || "регион не определён"}`,
+            metric: `+${formatNumber(replenishmentQty)}`,
+            metricLabel: "отгрузка",
+            risk: row.risk_level,
+            warehouse: row,
+          };
+        }),
+    };
+  }
+
+  if (area === "sources") {
+    return {
+      area,
+      title: "Источники расчёта",
+      subtitle: "Что готово, а что может менять цифры.",
+      icon: Database,
+      items: [
+        ...sources.map((source) => ({
+          id: `source:${source.key}`,
+          title: source.label,
+          detail: source.note || "Источник участвует в расчёте логистики.",
+          metric: `${formatNumber(source.rows)} строк`,
+          metricLabel: "данные",
+          risk: isHealthyDataStatus(source.status) ? "ok" : "warning",
+          source,
+        })),
+        ...capabilities.map((capability) => ({
+          id: `capability:${capability.key}`,
+          title: capability.label,
+          detail: `${capability.endpoint} · ${tokenCategoryLabel(capability.token_category)}`,
+          metric: statusLabel(capability.status),
+          metricLabel: "API",
+          risk: isHealthyDataStatus(capability.status) ? "ok" : "warning",
+          capability,
+        })),
+      ],
+    };
+  }
+
+  return {
+    area,
+    title: "Задачи и потерянный спрос",
+    subtitle: `Потеря ${formatMoney(kpis.missed_revenue)} и товары внутри.`,
+    icon: TrendingDown,
+    items: (tasks.length
+      ? tasks.map((task) => ({
+          id: `task:${task.id}`,
+          title: task.title,
+          detail: uiText(task.detail),
+          metric: formatMoney(task.expected_net_effect),
+          metricLabel: "эффект",
+          risk: task.severity,
+          task,
+        }))
+      : products
+          .slice()
+          .sort((a, b) => b.expected_net_effect - a.expected_net_effect)
+          .slice(0, 12)
+          .map((product) => ({
+            id: `product:${product.id}`,
+            title: productLabel(product),
+            detail: product.reason || product.warehouse_name,
+            metric: formatMoney(product.expected_net_effect),
+            metricLabel: "эффект",
+            risk: product.risk_level,
+            product,
+          }))) satisfies DrilldownItem[],
+  };
+}
+
+function riskChartColor(level: string) {
+  if (level === "danger") return "#ef4444";
+  if (level === "warning") return "#f97316";
+  if (level === "watch") return "#f59e0b";
+  return "#0d9488";
 }
 
 function LogisticsCommandBar({
@@ -3495,57 +4381,39 @@ function ShipmentChart({
       </Alert>
     );
   }
+  const maxEffect = Math.max(...rows.map((row) => row.effect), 1);
   return (
     <Card className="rounded-md">
       <CardHeader className="border-b p-4">
         <CardTitle className="text-base">Топ по чистому эффекту</CardTitle>
       </CardHeader>
-      <CardContent className="p-4">
-        <div className="h-[250px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={rows}
-              layout="vertical"
-              margin={{ left: 0, right: 16, top: 4, bottom: 4 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-              <XAxis
-                type="number"
-                tickLine={false}
-                axisLine={false}
-                tick={{ fontSize: 11 }}
-              />
-              <YAxis
-                dataKey="name"
-                type="category"
-                width={108}
-                tickLine={false}
-                axisLine={false}
-                tick={{ fontSize: 11 }}
-              />
-              <RechartsTooltip
-                formatter={(value: number, name: string) => [
-                  name === "effect" ? formatMoney(value) : formatNumber(value),
-                  name === "effect" ? "Чистый эффект" : "Отгрузка",
-                ]}
-              />
-              <Bar dataKey="effect" radius={[0, 4, 4, 0]}>
-                {rows.map((entry, index) => (
-                  <Cell
-                    key={`effect-${index}`}
-                    fill={
-                      entry.risk === "danger"
-                        ? "#ef4444"
-                        : entry.risk === "warning"
-                          ? "#f97316"
-                          : "#0f766e"
-                    }
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+      <CardContent className="space-y-3 p-4">
+        {rows.slice(0, 6).map((row) => {
+          const width = Math.max((row.effect / maxEffect) * 100, 8);
+          return (
+            <div key={row.name} className="grid gap-2 rounded-md border p-3">
+              <div className="flex items-start justify-between gap-3 text-sm">
+                <span className="min-w-0 truncate font-medium">{row.name}</span>
+                <span className="shrink-0 text-right font-semibold">
+                  {formatMoney(row.effect)}
+                </span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${width}%`,
+                    backgroundColor: riskChartColor(row.risk),
+                  }}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                <span>к отгрузке</span>
+                <span>+{formatNumber(row.qty)} шт.</span>
+              </div>
+            </div>
+          );
+        })}
       </CardContent>
     </Card>
   );
@@ -5928,8 +6796,12 @@ function uiText(value?: string | null) {
 function statusLabel(status: string) {
   return (
     {
-      ok: "ОК",
+      ok: "Готово",
       active: "Активно",
+      ready: "Готово",
+      synced: "Загружено",
+      fresh: "Свежие данные",
+      completed: "Завершено",
       available: "Доступно",
       planned: "В плане",
       expensive: "Дорого",
